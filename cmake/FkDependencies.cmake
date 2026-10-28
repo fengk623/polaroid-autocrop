@@ -1,0 +1,12 @@
+# Finds the dependencies installed by the superbuild (cmake/deps) or the system.
+set(ZLIB_USE_STATIC_LIBS ON)
+find_package(ZLIB REQUIRED)
+find_package(PNG REQUIRED)
+find_package(JPEG REQUIRED)
+find_package(TIFF CONFIG REQUIRED)  # TIFF::tiff (links ZLIB::ZLIB, JPEG::JPEG)
+find_package(lcms2 CONFIG REQUIRED)
+find_package(nlohmann_json 3.11 CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+if(FK_BUILD_TESTS)
+  find_package(GTest CONFIG REQUIRED)
+endif()

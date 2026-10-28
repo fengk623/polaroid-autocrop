@@ -94,6 +94,7 @@ ExternalProject_Add(libtiff
              -Dtiff-docs=OFF -Dtiff-deprecated=OFF -Dcxx=OFF -Dzlib=ON -Djpeg=ON
              -Dold-jpeg=OFF -Djbig=OFF -Dlerc=OFF -Dlzma=OFF -Dzstd=OFF -Dwebp=OFF
              -Dlibdeflate=OFF -Dpixarlog=OFF
+             -Dchunky-strip-read=ON -Dstrip-chopping=ON
 )
 
 ExternalProject_Add(lcms2
