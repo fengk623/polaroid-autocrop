@@ -68,6 +68,11 @@ PROGRESS.md updated · no visible control without an implementation.
 | T7 | `zlib` CMake builds a shared lib as well as static; static link may pick `.so`. | Link `ZLIB::ZLIB` via `ZLIB_USE_STATIC_LIBS=ON` (CMake ≥ 3.24) or the explicit static path. |
 | T8 | Tests that write next to fixtures pollute them. | Tests copy fixtures into a fresh temp dir (`fk::test::TempDir`). |
 | T9 | Shared app settings leak between tests and the user's real settings. | Tests set `FK_SETTINGS_DIR` to a temp dir; the app honours it. |
+| T10 | libtiff cannot seek forward inside a compressed strip ("does not support random access"): a single-strip LZW/Deflate scan read out of order fails. | `TiffSource` decodes sequentially from the strip start (scanline path) and counts restarts; regression test `TiffRead.SingleStripCompressedRandomRowOrder`. |
+| T11 | LittleCMS optimised 16-bit transforms are off by thousands of codes near black. | `cmsFLAGS_NOOPTIMIZE` for ≥ 16-bit transforms (color.cpp). |
+| T12 | Loose card-size tolerances accept two touching prints as one bigger film type (2 × mini ≈ wide). | Card test uses ≤ 2.5 mm + 1 % when the DPI is known (RFC-0004 §A7); test `Detection.TouchingPrintsAreSplitContainedAndFlagged`. |
+| T13 | Scanner shadows (~1 mm) along print edges and dust on the glass pull edges outward; windows centred on an inflated proxy edge never reach real paper. | Outer profiles reach 2 mm further inside; crossings start after the last background run and must be paper coloured (RFC-0004 stage B). |
+| T14 | Test scenes that overlap prints are physically impossible and make detection look broken. | Place test cards with explicit mm spacing (`test_detection.cpp`); keep files with `FK_KEEP_TEST_FILES=1` to inspect a failing scene. |
 
 ## 6. Platform differences
 - Windows paths: always `std::filesystem::path` + wide APIs; never `fopen(path.string())`.

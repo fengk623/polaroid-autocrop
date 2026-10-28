@@ -3,7 +3,7 @@
 This document describes what is implemented. Sections marked **[planned]** describe accepted RFC
 designs not yet in code; they are updated in the same commit that implements them.
 
-Implementation status (2026-10-28): specs only; no product code yet.
+Implementation status (2026-10-28): core library `fkcore` (Phase 2) implemented with tests — image I/O, colour, metadata, geometry, detection, export, compositing, synthetic frame, relink, projects; `fkcli` and `fkfixture` tools. Not yet: jobs/batch scheduler, cache, diagnostics bundle, C ABI, Qt app (Phase 3+).
 
 ## 1. End-to-end data flow
 ```

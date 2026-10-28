@@ -29,16 +29,21 @@ CTest labels = minimal gates: `geometry`, `io`, `color`, `detect`, `export`, `re
   and never run in CI.
 - Tests copy any input they might touch into `fk::test::TempDir`; settings live in a temp `FK_SETTINGS_DIR`.
 
-## 4. Detection thresholds (enforced in CI on the seed-1 corpus)
-Initial values (to be tightened after measurements; changes require a commit explaining the measured numbers):
-| Metric | Threshold |
-| --- | --- |
-| inner_cut_violations | 0 |
-| outer slack median / P95 / max | ≤ 3 px / ≤ 8 px / ≤ 20 px |
-| inner error median / P95 | ≤ 3 px / ≤ 10 px |
-| count accuracy | 100 % on the CI corpus |
-| orientation accuracy | ≥ 99 % |
-| low-confidence recall | ≥ 90 % |
+## 4. Detection thresholds (CTest `eval_corpus`, label `eval`; seed-1 corpus of 12 scans, RFC-0016)
+| Metric | Threshold | Measured (24-scan corpus, 2026-10-28) |
+| --- | --- | --- |
+| cuts_on_detected (any confidence) | 0 | 0 |
+| missed_visible | 0 | 0 (10 low-visibility prints missed, all with `count_mismatch`) |
+| outer slack median / P95 / max (visible) | ≤ 3 px / ≤ 8 px / ≤ 20 px | 1.18 / 1.77 / 8.0 px |
+| inner error median / P95 (visible) | ≤ 3 px / ≤ 10 px | 0.08 / 0.45 px |
+| count accuracy (scans with only visible prints) | 100 % | 100 % |
+| orientation accuracy (visible) | ≥ 99 % | 100 % (film type 100 %) |
+| low-confidence recall | ≥ 90 % | 100 % |
+| detection time per 300–400 DPI A4 scan (median, 2 cores) | informational | 1.1 s |
+
+Low visibility = frame within ΔE 4 of the background (black on black). Such prints must never be cut when
+detected (conservative expansion, flagged); missing them is allowed only with the scan-level count warning.
+Thresholds change only in a commit that explains the measured numbers.
 
 ## 5. Round-trip thresholds
 | Case | Requirement |
