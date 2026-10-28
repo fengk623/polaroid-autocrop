@@ -14,6 +14,7 @@
 #include <QJsonDocument>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QRectF>
 
 #include <cstring>
 #include <functional>
@@ -117,6 +118,10 @@ int SelfTest::run() {
         check(QStringLiteral("badge Preview at fit"),
               canvas->property("badge").toString() == QLatin1String("Preview"),
               canvas->property("badge").toString());
+        const QRectF nav = canvas->property("navigatorView").toRectF();
+        check(QStringLiteral("whole scan visible at fit"),
+              canvas->property("atFit").toBool() && nav.width() > 0.999 && nav.height() > 0.999,
+              QStringLiteral("%1 × %2 of the scan").arg(nav.width(), 0, 'f', 3).arg(nav.height(), 0, 'f', 3));
         QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
         check(QStringLiteral("physical 100 %"),
               std::abs(canvas->property("zoomPercent").toDouble() - 100.0) < 0.01,

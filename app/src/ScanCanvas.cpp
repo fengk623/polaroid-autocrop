@@ -149,6 +149,8 @@ void ScanCanvas::onScanImage(const QString& scanId) {
         detail_ = QImage();
         handle_.reset();
         fit();
+    } else if (atFit_) {
+        fit(); // e.g. the proxy arrived after the scan was selected: fit the real size now
     } else {
         clampView();
     }

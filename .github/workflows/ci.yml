@@ -166,15 +166,24 @@ jobs:
           cmake --build build/deps
       - name: Configure (app + tools)
         run: |
+          set -o pipefail
+          # a ';' list is not converted by Git Bash on Windows, so pass CMake-style paths (C:/…) explicitly
+          np() { if command -v cygpath > /dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
+          mkdir -p build
           cmake -S . -B build/app -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_BUILD_APP=ON -DFK_BUILD_TESTS=OFF \
-            -DFK_WERROR=ON -DCMAKE_PREFIX_PATH="$PWD/build/deps-install;$QT_ROOT_DIR" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+            -DFK_WERROR=ON "-DCMAKE_PREFIX_PATH=$(np "$PWD/build/deps-install");$(np "$QT_ROOT_DIR")" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 2>&1 | tee build/app-configure.log
       - name: Build
         run: |
           set -o pipefail
-          cmake --build build/app -- -k 0 2>&1 | tee build/app/build.log
-      - name: Build errors as annotations
+          cmake --build build/app -- -k 0 2>&1 | tee build/app-build.log
+      - name: Configure/build errors as annotations
         if: failure()
-        run: python3 tools/ci-annotate.py build/app/build.log || python tools/ci-annotate.py build/app/build.log
+        run: |
+          for f in build/app-configure.log build/app-build.log; do
+            [ -f "$f" ] && { python3 tools/ci-annotate.py "$f" || python tools/ci-annotate.py "$f"; }
+          done
+          true
       - name: Self-test (offscreen, real controllers, snapshots)
         id: selftest
         run: |

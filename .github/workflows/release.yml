@@ -57,10 +57,11 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
+          mkdir -p build
           cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_BUILD_TESTS=OFF -DFK_WERROR=ON \
             -DCMAKE_PREFIX_PATH="$PWD/build/deps-install;$QT_ROOT_DIR" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
-            "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
-          cmake --build build/rel -- -k 0 2>&1 | tee build/rel-build.log
+            "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" 2>&1 | tee build/rel-build.log
+          cmake --build build/rel -- -k 0 2>&1 | tee -a build/rel-build.log
       - name: Build errors as annotations
         if: failure()
         run: python3 tools/ci-annotate.py build/rel-build.log
@@ -129,9 +130,11 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
+          np() { cygpath -m "$1"; }  # a ';' list is not converted by Git Bash, so pass C:/… paths
+          mkdir -p build
           cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_BUILD_TESTS=OFF -DFK_WERROR=ON \
-            -DCMAKE_PREFIX_PATH="$PWD/build/deps-install;$QT_ROOT_DIR"
-          cmake --build build/rel -- -k 0 2>&1 | tee build/rel-build.log
+            "-DCMAKE_PREFIX_PATH=$(np "$PWD/build/deps-install");$(np "$QT_ROOT_DIR")" 2>&1 | tee build/rel-build.log
+          cmake --build build/rel -- -k 0 2>&1 | tee -a build/rel-build.log
       - name: Build errors as annotations
         if: failure()
         run: python tools/ci-annotate.py build/rel-build.log

@@ -56,6 +56,8 @@ Rectangle {
             spacing: 2
             Text {
                 Layout.fillWidth: true
+                // too narrow to say anything useful: the rails and chips already show the scan facts
+                opacity: parent.width >= 90 ? 1 : 0
                 elide: Text.ElideMiddle
                 font.pixelSize: Theme.fontCaption
                 color: Theme.textSecondary
