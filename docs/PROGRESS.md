@@ -3,13 +3,19 @@
 Read this first after any interruption. Newest entry on top.
 
 ## Current state
-- Phase: 3 (Qt app) + 6 (packaging) implemented locally → push, CI on macOS/Windows, release v0.1.0
+- Phase: 3 (Qt app) + 6 (packaging) done; PR #1 phase-2-core → main; then release.yml → draft release v0.1.0
 - Branch: `phase-2-core`
-- Last full test run: 2026-10-28, Linux, 136/136 passed (incl. `eval_corpus`); app `--self-test` passes in
-  English and Chinese (offscreen, software scene graph)
+- Last full test run: 2026-10-28, CI green on Linux / macOS arm64 / Windows x64 (core 136 tests incl. `eval_corpus`,
+  app self-test); locally the app self-test also passes on the owner's real scans (4-up 800 DPI, single 1200 DPI)
 - Blockers: none. Host Qt 6.8.3 (Quick, Controls, offscreen) built at work/qt-host for UI tests.
 
 ## Log
+### 2026-10-28 — CI green, real-scan app run
+- Real 6213 × 7482 scan opened at 10 % and was cut off: the canvas fitted before the proxy existed. Fixed;
+  self-test now checks that the whole scan is visible at fit.
+- Windows canvas converts to the primary monitor's ICC profile; `--live` self-test for HV-02/03 captures;
+  self-test keeps its settings in its own folder.
+- CI: separate deps caches for core/app (T17), Windows CMake prefix paths via `cygpath -m`.
 ### 2026-10-28 — Phase 3 (app) and Phase 6 (release pipeline)
 - Qt Quick app (`app/`): AppController singleton, JobRunner lanes, ScanCanvas (proxy pyramid + full-resolution
   detail, contract overlays, handle editing, composite compare), rails/filmstrip/menus (macOS native menu bar,

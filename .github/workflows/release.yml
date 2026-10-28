@@ -1,11 +1,14 @@
 # Release (ADR-0013, RELEASE-CHECKLIST.md): builds the app on macOS (universal) and Windows (x64), packages
-# a DMG, a portable ZIP and an installer, runs the packaged app's self-test, and publishes a GitHub release
+# a DMG, a portable ZIP and an installer, runs the packaged app's self-test, and creates a draft GitHub release
 # with SHA-256 checksums. Builds are not code-signed (docs/INSTALL.md explains the first launch).
+# Pull requests to main build and smoke-test the packages too (artifacts only, nothing is published).
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       publish:
@@ -15,6 +18,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   QT_VERSION: "6.8.3"
