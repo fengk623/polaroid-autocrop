@@ -3,7 +3,8 @@
 # runs on Apple Silicon; Gatekeeper still asks — see docs/INSTALL.md). Usage:
 #   tools/release/package-macos.sh <build-dir> <out-dir> <version>
 set -euo pipefail
-BUILD=$1; OUT=$2; VER=$3
+BUILD=$(cd "$1" && pwd); VER=$3
+mkdir -p "$2"; OUT=$(cd "$2" && pwd)  # absolute: tools such as ISCC resolve relative paths elsewhere
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 APP="$BUILD/bin/FrameKeeper.app"
 QT_BIN="${QT_ROOT_DIR:?QT_ROOT_DIR not set}/bin"

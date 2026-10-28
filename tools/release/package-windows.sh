@@ -2,7 +2,8 @@
 # Packages build/<dir>/bin/FrameKeeper.exe: portable ZIP + Inno Setup installer (unsigned). Run in Git Bash
 # inside an MSVC developer environment. Usage: tools/release/package-windows.sh <build-dir> <out-dir> <version>
 set -euo pipefail
-BUILD=$1; OUT=$2; VER=$3
+BUILD=$(cd "$1" && pwd); VER=$3
+mkdir -p "$2"; OUT=$(cd "$2" && pwd)  # absolute: tools such as ISCC resolve relative paths elsewhere
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 QT="${QT_ROOT_DIR:?QT_ROOT_DIR not set}"
 STAGE="$OUT/stage/FrameKeeper"
