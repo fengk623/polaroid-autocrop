@@ -84,9 +84,22 @@ jobs:
           cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_BUILD_APP=OFF -DFK_WERROR=ON \
             -DCMAKE_PREFIX_PATH="$PWD/build/deps-install" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
       - name: Build
-        run: cmake --build build/ci
+        run: |
+          set -o pipefail
+          cmake --build build/ci 2>&1 | tee build/ci/build.log
+      - name: Build errors as annotations
+        if: failure()
+        run: python3 tools/ci-annotate.py build/ci/build.log || python tools/ci-annotate.py build/ci/build.log
       - name: Test (executed/skipped/duration report)
-        run: tools/run-tests.sh build/ci
+        id: test
+        run: |
+          set -o pipefail
+          tools/run-tests.sh build/ci 2>&1 | tee build/ci/test.log
+      - name: Test failures as annotations
+        if: failure() && steps.test.outcome == 'failure'
+        run: |
+          python3 tools/ci-annotate.py build/ci/test-report.xml || python tools/ci-annotate.py build/ci/test-report.xml
+          python3 tools/ci-annotate.py build/ci/test.log || python tools/ci-annotate.py build/ci/test.log
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4

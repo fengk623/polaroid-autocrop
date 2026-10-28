@@ -119,10 +119,11 @@ Detected detect(const std::filesystem::path& p, int expected, const Template* tm
     return d;
 }
 
-std::filesystem::path writeScene(const TempDir& dir, const Scene& s, const std::string& name) {
+std::filesystem::path writeScene(const TempDir& dir, const Scene& s, const std::string& name,
+                                 double taggedDpi = 0) {
     const auto p = dir / name;
     fk::test::TestTiffOptions o;
-    o.dpi = s.dpi;
+    o.dpi = taggedDpi > 0 ? taggedDpi : s.dpi;
     o.compression = COMPRESSION_LZW;
     fk::test::writeTestTiff(p, render(s), o);
     return p;
@@ -351,6 +352,71 @@ TEST(Detection, CancellationStops) {
     auto r = detectPrints(**src, *px, DetectParams{}, c, {});
     ASSERT_FALSE(r.ok());
     EXPECT_EQ(r.error().code, Errc::cancelled);
+}
+
+TEST(Detection, SinglePrintCroppedTightlyInTheScanner) {
+    // Real scans are often cropped to one print in the scanner software: no background at all (the frame
+    // is cut by the crop), or a thin dark sliver along some sides.
+    for (const double marginMm : {-1.0, 0.0, 0.6}) {
+        TempDir dir;
+        Scene s;
+        Card a;
+        s.wMm = a.w + 2 * marginMm;
+        s.hMm = a.h + 2 * marginMm;
+        s.bg = 0.05;
+        a.cx = s.wMm / 2 * pxPerMm(s);
+        a.cy = s.hMm / 2 * pxPerMm(s);
+        s.cards = {a};
+        const auto p = writeScene(dir, s, "single.tif");
+        const auto d = detect(p, 1);
+        ASSERT_EQ(d.res.items.size(), 1u) << "margin " << marginMm;
+        const DetectedItem& it = d.res.items[0];
+        const double W = static_cast<double>(d.src->info().width),
+                     H = static_cast<double>(d.src->info().height);
+        for (const Vec2& q : it.outer.quad.p) {
+            EXPECT_GE(q.x, -1e-9);
+            EXPECT_GE(q.y, -1e-9);
+            EXPECT_LE(q.x, W + 1e-9);
+            EXPECT_LE(q.y, H + 1e-9);
+        }
+        // every part of the card that is inside the scan is inside the outer
+        for (int k = 0; k <= 50; ++k)
+            for (const Vec2 uv : {Vec2{k * a.w / 50, 0}, Vec2{a.w, k * a.h / 50}, Vec2{k * a.w / 50, a.h},
+                                  Vec2{0, k * a.h / 50}}) {
+                Vec2 q = toScan(s, a, uv.x, uv.y);
+                q = {std::clamp(q.x, 0.0, W), std::clamp(q.y, 0.0, H)};
+                EXPECT_GE(signedDistance(it.outer, q), -0.5) << "margin " << marginMm;
+            }
+        EXPECT_EQ(it.filmTypeId, "instax_mini") << "margin " << marginMm;
+        ASSERT_EQ(it.inner.kind, ShapeKind::quad);
+        EXPECT_LE(maxInnerCornerError(s, a, it.inner), 3.0) << "margin " << marginMm;
+        EXPECT_GE(it.confidence, kLowConfidence) << "margin " << marginMm;
+    }
+}
+
+TEST(Detection, ScaledOutputWithNominalDpiTag) {
+    // The scanner software scaled the output to 103 % but tagged the nominal resolution.
+    TempDir dir;
+    Scene s = twoMinis();
+    s.dpi = 309;
+    for (Card& c : s.cards) {
+        c.cx *= 309.0 / 300.0;
+        c.cy *= 309.0 / 300.0;
+    }
+    const auto p = writeScene(dir, s, "scaled.tif", 300);
+    const auto d = detect(p, 2);
+    ASSERT_EQ(d.res.items.size(), 2u);
+    bool rescaled = false;
+    for (const auto& w : d.res.warnings)
+        rescaled = rescaled || w.rfind("dpi_rescaled", 0) == 0;
+    EXPECT_TRUE(rescaled);
+    EXPECT_NEAR(d.res.dpiUsed, 309, 4);
+    for (const Card& c : s.cards) {
+        const DetectedItem* it = nearest(d.res, c);
+        EXPECT_GE(worstContainment(s, c, it->outer), -0.5);
+        EXPECT_EQ(it->filmTypeId, "instax_mini");
+        EXPECT_LE(maxInnerCornerError(s, c, it->inner), 3.0);
+    }
 }
 
 TEST(Detection, BuiltinFilmTypesAreConsistent) {

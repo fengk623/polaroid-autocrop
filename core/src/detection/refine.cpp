@@ -234,6 +234,12 @@ Status refineItems(ImageSource& src, std::vector<DetectedItem>& items, double dp
             const Vec2 a = start.quad.p[s], b = start.quad.p[(s + 1) % 4];
             const double len = norm(b - a);
             const Line startLine{a, normalized(b - a)};
+            if (locked && i < locked->size() && (*locked)[i][s]) {
+                // abuts a neighbour or the scan border: nothing to measure against
+                finalLines[s] = Line{startLine.p - perp(startLine.d) * safetyPx, startLine.d};
+                st.sidesLocked++;
+                continue;
+            }
             std::vector<Vec2> pts, fitPts;
             std::vector<double> alongs;
             for (const auto& l : lines) {
@@ -249,11 +255,6 @@ Status refineItems(ImageSource& src, std::vector<DetectedItem>& items, double dp
                 alongs.push_back(l.along);
                 const double along = l.along * len;
                 if (along > cornerZone && along < len - cornerZone) fitPts.push_back(p);
-            }
-            if (locked && i < locked->size() && (*locked)[i][s]) {
-                finalLines[s] = Line{startLine.p - perp(startLine.d) * safetyPx, startLine.d};
-                st.sidesLocked++;
-                continue;
             }
             if (fitPts.size() < 6) {
                 // cannot refine this side: keep the (outward) proxy estimate
@@ -289,6 +290,7 @@ Status refineItems(ImageSource& src, std::vector<DetectedItem>& items, double dp
             }
             finalLines[s] = Line{L.p - perp(L.d) * (shift + safetyPx), L.d};
         }
+        st.measured = linesTotal > 0;
         st.validFraction = linesTotal ? static_cast<double>(validTotal) / linesTotal : 0.0;
         st.contrast = contrasts.empty() ? 0.0 : cv::median(contrasts);
         st.residualSigma = residAll.empty() ? 0.0 : *std::max_element(residAll.begin(), residAll.end());

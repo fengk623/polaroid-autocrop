@@ -73,6 +73,7 @@ PROGRESS.md updated · no visible control without an implementation.
 | T12 | Loose card-size tolerances accept two touching prints as one bigger film type (2 × mini ≈ wide). | Card test uses ≤ 2.5 mm + 1 % when the DPI is known (RFC-0004 §A7); test `Detection.TouchingPrintsAreSplitContainedAndFlagged`. |
 | T13 | Scanner shadows (~1 mm) along print edges and dust on the glass pull edges outward; windows centred on an inflated proxy edge never reach real paper. | Outer profiles reach 2 mm further inside; crossings start after the last background run and must be paper coloured (RFC-0004 stage B). |
 | T14 | Test scenes that overlap prints are physically impossible and make detection look broken. | Place test cards with explicit mm spacing (`test_detection.cpp`); keep files with `FK_KEEP_TEST_FILES=1` to inspect a failing scene. |
+| T15 | Real scans differ from synthetic ones: prints cropped tightly (no background at all), output scaled 103 % with the nominal DPI tag, soft lid glow on white backgrounds, real borders ±2 mm from nominal. | Single-print path, effective-DPI estimate, wide inner search (RFC-0004 A9–A10); tests `Detection.SinglePrintCroppedTightlyInTheScanner`, `Detection.ScaledOutputWithNominalDpiTag`. Re-check on real scans (HV-01) after any detection change. |
 
 ## 6. Platform differences
 - Windows paths: always `std::filesystem::path` + wide APIs; never `fopen(path.string())`.

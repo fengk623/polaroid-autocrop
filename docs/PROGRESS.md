@@ -9,6 +9,9 @@ Read this first after any interruption. Newest entry on top.
 - Blockers: none. Host Qt 6.8.3 (Quick, Controls, offscreen) built at work/qt-host for UI tests.
 
 ## Log
+### 2026-10-28 — real scans (HV-01, partly)
+- Owner's 5 test scans (kept outside the repo): fixed single-print scans (whole scan = print), effective-DPI estimate (803→826), wider inner search with real-edge preference, scan-edge penalty softened to "check recommended". 136/136 tests pass; synthetic eval unchanged.
+- CI: macOS/Windows build failures on phase-2-core; raw job logs are not reachable from the dev sandbox, so CI now emits build/test errors as annotations (`tools/ci-annotate.py`).
 ### 2026-10-28 — Phase 2 (core)
 - fkcore: TIFF source (strips/tiles/scanlines, LRU strip cache, sequential decode for single compressed strips — trap T10), sinks (TIFF/BigTIFF/Linear DNG/PNG/JPEG, temp→rename, never overwrite), colour (lcms2, NOOPTIMIZE for 16-bit — T11), metadata/XMP/privacy, geometry, OutputStage, export, composite, synthetic frame, relink signatures, projects/sidecars/templates.
 - Detection: hysteresis mask, card test with tight size tolerance (T12), hull splitting of touching/offset prints, faint-frame search, conservative expansion for invisible frames, stage B with shadow-proof profiles (T13) and locked sides for touching neighbours, gradient-based inner edges.

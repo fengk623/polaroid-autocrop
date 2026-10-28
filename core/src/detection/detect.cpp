@@ -109,6 +109,7 @@ struct Candidate {
     bool touchesEdge = false;
     bool split = false;
     bool imageOnly = false;
+    bool fillsScan = false; ///< the scan is a single print (cropped tightly in the scanner software)
     const FilmType* type = nullptr;
     int quarterTurns = 0; ///< CW turns from upright to current
     double innerConf = 0;
@@ -216,25 +217,31 @@ std::array<SideProfile, 4> sideProfiles(const LabImage& lab, const cv::RotRect& 
 
 /// Strongest straight edge near the predicted depth (gradient peak weighted by distance to the prior).
 EdgePick edgeNear(const SideProfile& sp, double predPx, double tolPx) {
-    EdgePick best;
-    double bestScore = 0;
+    // Strongest straight edge (peak/texture ≥ 2.5) near the prediction; weak texture peaks never win over a
+    // real edge because they are only considered when no real edge exists in the window.
+    EdgePick best, weak;
+    double bestScore = 0, weakScore = 0;
     for (size_t i = 1; i + 1 < sp.grad.size(); ++i) {
         const double d = sp.band0 + static_cast<double>(i);
         if (std::abs(d - predPx) > tolPx) continue;
         if (sp.grad[i] < sp.grad[i - 1] || sp.grad[i] < sp.grad[i + 1]) continue; // local maximum
         const double strength = sp.grad[i] / sp.gbase;
-        const double z = (d - predPx) / (0.6 * tolPx);
+        const double z = (d - predPx) / tolPx;
         const double score = strength * std::exp(-z * z);
-        if (score > bestScore) {
+        // parabolic sub-pixel peak
+        const double ym = sp.grad[i - 1], y0 = sp.grad[i], yp = sp.grad[i + 1];
+        const double den = ym - 2 * y0 + yp;
+        const double off = std::abs(den) > 1e-12 ? 0.5 * (ym - yp) / den : 0.0;
+        const EdgePick e{strength >= 2.5, d + std::clamp(off, -0.5, 0.5), strength};
+        if (e.found && score > bestScore) {
             bestScore = score;
-            // parabolic sub-pixel peak
-            const double ym = sp.grad[i - 1], y0 = sp.grad[i], yp = sp.grad[i + 1];
-            const double den = ym - 2 * y0 + yp;
-            const double off = std::abs(den) > 1e-12 ? 0.5 * (ym - yp) / den : 0.0;
-            best = {strength >= 2.5, d + std::clamp(off, -0.5, 0.5), strength};
+            best = e;
+        } else if (!e.found && score > weakScore) {
+            weakScore = score;
+            weak = e;
         }
     }
-    return best;
+    return best.found ? best : weak;
 }
 
 /// Upright border depths of a film type: top, right, bottom, left (mm).
@@ -264,8 +271,10 @@ double frameLikeFraction(const LabImage& lab, const cv::RotRect& r, const std::v
     return static_cast<double>(k) / localPts.size();
 }
 
+/// Search window around a predicted border: real prints deviate from nominal borders by up to ~2 mm
+/// (measured on Polaroid 600/i-Type scans); the peak choice is weighted towards the prediction.
 double borderTolMm(double border) {
-    return std::max(1.5, 0.3 * border);
+    return std::max(3.0, 0.5 * border);
 }
 
 TypeChoice chooseType(const LabImage& lab, Candidate& cand, double mmpp,
@@ -736,6 +745,83 @@ double maxBorderMm() {
     return m;
 }
 
+/// True when the scan itself has the size of one card (± a few mm): the user cropped one print in the
+/// scanner software.
+bool scanIsOneCard(double wmm, double hmm) {
+    for (const FilmType& t : builtinFilmTypes())
+        for (int o = 0; o < 2; ++o) {
+            const double W = o ? t.heightMm : t.widthMm, H = o ? t.widthMm : t.heightMm;
+            if (wmm >= W - 8 && wmm <= W + 12 && hmm >= H - 8 && hmm <= H + 12) return true;
+        }
+    return false;
+}
+
+/// Thin background margins along the scan border of a single-print scan (proxy px per side: top, right,
+/// bottom, left). A margin is a band at the border whose colour differs from the frame band 3–4 mm inside
+/// and that ends within 3 mm.
+std::array<double, 4> scanMargins(const LabImage& lab, double mmpp) {
+    std::array<double, 4> out{0, 0, 0, 0};
+    const double mm = 1.0 / mmpp;
+    const int maxD = static_cast<int>(4.0 * mm);
+    for (int side = 0; side < 4; ++side) {
+        const bool horiz = side == 0 || side == 2;
+        const int64_t len = horiz ? lab.w : lab.h;
+        std::vector<std::array<double, 3>> P;
+        for (int d = 0; d < maxD; ++d) {
+            double acc[3] = {0, 0, 0};
+            int n = 0;
+            for (int64_t k = len / 5; k < len * 4 / 5; k += 2) {
+                int64_t x = 0, y = 0;
+                switch (side) {
+                case 0:
+                    x = k;
+                    y = d;
+                    break;
+                case 1:
+                    x = lab.w - 1 - d;
+                    y = k;
+                    break;
+                case 2:
+                    x = k;
+                    y = lab.h - 1 - d;
+                    break;
+                default:
+                    x = d;
+                    y = k;
+                    break;
+                }
+                if (x < 0 || y < 0 || x >= lab.w || y >= lab.h) continue;
+                const float* c = lab.at(x, y);
+                for (int q = 0; q < 3; ++q)
+                    acc[q] += c[q];
+                ++n;
+            }
+            if (n == 0) break;
+            P.push_back({acc[0] / n, acc[1] / n, acc[2] / n});
+        }
+        if (P.size() < static_cast<size_t>(3.5 * mm)) continue;
+        std::array<double, 3> F{0, 0, 0};
+        int nf = 0;
+        for (size_t d = static_cast<size_t>(3.0 * mm); d < P.size(); ++d, ++nf)
+            for (int q = 0; q < 3; ++q)
+                F[q] += P[d][q];
+        for (int q = 0; q < 3; ++q)
+            F[q] /= std::max(1, nf);
+        auto dE = [&](size_t d) {
+            const double a = P[d][0] - F[0], b = P[d][1] - F[1], c = P[d][2] - F[2];
+            return std::sqrt(a * a + b * b + c * c);
+        };
+        const double edge = dE(0);
+        if (edge < 6.0) continue; // the border is frame coloured: no margin
+        for (size_t d = 1; d < static_cast<size_t>(3.0 * mm); ++d)
+            if (dE(d) < 0.5 * edge && (d + 1 >= P.size() || dE(d + 1) < 0.5 * edge)) {
+                out[side] = static_cast<double>(d);
+                break;
+            }
+    }
+    return out;
+}
+
 DetectedItem toItem(const Candidate& c, int scale, double mmpp) {
     DetectedItem it;
     const double s = static_cast<double>(scale);
@@ -811,7 +897,7 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
     res.dpiUsed = dpi;
     SizeTol tol;
     if (params.dpiOverride <= 0 && info.dpiX <= 0) tol = SizeTol{4.0, 0.03}; // resolution estimated
-    const double mmpp = proxy.scale * 25.4 / dpi;                            // mm per proxy pixel
+    double mmpp = proxy.scale * 25.4 / dpi;                                  // mm per proxy pixel
     if (proxy.width < 16 || proxy.height < 16) return makeError(Errc::invalid_argument, "Scan is too small");
 
     std::vector<Candidate> cands;
@@ -878,6 +964,38 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
         for (const auto& t : builtinFilmTypes())
             minCard = std::min(minCard, t.imageWidthMm * t.imageHeightMm);
         const double minArea = 0.6 * minCard / (mmpp * mmpp);
+        // Effective resolution: scanner software may scale the output (e.g. 103 %) while the file keeps the
+        // nominal DPI. Components with a card's aspect ratio (±2 %) and size (±6 %) measure the scale.
+        if (tol.mm < 4.0) {
+            std::vector<double> ratios;
+            for (const auto& comp : comps) {
+                if (comp.area < minArea) continue;
+                const cv::RotRect r = cv::minAreaRect(cv::convexHull(comp.boundaryCorners));
+                const double a = std::min(r.w, r.h) * mmpp, b = std::max(r.w, r.h) * mmpp;
+                double best = 0, bestDev = 1;
+                for (const FilmType& t : builtinFilmTypes()) {
+                    const double ta = std::min(t.widthMm, t.heightMm), tb = std::max(t.widthMm, t.heightMm);
+                    const double aspectErr = std::abs((b / a) / (tb / ta) - 1.0);
+                    const double ratio = std::sqrt(a * b / (ta * tb));
+                    if (aspectErr < 0.02 && std::abs(ratio - 1.0) < 0.06 && std::abs(ratio - 1.0) < bestDev) {
+                        best = ratio;
+                        bestDev = std::abs(ratio - 1.0);
+                    }
+                }
+                if (best > 0) ratios.push_back(best);
+            }
+            if (!ratios.empty()) {
+                const double k = cv::median(ratios);
+                if (std::abs(k - 1.0) >= 0.015) {
+                    char buf[96];
+                    std::snprintf(buf, sizeof buf, "dpi_rescaled: tagged %.0f, measured %.0f", dpi, dpi * k);
+                    res.warnings.push_back(buf);
+                    dpi *= k;
+                    res.dpiUsed = dpi;
+                    mmpp = proxy.scale * 25.4 / dpi;
+                }
+            }
+        }
         double maxCardLongMm = 0, minCardShortMm = std::numeric_limits<double>::max();
         for (const auto& t : builtinFilmTypes()) {
             maxCardLongMm = std::max(maxCardLongMm, std::max(t.widthMm, t.heightMm));
@@ -932,6 +1050,22 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
             if (c.touchesEdge) c.reasons.push_back("touches_scan_edge");
             cands.push_back(c);
         }
+        // A scan cropped to one print: the "background" sampled at the border is the frame itself.
+        const bool anyCard = std::any_of(cands.begin(), cands.end(), [&](const Candidate& c) {
+            return !c.imageOnly && matchesAnyCard(c.rect, mmpp, tol);
+        });
+        if (!anyCard && scanIsOneCard(static_cast<double>(lab.w) * mmpp, static_cast<double>(lab.h) * mmpp)) {
+            const auto m = scanMargins(lab, mmpp);
+            Candidate c;
+            c.rect.angle = 0;
+            c.rect.w = static_cast<double>(lab.w) - m[1] - m[3];
+            c.rect.h = static_cast<double>(lab.h) - m[0] - m[2];
+            c.rect.c = {m[3] + c.rect.w / 2, m[0] + c.rect.h / 2};
+            c.rectangularity = 1.0;
+            c.fillsScan = true;
+            c.reasons.push_back("print_fills_scan");
+            cands.assign(1, c);
+        }
         // Expected-count sanity: very small leftovers beyond maxCount are dropped (largest first).
         std::sort(cands.begin(), cands.end(),
                   [](const Candidate& a, const Candidate& b) { return a.rect.area() > b.rect.area(); });
@@ -942,8 +1076,10 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
         // Inner detection, film type and orientation per candidate.
         for (auto& c : cands) {
             // expand by one proxy pixel: partially covered edge pixels may have been below the threshold
-            c.rect.w += 2.0;
-            c.rect.h += 2.0;
+            if (!c.fillsScan) {
+                c.rect.w += 2.0;
+                c.rect.h += 2.0;
+            }
             detectInner(lab, c, mmpp);
             if (cancel.cancelled()) return cancelledError();
         }
@@ -963,10 +1099,22 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
     // side are foreground in the detection mask.
     std::vector<std::array<bool, 4>> locked(res.items.size(),
                                             std::array<bool, 4>{false, false, false, false});
+    std::vector<bool> neighbour(res.items.size(), false);
+    const double W = static_cast<double>(info.width), H = static_cast<double>(info.height);
+    for (size_t i = 0; i < res.items.size(); ++i) {
+        if (!cands[i].fillsScan) continue;
+        // sides on the scan border cannot be measured (the frame may continue beyond the scan)
+        for (int s = 0; s < 4; ++s) {
+            const Vec2 mid = (res.items[i].outer.quad.p[s] + res.items[i].outer.quad.p[(s + 1) % 4]) * 0.5;
+            const double tolPx = proxy.scale * 1.5;
+            locked[i][s] = mid.x < tolPx || mid.y < tolPx || mid.x > W - tolPx || mid.y > H - tolPx;
+        }
+    }
     if (finalMask.w > 0) {
         const double off = 1.5 / mmpp;
         for (size_t i = 0; i < res.items.size(); ++i)
             for (int s = 0; s < 4; ++s) {
+                if (cands[i].fillsScan) continue;
                 const Vec2 a = res.items[i].outer.quad.p[s] / static_cast<double>(proxy.scale),
                            b = res.items[i].outer.quad.p[(s + 1) % 4] / static_cast<double>(proxy.scale);
                 const Vec2 out = perp(normalized(b - a)) * -1.0;
@@ -980,6 +1128,7 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
                 }
                 locked[i][s] = n > 0 && hit > 0.3 * n;
                 if (locked[i][s]) {
+                    neighbour[i] = true;
                     auto& r = res.items[i].reasons;
                     if (std::find(r.begin(), r.end(), "touching_neighbour") == r.end())
                         r.push_back("touching_neighbour");
@@ -1000,6 +1149,17 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
             it.outer = expandShape(it.outer, proxy.scale + params.safetyMarginPx);
     }
 
+    // A single-print scan: the outer cannot extend beyond the scan.
+    for (size_t i = 0; i < res.items.size(); ++i) {
+        if (!cands[i].fillsScan) continue;
+        for (auto& p : res.items[i].outer.quad.p)
+            p = {std::clamp(p.x, 0.0, W), std::clamp(p.y, 0.0, H)};
+        if (res.items[i].outer.quad.p[0].x > 0.5 || res.items[i].outer.quad.p[0].y > 0.5 ||
+            std::abs(res.items[i].outer.quad.p[2].x - W) > 0.5 ||
+            std::abs(res.items[i].outer.quad.p[2].y - H) > 0.5)
+            res.items[i].reasons.push_back("scan_margin_trimmed");
+    }
+
     if (params.tmpl) {
         const double far = 1.5 * dpi / 25.4;
         for (auto& it : res.items)
@@ -1018,7 +1178,7 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
         auto has = [&](const char* r) {
             return std::find(it.reasons.begin(), it.reasons.end(), r) != it.reasons.end();
         };
-        if (params.refine) {
+        if (params.refine && stats[i].measured) {
             const auto& st = stats[i];
             it.contrast = st.contrast;
             if (st.contrast < 5.0) {
@@ -1033,15 +1193,16 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
             }
             if (st.residualSigma > 3.0) oc *= 0.8;
             if (st.sidesKept > 0) oc *= 0.6;
-            if (st.sidesLocked > 0) oc = std::min(oc, 0.55); // edge against a neighbour: always review
         } else {
             oc *= 0.8;
         }
+        if (neighbour[i]) oc = std::min(oc, 0.55); // edge against a neighbour: always review
         if (c.rectangularity < 0.9 && !c.imageOnly) oc *= 0.8;
         if (c.split) oc *= 0.55;
         if (c.imageOnly) oc = std::min(oc, 0.3);
+        if (c.fillsScan) oc = std::min(oc, 0.8);                // outline = scan border: check recommended
         if (has("low_frame_contrast")) oc = std::min(oc, 0.55); // found by averaging only: always review
-        if (c.touchesEdge) oc *= 0.5;
+        if (c.touchesEdge) oc = std::min(oc, 0.8); // may continue beyond the scan: check recommended
         if (!c.type) oc *= 0.6;
         if (has("template_snap_far")) oc *= 0.6;
         it.outerConfidence = std::clamp(oc, 0.0, 1.0);

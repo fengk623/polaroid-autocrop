@@ -31,7 +31,17 @@ Status: Accepted · Module: `core/detection` · PRD F02, F03, F09 · Tests: `tes
       (confidence ≤ 0.55, always reviewed).
    c. Otherwise **frame not visible**: grow every side by max(found growth, largest border of any film type)
       so that the real card is certainly contained → `frame_not_visible` (confidence ≤ 0.3).
-9. Film type and orientation: see Inner detection.
+9. **Effective resolution**: scanner software may scale the output (measured: 103 %) and keep the nominal
+   DPI tag. Components with a card's aspect ratio (±2 %) and size (±6 %) give the median scale k; when
+   |k − 1| ≥ 1.5 % the DPI used for detection becomes DPI·k (`dpi_rescaled` warning). Not applied when the DPI
+   is unknown.
+10. **Single-print scans** (cropped to one print in the scanner software): when no candidate is a card and the
+   scan itself is card sized (−8 … +12 mm), the whole scan is the print (`print_fills_scan`). Thin background
+   slivers along the border (colour differs from the frame band 3–4 mm inside, ending within 3 mm) are
+   trimmed. Sides on the scan border are locked (not refined, not counted in refinement statistics) and the
+   outer is clamped to the scan; confidence ≤ 0.8 (check recommended), since the frame may continue beyond
+   the scan.
+11. Film type and orientation: see Inner detection.
 
 ## Stage B — full-resolution refinement (memory O(band))
 All profile lines of all prints are sampled in one increasing-row pass (`readRows`, 64-row bands). Outer
@@ -54,8 +64,10 @@ proxy estimate is rejected. Round frames: 180 radial rays, robust circle fit.
 Per side of the print rectangle: frame colour F and spread τ from a band 1–3 mm inside the edge; for each
 depth, the fraction of non-frame pixels and the line-averaged gradient |ΔE(d+1) − ΔE(d−1)| over the central
 60 % of the side. For every film type × 4 orientations within size tolerance, the predicted border per side
-selects the strongest gradient peak within ±max(1.5 mm, 30 % of the border) weighted by distance to the
-prediction (peak/texture ≥ 2.5 = found; ≥ 4 = strong). Score = size error + per-side distance to prediction +
+selects the strongest real edge (peak/texture ≥ 2.5; ≥ 4 = strong) within ±max(3 mm, 50 % of the border),
+weighted by a Gaussian of the distance to the prediction; texture peaks are used only when no real edge
+exists. Real Polaroid 600 prints measured 5.6 / 6.8 / 7.9 / ≈21 mm borders (left/right/top/bottom) against
+the nominal 4.5 / 4.5 / 6 / 22 mm, so the window must be wide. Score = size error + per-side distance to prediction +
 corner evidence (round frames: the image-square corners are frame coloured). Best (type, orientation) wins;
 the inner quad uses found edges, the prior elsewhere (`inner_prior_fallback`). Left/right asymmetry
 > max(1.5 mm, 35 %) → `inner_asymmetric`. Round frames: radial refinement on the proxy, circle prior otherwise
@@ -64,7 +76,7 @@ the inner quad uses found edges, the prior elsewhere (`inner_prior_fallback`). L
 ## Confidence
 Outer: contrast/noise (< 5 → ×0.3 `low_contrast`, < 10 → ×0.75), valid line fraction (< 0.6 → ×0.6
 `refine_residual`), residual spread > 3 px ×0.8, unrefined sides ×0.6, rectangularity < 0.9 ×0.8, split ×0.55,
-touching scan edge ×0.5, no film type ×0.6, caps for `frame_not_visible` (0.3), `low_frame_contrast` and locked
+touching scan edge ≤ 0.8, single-print scan ≤ 0.8, no film type ×0.6, caps for `frame_not_visible` (0.3), `low_frame_contrast` and locked
 sides (0.55). Inner: found edge count/strength, symmetry, full-resolution valid fraction. Combined = min(outer,
 inner); < 0.6 low (must review), 0.6–0.85 medium, ≥ 0.85 high. A count different from the expected count adds
 `count_mismatch` to every item and a scan warning. Reasons are machine-readable strings.

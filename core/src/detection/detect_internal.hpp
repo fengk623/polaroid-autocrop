@@ -27,7 +27,8 @@ struct RefineStats {
     double validFraction = 0; ///< fraction of outer profile lines with a detectable edge
     double contrast = 0;      ///< median paper/background distance divided by noise
     double residualSigma = 0; ///< robust spread of edge points around the fitted lines (px)
-    int sidesLocked = 0;      ///< sides abutting a neighbour (kept at the proxy estimate)
+    int sidesLocked = 0;      ///< sides abutting a neighbour or the scan border (kept at the proxy estimate)
+    bool measured = false;    ///< at least one outer side was measured (stats above are meaningful)
     int sidesKept = 0;        ///< sides that could not be refined (proxy estimate kept)
     double innerValidFraction = 0;
 };
