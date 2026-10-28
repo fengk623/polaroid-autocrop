@@ -86,7 +86,7 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          cmake --build build/ci 2>&1 | tee build/ci/build.log
+          cmake --build build/ci -- -k 0 2>&1 | tee build/ci/build.log
       - name: Build errors as annotations
         if: failure()
         run: python3 tools/ci-annotate.py build/ci/build.log || python tools/ci-annotate.py build/ci/build.log

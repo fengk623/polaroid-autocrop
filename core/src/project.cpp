@@ -104,7 +104,9 @@ Result<Fingerprint> fingerprintFile(const std::filesystem::path& p, bool full) {
     if (ec) return makeError(Errc::not_found, "File not found", pathToUtf8(p));
     const auto ft = std::filesystem::last_write_time(p, ec);
     if (!ec) {
-        const auto sys = std::chrono::clock_cast<std::chrono::system_clock>(ft);
+        // portable file_clock → system_clock (std::chrono::clock_cast is missing from Apple's libc++)
+        const auto sys = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+            ft - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
         const std::time_t t = std::chrono::system_clock::to_time_t(sys);
         std::tm tm{};
 #if defined(_WIN32)

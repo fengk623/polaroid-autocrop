@@ -4,8 +4,10 @@
 #include <new>
 
 #if defined(_WIN32)
-#include <psapi.h>
 #include <windows.h>
+
+// psapi.h needs the declarations of windows.h (keep it in its own include block)
+#include <psapi.h>
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <sys/resource.h>
