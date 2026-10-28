@@ -1,0 +1,21 @@
+{
+  "schema": "fk.film-types/1",
+  "note": "Priors only; detection measures every print. Sources and assumptions: docs/film-types.md",
+  "types": [
+    {"id": "polaroid_600", "name": "Polaroid 600 / i-Type / SX-70", "card": [88.0, 107.0],
+     "image": {"shape": "quad", "left": 4.5, "top": 6.0, "width": 79.0, "height": 79.0},
+     "cornerRadius": 1.0, "tolerance": 4.0, "approximatePlacement": true},
+    {"id": "polaroid_round", "name": "Polaroid Round Frame", "card": [88.0, 107.0],
+     "image": {"shape": "ellipse", "left": 6.5, "top": 8.0, "width": 75.0, "height": 75.0},
+     "cornerRadius": 1.0, "tolerance": 4.0, "approximatePlacement": true},
+    {"id": "instax_mini", "name": "Instax Mini", "card": [54.0, 86.0],
+     "image": {"shape": "quad", "left": 4.0, "top": 6.0, "width": 46.0, "height": 62.0},
+     "cornerRadius": 3.0, "tolerance": 3.0, "approximatePlacement": true},
+    {"id": "instax_square", "name": "Instax Square", "card": [72.0, 85.6],
+     "image": {"shape": "quad", "left": 5.0, "top": 7.0, "width": 62.0, "height": 62.0},
+     "cornerRadius": 3.0, "tolerance": 3.0, "approximatePlacement": true},
+    {"id": "instax_wide", "name": "Instax Wide", "card": [108.0, 86.0],
+     "image": {"shape": "quad", "left": 4.5, "top": 6.5, "width": 99.0, "height": 62.0},
+     "cornerRadius": 3.0, "tolerance": 4.0, "approximatePlacement": true}
+  ]
+}

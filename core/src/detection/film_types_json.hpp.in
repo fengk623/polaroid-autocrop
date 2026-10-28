@@ -1,0 +1,5 @@
+// Generated from core/detection/film_types.json — do not edit.
+#pragma once
+namespace fk::detail {
+inline constexpr const char* kFilmTypesJson = R"fkjson(@FK_FILM_TYPES_JSON@)fkjson";
+}
