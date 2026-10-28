@@ -12,7 +12,12 @@
 
 namespace fkapp {
 
-/// Converts rows of a scan (its bit depth, 1–4 channels) to sRGB RGB32.
+/// The profile the canvas converts to (ADR-0003, AGENTS §6): on Windows the primary monitor's ICC profile
+/// when one is installed and usable (Windows does not colour-manage windows), else sRGB; sRGB on macOS, where
+/// Qt windows are sRGB-tagged and the system converts to the display. FK_DISPLAY_SRGB=1 forces sRGB.
+const fk::Profile& displayProfile();
+
+/// Converts rows of a scan (its bit depth, 1–4 channels) to display RGB32 (see displayProfile()).
 class DisplayConverter {
   public:
     /// `icc` empty = untagged (shown as sRGB / grey 2.2).

@@ -1,10 +1,60 @@
 #include "Display.hpp"
 
+#include <QtGlobal>
+
 #include <algorithm>
 #include <cstring>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+
+#include <cwchar>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#endif
+
 namespace fkapp {
+
+namespace {
+fk::Profile loadDisplayProfile() {
+#ifdef _WIN32
+    if (qEnvironmentVariableIntValue("FK_DISPLAY_SRGB") == 1) return fk::Profile::sRGB();
+    HDC dc = GetDC(nullptr);
+    if (!dc) return fk::Profile::sRGB();
+    std::wstring path;
+    DWORD n = 0;
+    GetICMProfileW(dc, &n, nullptr);
+    if (n > 0 && n < 32768) {
+        path.assign(n, L'\0');
+        if (GetICMProfileW(dc, &n, path.data()))
+            path.resize(std::wcslen(path.c_str()));
+        else
+            path.clear();
+    }
+    ReleaseDC(nullptr, dc);
+    if (path.empty()) return fk::Profile::sRGB();
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (bytes.size() < 132 || bytes.size() > (64u << 20)) return fk::Profile::sRGB();
+    auto p = fk::Profile::fromIcc(bytes);
+    // only RGB output profiles that lcms can actually target
+    if (!p || !p->isRgb()) return fk::Profile::sRGB();
+    if (!fk::Transform::create(fk::Profile::sRGB(), {3, 8, false}, *p, {3, 8, false},
+                               fk::Intent::relative_colorimetric, true))
+        return fk::Profile::sRGB();
+    return *p;
+#else
+    return fk::Profile::sRGB();
+#endif
+}
+} // namespace
+
+const fk::Profile& displayProfile() {
+    static const fk::Profile p = loadDisplayProfile();
+    return p;
+}
 
 bool DisplayConverter::init(const fk::ImageInfo& info) {
     info_ = info;
@@ -16,11 +66,12 @@ bool DisplayConverter::init(const fk::ImageInfo& info) {
         if (p && ((gray_ && p->isGray()) || (!gray_ && p->isRgb()))) src = *p;
     }
     const bool alpha = info.channels == 2 || info.channels == 4;
-    auto t1 = fk::Transform::create(src, {colorCh_, info.bitsPerSample, alpha}, fk::Profile::sRGB(),
-                                    {3, 8, false}, fk::Intent::relative_colorimetric, true);
+    const fk::Profile& dst = displayProfile();
+    auto t1 = fk::Transform::create(src, {colorCh_, info.bitsPerSample, alpha}, dst, {3, 8, false},
+                                    fk::Intent::relative_colorimetric, true);
     if (!t1) return false;
     rowTransform_ = *t1;
-    auto t2 = fk::Transform::create(src, {colorCh_, 32, false}, fk::Profile::sRGB(), {3, 8, false},
+    auto t2 = fk::Transform::create(src, {colorCh_, 32, false}, dst, {3, 8, false},
                                     fk::Intent::relative_colorimetric, true);
     if (!t2) return false;
     proxyTransform_ = *t2;

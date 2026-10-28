@@ -29,8 +29,8 @@ What shipped differs from the plan above in these ways:
   `OverlayItem` and no 256 px tile cache.
 - Thumbnails come from a synchronous `QQuickImageProvider` over in-memory proxies (`image://fk/scan|item/…`);
   there is no disk thumbnail cache yet (RFC-0014), so a reopened project re-reads each scan once.
-- Display conversion is scan → sRGB once per proxy/detail (ADR-0003). The monitor profile is not read; on
-  wide-gamut monitors the OS's handling of an sRGB window decides what is shown (HV-02).
+- Display conversion runs once per proxy/detail (ADR-0003): to sRGB on macOS (sRGB-tagged windows), to the
+  primary monitor's ICC profile on Windows (docs/color-pipeline.md). Per-monitor profiles are not tracked.
 - Undo/redo is per print (up to 100 steps each, boundaries, upright, reviewed) and in memory only; it is not
   saved with the project.
 - Translations: `app/i18n/<lang>.json` loaded by `JsonTranslator`; `tools/check-i18n.py` fails CI when a

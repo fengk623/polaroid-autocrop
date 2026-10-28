@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish a GitHub release (otherwise only build artifacts)"
+        description: "Create a draft GitHub release with the packages (otherwise only build artifacts)"
         type: boolean
         default: false
 
@@ -159,7 +159,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish release
+    name: Draft release
     needs: [macos, windows]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
     runs-on: ubuntu-24.04
@@ -184,5 +184,7 @@ jobs:
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber
           else
-            gh release create "$TAG" release/* --target "$GITHUB_SHA" --title "FrameKeeper $VER" --notes-file "$NOTES"
+            # draft: the owner reviews the files and publishes the release (which creates the tag)
+            gh release create "$TAG" release/* --draft --target "$GITHUB_SHA" --title "FrameKeeper $VER" \
+              --notes-file "$NOTES"
           fi

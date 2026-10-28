@@ -1,9 +1,11 @@
 # RELEASE-CHECKLIST
 
-Automated by `tools/release/release.sh` (Linux/macOS) and `tools/release/release.ps1` (Windows) and
-`.github/workflows/release.yml`. A release is only tagged when every box is ticked with evidence.
+Automated by `.github/workflows/release.yml` (packaging: `tools/release/package-macos.sh`,
+`tools/release/package-windows.sh`). Run it with "publish" to get a **draft** GitHub release; the owner reviews
+the draft and publishes it, which creates the tag. A release is only published when every box is ticked with
+evidence.
 
-- [ ] `VERSION` bumped (single source); `CHANGELOG.md` entry; Release Notes generated (`tools/release/notes.py`).
+- [ ] `VERSION` bumped (single source); `CHANGELOG.md` entry; release notes in `docs/release-notes/v<VERSION>.md`.
 - [ ] CI green on Linux, macOS (arm64), Windows (x64) for the tagged commit.
 - [ ] Full test suite: executed/skipped/duration report attached; zero unexpected skips.
 - [ ] Detection eval on the CI corpus meets TEST-PLAN thresholds; numbers in Release Notes.
