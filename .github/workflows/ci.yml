@@ -36,6 +36,8 @@ jobs:
         run: python3 tools/check-no-network.py
       - name: clang-format
         run: tools/check-format.sh
+      - name: Every UI string translated (zh_CN)
+        run: python3 tools/check-i18n.py
 
   core:
     name: Core ${{ matrix.name }}
@@ -56,23 +58,23 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - name: Tools (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
-      - name: Tools (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ninja || true
       - name: MSVC environment (Windows)
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: CMake (pinned)
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: "3.31.6"
+      - name: Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
       - name: Cache dependencies
         id: deps-cache
         uses: actions/cache@v4
         with:
           path: build/deps-install
-          key: deps-${{ matrix.name }}-${{ hashFiles('cmake/deps/**') }}
+          key: deps-core-${{ matrix.name }}-${{ hashFiles('cmake/deps/**') }}
       - name: Build dependencies (superbuild, pinned tags)
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
@@ -81,16 +83,132 @@ jobs:
           cmake --build build/deps
       - name: Configure (core + tools + tests, no app)
         run: |
+          set -o pipefail
+          mkdir -p build
           cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_BUILD_APP=OFF -DFK_WERROR=ON \
-            -DCMAKE_PREFIX_PATH="$PWD/build/deps-install" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+            -DCMAKE_PREFIX_PATH="$PWD/build/deps-install" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 2>&1 | tee build/core-configure.log
       - name: Build
-        run: cmake --build build/ci
+        run: |
+          set -o pipefail
+          cmake --build build/ci -- -k 0 2>&1 | tee build/ci/build.log
+      - name: Configure/build errors as annotations
+        if: failure()
+        run: |
+          for f in build/core-configure.log build/ci/build.log; do
+            [ -f "$f" ] && { python3 tools/ci-annotate.py "$f" || python tools/ci-annotate.py "$f"; }
+          done
+          true
       - name: Test (executed/skipped/duration report)
-        run: tools/run-tests.sh build/ci
+        id: test
+        run: |
+          set -o pipefail
+          tools/run-tests.sh build/ci 2>&1 | tee build/ci/test.log
+      - name: Test failures as annotations
+        if: failure() && steps.test.outcome == 'failure'
+        run: |
+          python3 tools/ci-annotate.py build/ci/test-report.xml || python tools/ci-annotate.py build/ci/test-report.xml
+          python3 tools/ci-annotate.py build/ci/test.log || python tools/ci-annotate.py build/ci/test.log
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-report-core-${{ matrix.name }}
           path: build/ci/test-report.xml
+          if-no-files-found: warn
+
+  app:
+    name: App ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+            qt_arch: linux_gcc_64
+          - name: macos-arm64
+            os: macos-14
+            qt_arch: clang_64
+          - name: windows-x64
+            os: windows-2022
+            qt_arch: win64_msvc2022_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: CMake (pinned)
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: "3.31.6"
+      - name: Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: System libraries for Qt (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - name: Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: ${{ matrix.qt_arch }}
+          cache: true
+      - name: Cache dependencies
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: build/deps-install
+          key: deps-app-${{ matrix.name }}-${{ hashFiles('cmake/deps/**') }}
+      - name: Build dependencies (superbuild, pinned tags)
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          cmake -S cmake/deps -B build/deps -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_DEPS_WITH_TESTS=OFF \
+            -DFK_DEPS_PREFIX="$PWD/build/deps-install" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          cmake --build build/deps
+      - name: Configure (app + tools)
+        run: |
+          set -o pipefail
+          # a ';' list is not converted by Git Bash on Windows, so pass CMake-style paths (C:/…) explicitly
+          np() { if command -v cygpath > /dev/null; then cygpath -m "$1"; else echo "$1"; fi; }
+          mkdir -p build
+          cmake -S . -B build/app -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_BUILD_APP=ON -DFK_BUILD_TESTS=OFF \
+            -DFK_WERROR=ON "-DCMAKE_PREFIX_PATH=$(np "$PWD/build/deps-install");$(np "$QT_ROOT_DIR")" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 2>&1 | tee build/app-configure.log
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake --build build/app -- -k 0 2>&1 | tee build/app-build.log
+      - name: Configure/build errors as annotations
+        if: failure()
+        run: |
+          for f in build/app-configure.log build/app-build.log; do
+            [ -f "$f" ] && { python3 tools/ci-annotate.py "$f" || python tools/ci-annotate.py "$f"; }
+          done
+          true
+      - name: Self-test (offscreen, real controllers, snapshots)
+        id: selftest
+        run: |
+          set -o pipefail
+          build/app/bin/fkfixture --out build/selftest-scan.tif --dpi 300 --count 3 --seed 3 --bits 16
+          case "$RUNNER_OS" in
+            macOS) APP=build/app/bin/FrameKeeper.app/Contents/MacOS/FrameKeeper ;;
+            Windows) APP=build/app/bin/FrameKeeper.exe ;;
+            *) APP=build/app/bin/FrameKeeper ;;
+          esac
+          FK_SETTINGS_DIR="$PWD/build/selftest-settings" QT_QPA_PLATFORM=offscreen \
+            "$APP" --self-test "$PWD/build/selftest" --scan "$PWD/build/selftest-scan.tif" 2>&1 | tee build/selftest.log
+      - name: Self-test failures as annotations
+        if: failure() && steps.selftest.outcome == 'failure'
+        run: python3 tools/ci-annotate.py build/selftest.log || python tools/ci-annotate.py build/selftest.log
+      - name: Upload self-test report and snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-${{ matrix.name }}
+          path: build/selftest/
           if-no-files-found: warn

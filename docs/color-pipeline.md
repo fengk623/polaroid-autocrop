@@ -21,3 +21,12 @@ Rules
 2. Assign never changes numbers; convert never leaves the old tag.
 3. Bit depth: 16-bit paths use `TYPE_RGB_16` transforms; floats only for DNG linearisation.
 4. Untagged scans display as sRGB with an "untagged" chip; exports stay untagged unless the user assigns.
+
+## Display (as implemented in v0.1.0)
+
+- macOS: scan → sRGB 8-bit; Qt windows are sRGB-tagged and macOS converts to the display.
+- Windows: scan → the primary monitor's ICC profile (`GetICMProfileW`), read once at start-up; sRGB when no
+  profile is installed, it is not an RGB profile, or lcms cannot target it. A window on a second monitor with a
+  different profile still uses the primary monitor's profile. `FK_DISPLAY_SRGB=1` forces sRGB.
+- Overlays, handles and the canvas surround are drawn in sRGB and never pass through the image transform.
+- Not yet verified with a colorimeter (HV-04).

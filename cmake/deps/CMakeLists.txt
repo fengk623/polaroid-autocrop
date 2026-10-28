@@ -41,8 +41,15 @@ set(_common_args
   -DBUILD_SHARED_LIBS=OFF
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 )
+# Universal macOS builds pass "arm64;x86_64": ExternalProject needs a different list separator.
+set(_png_hw ON)
 if(CMAKE_OSX_ARCHITECTURES)
-  list(APPEND _common_args "-DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}")
+  string(REPLACE ";" "|" _archs "${CMAKE_OSX_ARCHITECTURES}")
+  list(APPEND _common_args "-DCMAKE_OSX_ARCHITECTURES=${_archs}")
+  list(LENGTH CMAKE_OSX_ARCHITECTURES _narch)
+  if(_narch GREATER 1)
+    set(_png_hw OFF) # NEON and SSE sources cannot be selected per slice
+  endif()
 endif()
 if(CMAKE_OSX_DEPLOYMENT_TARGET)
   list(APPEND _common_args -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
@@ -58,6 +65,7 @@ if(CMAKE_CXX_COMPILER)
 endif()
 
 ExternalProject_Add(zlib
+  LIST_SEPARATOR |
   GIT_REPOSITORY https://github.com/madler/zlib.git
   GIT_TAG ${FK_ZLIB_TAG}
   GIT_SHALLOW ON
@@ -66,16 +74,18 @@ ExternalProject_Add(zlib
 )
 
 ExternalProject_Add(libpng
+  LIST_SEPARATOR |
   DEPENDS zlib
   GIT_REPOSITORY https://github.com/pnggroup/libpng.git
   GIT_TAG ${FK_LIBPNG_TAG}
   GIT_SHALLOW ON
   UPDATE_DISCONNECTED ON
   CMAKE_ARGS ${_common_args} -DPNG_SHARED=OFF -DPNG_STATIC=ON -DPNG_TESTS=OFF
-             -DPNG_TOOLS=OFF -DPNG_FRAMEWORK=OFF -DPNG_HARDWARE_OPTIMIZATIONS=ON
+             -DPNG_TOOLS=OFF -DPNG_FRAMEWORK=OFF -DPNG_HARDWARE_OPTIMIZATIONS=${_png_hw}
 )
 
 ExternalProject_Add(libjpeg
+  LIST_SEPARATOR |
   GIT_REPOSITORY https://github.com/libjpeg-turbo/libjpeg-turbo.git
   GIT_TAG ${FK_LIBJPEG_TAG}
   GIT_SHALLOW ON
@@ -85,6 +95,7 @@ ExternalProject_Add(libjpeg
 )
 
 ExternalProject_Add(libtiff
+  LIST_SEPARATOR |
   DEPENDS zlib libjpeg
   GIT_REPOSITORY ${FK_LIBTIFF_REPO}
   GIT_TAG ${FK_LIBTIFF_TAG}
@@ -98,6 +109,7 @@ ExternalProject_Add(libtiff
 )
 
 ExternalProject_Add(lcms2
+  LIST_SEPARATOR |
   GIT_REPOSITORY https://github.com/mm2/Little-CMS.git
   GIT_TAG ${FK_LCMS2_TAG}
   GIT_SHALLOW ON
@@ -109,6 +121,7 @@ ExternalProject_Add(lcms2
 )
 
 ExternalProject_Add(nlohmann_json
+  LIST_SEPARATOR |
   GIT_REPOSITORY https://github.com/nlohmann/json.git
   GIT_TAG ${FK_JSON_TAG}
   GIT_SHALLOW ON
@@ -118,6 +131,7 @@ ExternalProject_Add(nlohmann_json
 
 if(FK_DEPS_WITH_TESTS)
   ExternalProject_Add(googletest
+    LIST_SEPARATOR |
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG ${FK_GTEST_TAG}
     GIT_SHALLOW ON
