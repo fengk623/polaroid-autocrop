@@ -19,14 +19,25 @@
 #include <cstring>
 
 int main(int argc, char* argv[]) {
-    // Self-test runs headless: offscreen platform and the software scene graph (no GPU needed in CI).
-    bool selfTest = false;
-    for (int i = 1; i < argc; ++i)
-        if (std::strcmp(argv[i], "--self-test") == 0) selfTest = true;
-    if (selfTest) {
+    // Self-test runs headless (offscreen platform, software scene graph: no GPU needed in CI) unless --live
+    // is given, which keeps the real window and graphics backend for captures on a person's machine
+    // (HV-02/03).
+    bool selfTest = false, live = false;
+    const char* selfTestDir = nullptr;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--self-test") == 0) {
+            selfTest = true;
+            if (i + 1 < argc) selfTestDir = argv[i + 1];
+        }
+        if (std::strcmp(argv[i], "--live") == 0) live = true;
+    }
+    if (selfTest && !live) {
         if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
     }
+    // The self-test changes settings (export folder, formats); keep them away from the user's own settings.
+    if (selfTest && selfTestDir && qEnvironmentVariableIsEmpty("FK_SETTINGS_DIR"))
+        qputenv("FK_SETTINGS_DIR", QByteArray(selfTestDir) + "/settings");
 
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("FrameKeeper"));
@@ -41,12 +52,15 @@ int main(int argc, char* argv[]) {
     parser.addHelpOption();
     parser.addVersionOption();
     QCommandLineOption selfTestOpt(QStringLiteral("self-test"),
-                                   QStringLiteral("Run the offscreen self-test into <dir>."),
+                                   QStringLiteral("Run the self-test, writing results into <dir>."),
                                    QStringLiteral("dir"));
     QCommandLineOption scanOpt(QStringLiteral("scan"), QStringLiteral("Scan used by the self-test."),
                                QStringLiteral("tif"));
+    QCommandLineOption liveOpt(QStringLiteral("live"),
+                               QStringLiteral("Run the self-test in a real window with the GPU backend."));
     parser.addOption(selfTestOpt);
     parser.addOption(scanOpt);
+    parser.addOption(liveOpt);
     parser.addPositionalArgument(QStringLiteral("files"),
                                  QStringLiteral("Scans (.tif) or a project (.fkproj) to open."));
     parser.process(app);
