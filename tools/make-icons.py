@@ -48,11 +48,39 @@ def render(size: int) -> Image.Image:
     return img.resize((size, size), Image.LANCZOS)
 
 
+def write_ico(path: Path, big: Image.Image, sizes) -> None:
+    """Classic ICO layout: 32-bit BMP (DIB + AND mask) entries below 256 px, PNG only for 256 px.
+    Some tools (installer builders, older Windows APIs) reject PNG-compressed small entries."""
+    import io
+    import struct
+
+    entries = []
+    for s in sizes:
+        im = big.resize((s, s), Image.LANCZOS).convert("RGBA")
+        if s >= 256:
+            buf = io.BytesIO()
+            im.save(buf, "PNG")
+            data = buf.getvalue()
+        else:
+            px = im.tobytes("raw", "BGRA")
+            rows = [px[y * s * 4:(y + 1) * s * 4] for y in range(s)][::-1]  # bottom-up
+            mask_row = ((s + 31) // 32) * 4
+            header = struct.pack("<IiiHHIIiiII", 40, s, 2 * s, 1, 32, 0, s * s * 4 + mask_row * s, 0, 0, 0, 0)
+            data = header + b"".join(rows) + b"\0" * (mask_row * s)
+        entries.append((s, data))
+    out = struct.pack("<HHH", 0, 1, len(entries))
+    offset = 6 + 16 * len(entries)
+    for s, data in entries:
+        out += struct.pack("<BBBBHHII", s % 256, s % 256, 0, 0, 1, 32, len(data), offset)
+        offset += len(data)
+    path.write_bytes(out + b"".join(d for _, d in entries))
+
+
 def main(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     big = render(1024)
     big.save(out / "icon.png")
-    big.save(out / "FrameKeeper.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+    write_ico(out / "FrameKeeper.ico", big, [16, 24, 32, 48, 64, 128, 256])
     big.save(out / "FrameKeeper.icns")
     print("icons written to", out)
 

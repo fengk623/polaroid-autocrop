@@ -73,7 +73,9 @@ jobs:
         if: failure()
         run: python3 tools/ci-annotate.py build/rel-build.log
       - name: Package DMG
-        run: tools/release/package-macos.sh build/rel dist "$VER"
+        run: |
+          set -o pipefail
+          tools/release/package-macos.sh build/rel dist "$VER" 2>&1 | tee build/package.log
       - name: Smoke test of the packaged app (arm64 and x86_64 slices)
         run: |
           set -o pipefail
@@ -87,9 +89,11 @@ jobs:
           else
             echo "Rosetta not available: x86_64 slice not executed" | tee -a build/smoke.log
           fi
-      - name: Smoke test failures as annotations
+      - name: Packaging/smoke test failures as annotations
         if: failure()
-        run: python3 tools/ci-annotate.py build/smoke.log
+        run: |
+          for f in build/package.log build/smoke.log; do [ -f "$f" ] && python3 tools/ci-annotate.py "$f"; done
+          true
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -146,16 +150,20 @@ jobs:
         if: failure()
         run: python tools/ci-annotate.py build/rel-build.log
       - name: Package ZIP and installer
-        run: tools/release/package-windows.sh build/rel dist "$VER"
+        run: |
+          set -o pipefail
+          tools/release/package-windows.sh build/rel dist "$VER" 2>&1 | tee build/package.log
       - name: Smoke test of the deployed folder (no Qt on PATH)
         run: |
           set -o pipefail
           build/rel/bin/fkfixture.exe --out build/smoke.tif --dpi 300 --count 3 --seed 5
           PATH="/c/Windows/system32:/c/Windows" QT_QPA_PLATFORM=offscreen FK_SETTINGS_DIR="$PWD/build/smoke-settings" \
             dist/stage/FrameKeeper/FrameKeeper.exe --self-test "$PWD/build/smoke" --scan "$PWD/build/smoke.tif" 2>&1 | tee build/smoke.log
-      - name: Smoke test failures as annotations
+      - name: Packaging/smoke test failures as annotations
         if: failure()
-        run: python tools/ci-annotate.py build/smoke.log
+        run: |
+          for f in build/package.log build/smoke.log; do [ -f "$f" ] && python tools/ci-annotate.py "$f"; done
+          true
       - uses: actions/upload-artifact@v4
         with:
           name: windows

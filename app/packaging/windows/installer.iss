@@ -14,8 +14,9 @@ DefaultGroupName=FrameKeeper
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+; "x64" (not "x64compatible") so that any Inno Setup 6 release compiles this script
+ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
 OutputDir={#OutputDir}
 OutputBaseFilename=FrameKeeper-{#AppVersion}-Windows-x64-Setup
 SetupIconFile={#RepoRoot}\app\resources\FrameKeeper.ico
@@ -29,9 +30,6 @@ MinVersion=10.0
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"
-#ifexist "compiler:Languages\ChineseSimplified.isl"
-Name: "zh"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
-#endif
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
