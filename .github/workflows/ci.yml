@@ -74,7 +74,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/deps-install
-          key: deps-${{ matrix.name }}-${{ hashFiles('cmake/deps/**') }}
+          key: deps-core-${{ matrix.name }}-${{ hashFiles('cmake/deps/**') }}
       - name: Build dependencies (superbuild, pinned tags)
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
@@ -83,15 +83,21 @@ jobs:
           cmake --build build/deps
       - name: Configure (core + tools + tests, no app)
         run: |
+          set -o pipefail
+          mkdir -p build
           cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_BUILD_APP=OFF -DFK_WERROR=ON \
-            -DCMAKE_PREFIX_PATH="$PWD/build/deps-install" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+            -DCMAKE_PREFIX_PATH="$PWD/build/deps-install" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 2>&1 | tee build/core-configure.log
       - name: Build
         run: |
           set -o pipefail
           cmake --build build/ci -- -k 0 2>&1 | tee build/ci/build.log
-      - name: Build errors as annotations
+      - name: Configure/build errors as annotations
         if: failure()
-        run: python3 tools/ci-annotate.py build/ci/build.log || python tools/ci-annotate.py build/ci/build.log
+        run: |
+          for f in build/core-configure.log build/ci/build.log; do
+            [ -f "$f" ] && { python3 tools/ci-annotate.py "$f" || python tools/ci-annotate.py "$f"; }
+          done
+          true
       - name: Test (executed/skipped/duration report)
         id: test
         run: |
@@ -157,7 +163,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/deps-install
-          key: deps-${{ matrix.name }}-${{ hashFiles('cmake/deps/**') }}
+          key: deps-app-${{ matrix.name }}-${{ hashFiles('cmake/deps/**') }}
       - name: Build dependencies (superbuild, pinned tags)
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
