@@ -11,7 +11,7 @@ function(fk_add_gtest name label)
   fk_set_warnings(${name})
   gtest_discover_tests(${name}
     DISCOVERY_TIMEOUT 60
-    PROPERTIES LABELS "${label}" SKIP_REGULAR_EXPRESSION "\\[  SKIPPED \\]")
+    PROPERTIES LABELS "${label}" SKIP_REGULAR_EXPRESSION "  SKIPPED ")
 endfunction()
 
 fk_add_gtest(test_version core core/test_version.cpp)

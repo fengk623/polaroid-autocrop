@@ -1,6 +1,11 @@
 // fkfixture — streaming TIFF writer, ICC profile and preview PNG.
 #include "output.hpp"
 
+// libpng reports errors with longjmp (C4611 is expected here).
+#if defined(_MSC_VER)
+#pragma warning(disable : 4611 4324)
+#endif
+
 #include <lcms2.h>
 #include <png.h>
 #include <tiffio.h>

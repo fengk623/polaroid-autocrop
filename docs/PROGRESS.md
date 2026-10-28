@@ -3,12 +3,23 @@
 Read this first after any interruption. Newest entry on top.
 
 ## Current state
-- Phase: 2 (core) complete locally → push, CI on macOS/Windows, then Phase 3 (Qt app)
+- Phase: 3 (Qt app) + 6 (packaging) implemented locally → push, CI on macOS/Windows, release v0.1.0
 - Branch: `phase-2-core`
-- Last full test run: 2026-10-28, Linux, 134/134 passed (incl. `eval_corpus`), no skips
+- Last full test run: 2026-10-28, Linux, 136/136 passed (incl. `eval_corpus`); app `--self-test` passes in
+  English and Chinese (offscreen, software scene graph)
 - Blockers: none. Host Qt 6.8.3 (Quick, Controls, offscreen) built at work/qt-host for UI tests.
 
 ## Log
+### 2026-10-28 — Phase 3 (app) and Phase 6 (release pipeline)
+- Qt Quick app (`app/`): AppController singleton, JobRunner lanes, ScanCanvas (proxy pyramid + full-resolution
+  detail, contract overlays, handle editing, composite compare), rails/filmstrip/menus (macOS native menu bar,
+  in-window menu elsewhere), dialogs for export / relink / final / templates / settings, zh_CN translation
+  (478 strings, `tools/check-i18n.py` in CI), self-test covering import → detect → export → relink → final
+  (bit-exact round trip) → synthetic frame → project round trip.
+- TIFF error messages now keep numbers in `detail` so the message itself is translatable.
+- CI `app` job (Linux/macOS/Windows, Qt 6.8.3, self-test); `release.yml` builds a universal DMG and a Windows
+  installer (Inno Setup) + portable ZIP, smoke-tests them, publishes with SHA256SUMS and release notes.
+- Docs: README (en/zh), docs/INSTALL.md, docs/release-notes/v0.1.0.md, RFC-0010/0011 implementation notes.
 ### 2026-10-28 — real scans (HV-01, partly)
 - Owner's 5 test scans (kept outside the repo): fixed single-print scans (whole scan = print), effective-DPI estimate (803→826), wider inner search with real-edge preference, scan-edge penalty softened to "check recommended". 136/136 tests pass; synthetic eval unchanged.
 - CI: macOS/Windows build failures on phase-2-core; raw job logs are not reachable from the dev sandbox, so CI now emits build/test errors as annotations (`tools/ci-annotate.py`).

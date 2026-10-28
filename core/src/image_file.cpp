@@ -6,6 +6,12 @@
 #include "fk/version.hpp"
 #include "sink_base.hpp"
 
+// libpng/libjpeg report errors with longjmp; no object with a non-trivial destructor is created between
+// setjmp and the library calls in this file (C4611), and the padded error struct is intended (C4324).
+#if defined(_MSC_VER)
+#pragma warning(disable : 4611 4324)
+#endif
+
 #include <jpeglib.h>
 #include <png.h>
 

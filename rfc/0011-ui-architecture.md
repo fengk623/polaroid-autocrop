@@ -17,3 +17,21 @@ Status: Accepted · Module: `app/` · PRD F04, F15 · Contract: `CONTRACT-ui-cor
 - Platform layer `platform/{macos,windows}`: display ICC, memory-pressure notifications, file reveal, menu flavour.
 - Self-test mode `FrameKeeper --self-test <dir>`: offscreen QPA + software backend, loads a generated fixture,
   runs detect/export/composite through the UI controllers, captures window snapshots, writes a JSON report.
+
+## Implementation notes (v0.1.0)
+
+What shipped differs from the plan above in these ways:
+- One `AppController` (QML singleton `FrameKeeper.Core/App`) holds the project and exposes models
+  (`ScanListModel`, `ItemListModel`, `JobModel`) and invokables; export, relink and composite are methods on it
+  rather than separate controllers.
+- `ScanCanvas` is a `QQuickPaintedItem` that paints a proxy pyramid, a full-resolution detail patch of the
+  visible region (worker thread, 150 ms debounce) and the overlays/handles itself; there is no separate
+  `OverlayItem` and no 256 px tile cache.
+- Thumbnails come from a synchronous `QQuickImageProvider` over in-memory proxies (`image://fk/scan|item/…`);
+  there is no disk thumbnail cache yet (RFC-0014), so a reopened project re-reads each scan once.
+- Display conversion is scan → sRGB once per proxy/detail (ADR-0003). The monitor profile is not read; on
+  wide-gamut monitors the OS's handling of an sRGB window decides what is shown (HV-02).
+- Undo/redo is per print (up to 100 steps each, boundaries, upright, reviewed) and in memory only; it is not
+  saved with the project.
+- Translations: `app/i18n/<lang>.json` loaded by `JsonTranslator`; `tools/check-i18n.py` fails CI when a
+  `qsTr`/`tr` string or core error message lacks a zh_CN translation.

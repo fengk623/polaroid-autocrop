@@ -60,8 +60,8 @@ Status readTiffInfo(TIFF* t, const std::filesystem::path& path, ImageInfo& info,
         return makeError(Errc::unsupported_format, "TIFF without PhotometricInterpretation is not supported");
     if (w == 0 || h == 0) return makeError(Errc::damaged_file, "TIFF has zero width or height");
     if (bps != 8 && bps != 16)
-        return makeError(Errc::unsupported_format, "Only 8- and 16-bit TIFFs are supported (this file has " +
-                                                       std::to_string(bps) + " bits)");
+        return makeError(Errc::unsupported_format, "Only 8- and 16-bit TIFFs are supported",
+                         "bits per sample: " + std::to_string(bps));
     if (fmt != SAMPLEFORMAT_UINT)
         return makeError(Errc::unsupported_format, "Floating-point or signed TIFF samples are not supported");
 
@@ -93,16 +93,17 @@ Status readTiffInfo(TIFF* t, const std::filesystem::path& path, ImageInfo& info,
     case PHOTOMETRIC_ITULAB:
         return makeError(Errc::unsupported_format, "Lab TIFFs are not supported");
     default:
-        return makeError(Errc::unsupported_format,
-                         "Unsupported TIFF photometric interpretation " + std::to_string(photo));
+        return makeError(Errc::unsupported_format, "Unsupported TIFF photometric interpretation",
+                         "PhotometricInterpretation " + std::to_string(photo));
     }
     const bool gray = info.photometric != Photometric::rgb;
     if (gray && spp != 1 && spp != 2)
         return makeError(Errc::unsupported_format,
-                         "Greyscale TIFF with " + std::to_string(spp) + " samples per pixel");
+                         "Greyscale TIFF with an unsupported number of samples per pixel",
+                         "samples per pixel: " + std::to_string(spp));
     if (!gray && spp != 3 && spp != 4)
-        return makeError(Errc::unsupported_format,
-                         "RGB TIFF with " + std::to_string(spp) + " samples per pixel");
+        return makeError(Errc::unsupported_format, "RGB TIFF with an unsupported number of samples per pixel",
+                         "samples per pixel: " + std::to_string(spp));
     if (raw.ycbcrJpeg && planar != PLANARCONFIG_CONTIG)
         return makeError(Errc::unsupported_format, "Planar YCbCr JPEG TIFF is not supported");
 
@@ -133,8 +134,8 @@ Status readTiffInfo(TIFF* t, const std::filesystem::path& path, ImageInfo& info,
         break;
     default:
         if (!TIFFIsCODECConfigured(comp))
-            return makeError(Errc::unsupported_format,
-                             "TIFF compression scheme " + std::to_string(comp) + " is not supported");
+            return makeError(Errc::unsupported_format, "TIFF compression scheme is not supported",
+                             "Compression " + std::to_string(comp));
         info.compression = Compression::other;
     }
     info.tiled = TIFFIsTiled(t) != 0;

@@ -1,0 +1,185 @@
+# Release (ADR-0013, RELEASE-CHECKLIST.md): builds the app on macOS (universal) and Windows (x64), packages
+# a DMG, a portable ZIP and an installer, runs the packaged app's self-test, and publishes a GitHub release
+# with SHA-256 checksums. Builds are not code-signed (docs/INSTALL.md explains the first launch).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish a GitHub release (otherwise only build artifacts)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  QT_VERSION: "6.8.3"
+
+jobs:
+  macos:
+    name: macOS universal
+    runs-on: macos-14
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: "3.31.6"
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: clang_64
+          cache: true
+      - name: Version
+        run: echo "VER=$(tr -d ' \n' < VERSION)" >> "$GITHUB_ENV"
+      - name: Cache dependencies
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: build/deps-install
+          key: deps-macos-universal-${{ hashFiles('cmake/deps/**') }}
+      - name: Dependencies (arm64 + x86_64)
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          cmake -S cmake/deps -B build/deps -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_DEPS_WITH_TESTS=OFF \
+            -DFK_DEPS_PREFIX="$PWD/build/deps-install" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+          cmake --build build/deps
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_BUILD_TESTS=OFF -DFK_WERROR=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/build/deps-install;$QT_ROOT_DIR" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+          cmake --build build/rel -- -k 0 2>&1 | tee build/rel-build.log
+      - name: Build errors as annotations
+        if: failure()
+        run: python3 tools/ci-annotate.py build/rel-build.log
+      - name: Package DMG
+        run: tools/release/package-macos.sh build/rel dist "$VER"
+      - name: Smoke test of the packaged app (arm64 and x86_64 slices)
+        run: |
+          set -o pipefail
+          lipo -info build/rel/bin/FrameKeeper.app/Contents/MacOS/FrameKeeper
+          build/rel/bin/fkfixture --out build/smoke.tif --dpi 300 --count 3 --seed 5
+          QT_QPA_PLATFORM=offscreen FK_SETTINGS_DIR="$PWD/build/smoke-settings" \
+            build/rel/bin/FrameKeeper.app/Contents/MacOS/FrameKeeper --self-test "$PWD/build/smoke-arm64" --scan "$PWD/build/smoke.tif" 2>&1 | tee build/smoke.log
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            QT_QPA_PLATFORM=offscreen FK_SETTINGS_DIR="$PWD/build/smoke-settings-x64" arch -x86_64 \
+              build/rel/bin/FrameKeeper.app/Contents/MacOS/FrameKeeper --self-test "$PWD/build/smoke-x86_64" --scan "$PWD/build/smoke.tif" 2>&1 | tee -a build/smoke.log
+          else
+            echo "Rosetta not available: x86_64 slice not executed" | tee -a build/smoke.log
+          fi
+      - name: Smoke test failures as annotations
+        if: failure()
+        run: python3 tools/ci-annotate.py build/smoke.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/*.dmg
+            build/smoke-arm64/report.json
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: "3.31.6"
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Version
+        run: echo "VER=$(tr -d ' \r\n' < VERSION)" >> "$GITHUB_ENV"
+      - name: Cache dependencies
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: build/deps-install
+          key: deps-windows-x64-rel-${{ hashFiles('cmake/deps/**') }}
+      - name: Dependencies
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          cmake -S cmake/deps -B build/deps -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_DEPS_WITH_TESTS=OFF \
+            -DFK_DEPS_PREFIX="$PWD/build/deps-install"
+          cmake --build build/deps
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake -S . -B build/rel -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_BUILD_TESTS=OFF -DFK_WERROR=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/build/deps-install;$QT_ROOT_DIR"
+          cmake --build build/rel -- -k 0 2>&1 | tee build/rel-build.log
+      - name: Build errors as annotations
+        if: failure()
+        run: python tools/ci-annotate.py build/rel-build.log
+      - name: Package ZIP and installer
+        run: tools/release/package-windows.sh build/rel dist "$VER"
+      - name: Smoke test of the deployed folder (no Qt on PATH)
+        run: |
+          set -o pipefail
+          build/rel/bin/fkfixture.exe --out build/smoke.tif --dpi 300 --count 3 --seed 5
+          PATH="/c/Windows/system32:/c/Windows" QT_QPA_PLATFORM=offscreen FK_SETTINGS_DIR="$PWD/build/smoke-settings" \
+            dist/stage/FrameKeeper/FrameKeeper.exe --self-test "$PWD/build/smoke" --scan "$PWD/build/smoke.tif" 2>&1 | tee build/smoke.log
+      - name: Smoke test failures as annotations
+        if: failure()
+        run: python tools/ci-annotate.py build/smoke.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.zip
+            dist/*Setup.exe
+            build/smoke/report.json
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [macos, windows]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect files and checksums
+        run: |
+          VER=$(tr -d ' \n' < VERSION)
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          mkdir -p release
+          find artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*Setup.exe' \) -exec cp {} release/ \;
+          (cd release && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+      - name: Create or update the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$VER"
+          NOTES="docs/release-notes/$TAG.md"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber
+          else
+            gh release create "$TAG" release/* --target "$GITHUB_SHA" --title "FrameKeeper $VER" --notes-file "$NOTES"
+          fi
