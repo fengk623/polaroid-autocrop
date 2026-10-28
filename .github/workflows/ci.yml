@@ -1,0 +1,96 @@
+# CI (ADR-0013): builds and tests the core on Linux, macOS and Windows on every push/PR.
+# What CI cannot verify: real Epson scans, real-window rendering, display colour accuracy and the 8 GB
+# device tier — see docs/HUMAN-VERIFICATION.md.
+name: CI
+
+on:
+  push:
+    branches: [main, "phase-*", "feature/*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.8.3"
+
+jobs:
+  docs:
+    name: Docs and repository checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Relative links in Markdown resolve
+        run: python3 tools/check-docs.py
+      - name: No large or forbidden files tracked
+        run: python3 tools/check-repo.py
+      - name: Third-party licences listed
+        run: python3 tools/check-licenses.py
+      - name: No network APIs in product code (offline guarantee)
+        run: python3 tools/check-no-network.py
+      - name: clang-format
+        run: tools/check-format.sh
+
+  core:
+    name: Core ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-24.04
+          - name: macos-arm64
+            os: macos-14
+          - name: windows-x64
+            os: windows-2022
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja || true
+      - name: MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Cache dependencies
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: build/deps-install
+          key: deps-${{ matrix.name }}-${{ hashFiles('cmake/deps/**') }}
+      - name: Build dependencies (superbuild, pinned tags)
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          cmake -S cmake/deps -B build/deps -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DFK_DEPS_PREFIX="$PWD/build/deps-install" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          cmake --build build/deps
+      - name: Configure (core + tools + tests, no app)
+        run: |
+          cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DFK_BUILD_APP=OFF -DFK_WERROR=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/build/deps-install" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+      - name: Build
+        run: cmake --build build/ci
+      - name: Test (executed/skipped/duration report)
+        run: tools/run-tests.sh build/ci
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-core-${{ matrix.name }}
+          path: build/ci/test-report.xml
+          if-no-files-found: warn

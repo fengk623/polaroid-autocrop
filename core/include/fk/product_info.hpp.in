@@ -1,0 +1,13 @@
+// Generated from cmake/ProductInfo.cmake — do not edit.
+#pragma once
+namespace fk::product {
+inline constexpr const char* kName = "@FK_PRODUCT_NAME@";
+inline constexpr const char* kId = "@FK_PRODUCT_ID@";
+inline constexpr const char* kVersion = "@FK_VERSION@";
+inline constexpr const char* kBundleId = "@FK_BUNDLE_ID@";
+inline constexpr const char* kProjectExt = "@FK_PROJECT_EXT@";
+inline constexpr const char* kSidecarSuffix = "@FK_SIDECAR_SUFFIX@";
+inline constexpr const char* kTemplateSuffix = "@FK_TEMPLATE_SUFFIX@";
+inline constexpr const char* kXmpNamespace = "@FK_XMP_NAMESPACE@";
+inline constexpr const char* kRepoUrl = "@FK_REPO_URL@";
+} // namespace fk::product
