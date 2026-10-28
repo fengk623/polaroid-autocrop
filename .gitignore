@@ -1,0 +1,46 @@
+# Build output (all builds go out-of-tree under build*/)
+/build*/
+/out/
+/install/
+CMakeUserPresets.json
+*.user
+compile_commands.json
+.cache/
+.clangd/
+
+# IDEs / OS
+.vscode/
+.idea/
+.vs/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Never commit: user scans, private photos, generated fixtures, caches, signing material
+/private/
+/scans/
+*.tif
+*.tiff
+*.TIF
+*.TIFF
+*.dng
+*.DNG
+!tests/data/tiny/*.tif
+!tests/data/tiny/*.tiff
+/tests/generated/
+/fixtures-out/
+*.p12
+*.pfx
+*.cer
+*.mobileprovision
+*.keychain*
+.env
+*.pem
+
+# Packaging output
+*.dmg
+*.msi
+*.zip
+*.7z
+/dist/
