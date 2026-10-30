@@ -14,14 +14,14 @@
 | UX-04 | P1 | 整张扫描件旋转 | U014 | 自检场景 `upright`（现状观察）；整图旋转回归（计划） | U：图 6–7；R：转正只改导出方向、画布不变 | 未开始（已复现） |
 | UX-05 | P1 | 图库首页与图库内审阅 | U018、U019、U020 | 计划 | U：图 8–12 | 未开始 |
 | UX-06 | P1 | 两个工作区与顶部工具栏 | U021 | FEATURE-FREEZE 回归 | U：图 13 | 未开始 |
-| UX-07 | P1 | 回导修复、取消必需侧车 | U003、U004（主体）、U005、U006、U007 | `ExportRecords.*`（U003）；`RelinkV2.*` ×12（U004）；自检 U003 4 项、U004 9 项（替换 3 个已知问题）；场景 `relink` R1–R6 | U：图 14–15；R：R2/R4/R6 复现；U003：导出不再需要侧车；U004：改名无元数据→按画面列为候选、指定相片后自动选中；`_1` 后缀按文件名+画面匹配；新会话→指定相片新建对位，合成与整张相片逐像素一致 | 部分完成（U003 侧车可选；U004 证据模型与目标优先；旋转持久化 U005、ICC U006、变更校验 U007；图 14 文件名空白待 Windows） |
+| UX-07 | P1 | 回导修复、取消必需侧车 | U003、U004（主体）、U005、U006、U007 | `ExportRecords.*`（U003）；`RelinkV2.*` ×12（U004）；自检 U003 4 项、U004 9 项（替换 3 个已知问题）；场景 `relink` R1–R6 | U：图 14–15；R：R2/R4/R6 复现；U003：导出不再需要侧车；U004：改名无元数据→按画面列为候选、指定相片后自动选中；`_1` 后缀按文件名+画面匹配；新会话→指定相片新建对位，合成与整张相片逐像素一致 | 部分完成（U003 侧车可选；U004 证据模型与目标优先；U005 旋转与缩放确认并持久化；ICC U006、变更校验 U007；图 14 文件名空白待 Windows） |
 | UX-08 | P1 | 自然融合蒙版默认值 | U015 | 计划 | U：图 16–17 | 未开始 |
 | UX-09 | P2 | 数值拖动与双击输入 | U016 | 计划 | U：图 16–17 | 未开始 |
 | UX-10 | P2 | 边缘折叠条与全宽底部导航 | U022 | 计划 | U：图 18–24 | 未开始 |
 | UX-11 | P2 | 简化应用图标 | U023 | 计划 | U：第 8 项 | 未开始 |
 | UX-12 | P1 | worklog、完成总结、使用指南 | U001 起每个 Unit；U029 定稿 | 文档检查（tools/check-docs.py） | WORKLOG 自 2026-10-30 起 | 进行中 |
 | FK-001 | P1 | 未保存工程切换保护 | U008 | 自检场景（计划） | S：Main.qml 仅退出有确认（新建/打开/拖入直接替换） | 未开始（源码确认） |
-| FK-002 | P1 | 回链旋转传递到合成 | U005 | 应用 known-issue “180° same-size graded file composited without rotation” | R：内容检测建议 180°，最终输出与未旋转相片不一致 | 未开始（已复现） |
+| FK-002 | P1 | 回链旋转传递到合成 | U005 | 核心 `RelinkTransform.*` ×3；自检 FK-002 5 项；场景 R7 | R：修复前内容检测建议 180°，最终输出与未旋转相片不一致；U005：确认的旋转保存于工程，最终输出与整张相片导出逐像素一致，保存重开后仍一致 | 已完成（自动验证；真实窗口待验收） |
 | FK-003 | P1 | 缺失 ICC 解释与持久化 | U006 | 计划 | S：需求文档审查；待 U006 复现 | 未开始 |
 | FK-004 | P1 | 隐私预设覆盖 XMP 作者 | U009 | 核心 `KnownIssue.FK004_RemoveIdentityDropsCreatorFromSourceXmp`（WILL_FAIL） | R：测试失败，XMP 含 dc:creator | 未开始（已复现） |
 | FK-005 | P1 | 统一内存预算与缓存生命周期 | U017 | 计划（批次内存测量） | S | 未开始 |
@@ -46,15 +46,17 @@
 | UX-07 renamed graded file without XMP or sidecar: no match | 应用自检 known-issue | UX-07 | 可选目标并完成回导 | 已转常规（U004）：“renamed file without metadata: offered by its picture, not pre-selected”“renamed file relinks once its print is chosen” | U004 |
 | UX-07 editor suffix _1 without XMP: no match | 应用自检 known-issue | UX-07 | 证据匹配或手动选目标 | 已转常规（U004）：“editor suffix _1 matched by name and picture” | U004 |
 | UX-07 new session: unchanged export cannot be relinked | 应用自检 known-issue | UX-07 | 保存后的工程重开可回导；未保存时有恢复快照 | 已转常规（U003 保存重开；U004 新建对位 4 项）；恢复快照仍待 U008 | U003/U004（U008） |
-| FK-002 180° same-size graded file composited without rotation | 应用自检 known-issue | FK-002 | 合成使用确认的旋转 | 复现 | U005 |
+| FK-002 180° same-size graded file composited without rotation | 应用自检 known-issue | FK-002 | 合成使用确认的旋转 | 已转常规（U005）：5 项 FK-002 检查 | U005 |
 | FK-010 16→8-bit export still claims bit-identical pixels | 应用自检 known-issue | FK-010 | 提示依据真实输出计划 | 复现 | U010 |
 | FK-011 MinIsWhite full-resolution display is inverted | 应用自检 known-issue（场景） | FK-011 | 预览与原始分辨率一致 | 复现 | U025 |
 
 ## Release 登记
+
+自 2026-10-30 16:13 起不逐 Unit 发布（PLAN §4）；下表只登记已发布版本与合并情况。
 
 | 版本 | Unit | PR | 提交 | Tag | Release | 平台 |
 | --- | --- | --- | --- | --- | --- | --- |
 | v0.5.0 | 基线 | #2 | `ce93e057a0e60485075d41bbac912b59919f48db` | `v0.5.0` | [Pre-release](https://github.com/fengk623/polaroid-autocrop/releases/tag/v0.5.0)（草稿由所有者发布） | macOS universal、Windows x64 |
 | v0.6.0-alpha.1 | U001 | #3 | `3c009f881254fd3494861e63f2a1a636640245fe` | `v0.6.0-alpha.1` | [Pre-release](https://github.com/fengk623/polaroid-autocrop/releases/tag/v0.6.0-alpha.1)（运行 41122756426，发布后 SHA-256 校验通过） | macOS universal、Windows x64 |
 | v0.6.0-alpha.2 | U002 | #4 | `7413e55c81cefe184c3e9dd14a05ca8c8401c08c` | 不建 | 不发布（运行 41128749850 已取消；所有者调整为全部完成后统一发布） | — |
-| v0.6.0-alpha.3 | U003 | #5 | 待合并 | 不建 | 不单独发布 | — |
+| v0.6.0-alpha.3 | U003 | #5 | 已合并 | 不建 | 不单独发布 | — |

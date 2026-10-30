@@ -3,6 +3,11 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.6.0-alpha.5 — U005: confirmed relink transform (FK-002)
+- The turn a graded file was given in the editor is limited by its size, decided by the picture or chosen by the
+  user, confirmed by ticking, stored with the relink and used as stored by preview and output (fixes 180° files
+  composited upside down). Notes: docs/release-notes/v0.6.0-alpha.5.md.
+
 ## 0.6.0-alpha.4 — U004: target-first relink, evidence model (UX-07)
 - Relink weighs file hash, embedded IDs, file name and picture together; conflicts and ambiguities are shown, never
   resolved silently; "Relink to this print…" (target first); "Assign to …" re-checks a file against a chosen print.

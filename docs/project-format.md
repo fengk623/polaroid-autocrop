@@ -23,7 +23,10 @@ All files: UTF-8 JSON, LF, 2-space indent, keys in lower camelCase. Unknown keys
       "upright": 0, "confidence": 0.93, "reasons": [], "reviewed": false, "excluded": false,
       "edits": [{"editVersionId": "uuid", "version": 1, "path": "…_P01_EDIT_v001.tif",
                  "sidecar": "", "exportedAt": "ISO-8601",
-                 "relinked": {"path": "…", "sha256": "hex", "matchedBy": "xmp", "at": "ISO-8601"}}],
+                 "relinked": {"path": "…", "sha256": "hex", "matchedBy": "file_hash+embedded_ids+content",
+                              "at": "ISO-8601",
+                              "transform": {"rotate": 2, "rotateSource": "content", "scale": false,
+                                            "lowerDepth": false, "contentScore": 0.97, "gradedSize": [w, h]}}}],
       "composite": {"maskMode": "hard_edge", "featherPx": 0, "preserveEdgePx": 0, "strokes": [],
                     "lastOutput": null},
       "history": {"undo": [], "redo": []}
@@ -40,6 +43,12 @@ Compatibility: `exportRecords` is a new **top-level** key in the same schema `fk
 0.6.0-alpha.3 preserve unknown top-level keys verbatim, so they open, edit and save such projects without losing the
 records (they just do not use them). Opening an older project imports the readable sidecar files of its exports
 into `exportRecords` (saved with the next save), so those exports keep relinking after their sidecars are gone.
+`edits[].relinked.transform` (since 0.6.0-alpha.5, FK-002): the transform the user confirmed when relinking —
+`rotate` = 90° clockwise turns from the export to the graded file (undone when compositing), `rotateSource`
+none/content/user, `scale` (resampling to the export size confirmed), `lowerDepth`, `contentScore`, `gradedSize`.
+Preview and output use it as stored. Absent (relinks of earlier versions; earlier versions drop it on save): the
+turn is taken from the picture only when unambiguous. `matchedBy` lists the supporting evidence since 0.6.0-alpha.4
+(older values: `xmp`, `sidecar`, `file_name`).
 Manual alignments (since 0.6.0-alpha.4, RFC-0006 §New alignment): a record with `"origin": "manual_alignment"`
 places a graded file on a print that has no export in this project. It has no `exportedAt`; `file` is the graded
 file; its geometry is the print's current Inner (pixel crop or straightened); `version` is the print's next version

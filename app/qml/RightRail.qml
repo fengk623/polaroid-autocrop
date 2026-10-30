@@ -347,6 +347,8 @@ Rectangle {
                                     Layout.fillWidth: true
                                     elide: Text.ElideMiddle
                                     text: modelData.relinkedPath ? qsTr("Graded: %1 (by %2)").arg(modelData.relinkedPath).arg(modelData.matchedBy)
+                                                                   + (modelData.transformSet && modelData.rotate ? " · " + qsTr("turned %1°, turned back when compositing").arg(modelData.rotate) : "")
+                                                                   + (modelData.transformSet && modelData.scaled ? " · " + qsTr("resized, scaled back") : "")
                                           : modelData.path ? qsTr("Exported: %1").arg(modelData.path)
                                           : qsTr("Aligned manually (no export in this project)")
                                     font.pixelSize: Theme.fontCaption

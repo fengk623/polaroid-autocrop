@@ -33,6 +33,9 @@ class SelfTest : public QObject {
     /// Known issue (expected to reproduce until fixed, like ctest WILL_FAIL): reproduced → recorded, run
     /// passes; not reproduced → the run fails so the check is turned into a normal one with the fix.
     void known(const QString& ticket, const QString& name, bool reproduced, const QString& detail = {});
+    /// A known-issue check whose precondition this scan does not meet (e.g. an 8-bit scan for a 16-bit
+    /// issue): recorded as not applicable, neither reproduced nor a failure.
+    void knownNotApplicable(const QString& ticket, const QString& name, const QString& why);
     void runKnownIssues(const QString& exportDir);
     void runTaskSafety(const QString& exportDir, const QString& projectPath);
     int scenarioMinIsWhite();

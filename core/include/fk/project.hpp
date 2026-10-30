@@ -10,6 +10,7 @@
 #include "fk/metadata.hpp"
 #include "fk/relink.hpp"
 
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -35,6 +36,19 @@ Result<Fingerprint> fingerprintFile(const std::filesystem::path& p, bool full = 
 enum class BoundarySource : int { automatic = 0, templated = 1, manual = 2 };
 const char* boundarySourceName(BoundarySource s);
 
+/// Transform confirmed when a graded file was relinked (FK-002, U005, RFC-0006 §Confirmed transform): stored
+/// with the relink and applied as stored by preview and output — never guessed again.
+struct RelinkTransform {
+    bool set = false; ///< false: relinked by a version before 0.6.0-alpha.5 (decided again from the content)
+    int rotate =
+        0; ///< 90° clockwise turns from the export to the graded file (0..3); undone when compositing
+    std::string rotateSource; ///< "none" (no turn), "content" (picture, unambiguous), "user" (chosen)
+    bool scale = false;       ///< resampling to the export size confirmed (same aspect ratio, after the turn)
+    bool lowerDepth = false;  ///< lower bit depth accepted
+    double contentScore = 0;  ///< picture correlation at `rotate`
+    SizeI gradedSize{};       ///< graded file size when confirmed (a different size later = the file changed)
+};
+
 struct EditVersion {
     std::string editVersionId;
     int version = 0;
@@ -45,6 +59,7 @@ struct EditVersion {
     std::string format; ///< tif/png/jpg/dng
     // relink state
     std::string relinkedPath, relinkedSha256, matchedBy, relinkedAt;
+    RelinkTransform relinkTransform;
 };
 
 struct CompositeSettings {
@@ -189,12 +204,23 @@ RelinkCandidate findMatch(const std::filesystem::path& edited, const Project& p)
 struct RelinkCheck {
     bool sizeMatches = false, aspectMatches = false, depthLower = false, iccMissing = false,
          iccDiffers = false;
-    int suggestedRotate = 0;
-    double signatureScore = 0; ///< best over the 4 rotations
+    int suggestedRotate = 0;   ///< best of `allowedRotations` (all four when none fits)
+    double signatureScore = 0; ///< correlation at suggestedRotate
     bool signaturePass = false;
+    /// Turns (0..3) whose size fits the export: {0,2} or {1,3}; all four for a square image area; none = the
+    /// graded file is cropped differently (manual alignment).
+    std::vector<int> allowedRotations;
+    std::array<double, 4> rotationScores{}; ///< picture correlation per turn
+    /// The picture tells the turn apart: best passes and leads every other allowed turn by
+    /// kOrientationMargin. Otherwise (symmetric, square or low-texture pictures) the user chooses
+    /// ("choose_rotation").
+    bool rotationReliable = false;
     std::vector<std::string>
         actionsNeeded; ///< "scale", "rotate", "accept_lower_depth", "choose_icc", "confirm_content"
 };
+inline constexpr double kOrientationMargin = 0.15;
+/// Checks a graded file against an export record. Actions: "rotate", "choose_rotation", "scale",
+/// "manual_alignment", "accept_lower_depth", "choose_icc", "confirm_content".
 RelinkCheck checkEdited(const Sidecar& sc, const ImageBuffer& edited, const ImageInfo& editedInfo);
 
 // ---- relink v2: target first, evidence model (RFC-0006 §Relink v2) ----------------------------------
