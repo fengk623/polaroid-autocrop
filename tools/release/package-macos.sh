@@ -24,5 +24,11 @@ cp "$ROOT/docs/INSTALL.md" "$STAGE/READ ME FIRST.md"
 cp "$OUT/BUILDINFO-macos.txt" "$STAGE/BUILDINFO.txt"
 DMG="$OUT/FrameKeeper-$VER-macOS-universal.dmg"
 rm -f "$DMG"
-hdiutil create -volname "FrameKeeper $VER" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+# hdiutil intermittently fails with "Resource busy" on CI runners (AGENTS T19): retry a few times
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -volname "FrameKeeper $VER" -srcfolder "$STAGE" -ov -format UDZO "$DMG"; then break; fi
+  if [ "$attempt" = 5 ]; then echo "hdiutil failed 5 times" >&2; exit 1; fi
+  echo "hdiutil failed (attempt $attempt), retrying in 10 s" >&2
+  sleep 10
+done
 echo "$DMG"
