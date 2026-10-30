@@ -48,7 +48,7 @@ jobs:
           - name: linux-x64
             os: ubuntu-24.04
           - name: macos-arm64
-            os: macos-14
+            os: macos-15
           - name: windows-x64
             os: windows-2022
     runs-on: ${{ matrix.os }}
@@ -69,12 +69,20 @@ jobs:
           cmake-version: "3.31.6"
       - name: Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Toolchain id (dependency cache key)
+        id: tc
+        # static deps record absolute SDK paths (e.g. libm.tbd inside one Xcode), so a cache is only valid for the
+        # runner image and SDK it was built with
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then id="${ImageOS}-$(xcrun --show-sdk-path | sed 's#.*/##; s#[^A-Za-z0-9.]#_#g')-$(xcode-select -p | sed 's#/Contents/Developer##; s#.*/##')"
+          else id="${ImageOS:-unknown}"; fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"; echo "toolchain id: $id"
       - name: Cache dependencies
         id: deps-cache
         uses: actions/cache@v4
         with:
           path: build/deps-install
-          key: deps-core-${{ matrix.name }}-${{ hashFiles('cmake/deps/**') }}
+          key: deps-core-${{ matrix.name }}-${{ steps.tc.outputs.id }}-${{ hashFiles('cmake/deps/**') }}
       - name: Build dependencies (superbuild, pinned tags)
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
@@ -126,7 +134,7 @@ jobs:
             os: ubuntu-24.04
             qt_arch: linux_gcc_64
           - name: macos-arm64
-            os: macos-14
+            os: macos-15
             qt_arch: clang_64
           - name: windows-x64
             os: windows-2022
@@ -158,12 +166,20 @@ jobs:
           version: ${{ env.QT_VERSION }}
           arch: ${{ matrix.qt_arch }}
           cache: true
+      - name: Toolchain id (dependency cache key)
+        id: tc
+        # static deps record absolute SDK paths (e.g. libm.tbd inside one Xcode), so a cache is only valid for the
+        # runner image and SDK it was built with
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then id="${ImageOS}-$(xcrun --show-sdk-path | sed 's#.*/##; s#[^A-Za-z0-9.]#_#g')-$(xcode-select -p | sed 's#/Contents/Developer##; s#.*/##')"
+          else id="${ImageOS:-unknown}"; fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"; echo "toolchain id: $id"
       - name: Cache dependencies
         id: deps-cache
         uses: actions/cache@v4
         with:
           path: build/deps-install
-          key: deps-app-${{ matrix.name }}-${{ hashFiles('cmake/deps/**') }}
+          key: deps-app-${{ matrix.name }}-${{ steps.tc.outputs.id }}-${{ hashFiles('cmake/deps/**') }}
       - name: Build dependencies (superbuild, pinned tags)
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |

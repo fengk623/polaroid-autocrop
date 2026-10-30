@@ -1,6 +1,8 @@
 # Single source of truth for product identity and version (ADR-0012).
 # Code reads these through the generated header fk/product_info.hpp.
 file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../VERSION" FK_VERSION LIMIT_COUNT 1)
+# re-run CMake when VERSION changes, so an existing build directory never keeps a stale version
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/../VERSION")
 string(STRIP "${FK_VERSION}" FK_VERSION)
 set(FK_PRODUCT_NAME "FrameKeeper")
 set(FK_PRODUCT_ID "framekeeper")

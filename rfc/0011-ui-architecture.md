@@ -18,7 +18,7 @@ Status: Accepted · Module: `app/` · PRD F04, F15 · Contract: `CONTRACT-ui-cor
 - Self-test mode `FrameKeeper --self-test <dir>`: offscreen QPA + software backend, loads a generated fixture,
   runs detect/export/composite through the UI controllers, captures window snapshots, writes a JSON report.
 
-## Implementation notes (v0.1.0)
+## Implementation notes (v0.5.0)
 
 What shipped differs from the plan above in these ways:
 - One `AppController` (QML singleton `FrameKeeper.Core/App`) holds the project and exposes models

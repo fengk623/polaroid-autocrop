@@ -29,7 +29,7 @@ env:
 jobs:
   macos:
     name: macOS universal
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 120
     defaults:
       run:
@@ -48,12 +48,20 @@ jobs:
           cache: true
       - name: Version
         run: echo "VER=$(tr -d ' \n' < VERSION)" >> "$GITHUB_ENV"
+      - name: Toolchain id (dependency cache key)
+        id: tc
+        # static deps record absolute SDK paths (e.g. libm.tbd inside one Xcode), so a cache is only valid for the
+        # runner image and SDK it was built with
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then id="${ImageOS}-$(xcrun --show-sdk-path | sed 's#.*/##; s#[^A-Za-z0-9.]#_#g')-$(xcode-select -p | sed 's#/Contents/Developer##; s#.*/##')"
+          else id="${ImageOS:-unknown}"; fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"; echo "toolchain id: $id"
       - name: Cache dependencies
         id: deps-cache
         uses: actions/cache@v4
         with:
           path: build/deps-install
-          key: deps-macos-universal-${{ hashFiles('cmake/deps/**') }}
+          key: deps-macos-universal-${{ steps.tc.outputs.id }}-${{ hashFiles('cmake/deps/**') }}
       - name: Dependencies (arm64 + x86_64)
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
@@ -126,12 +134,20 @@ jobs:
           cache: true
       - name: Version
         run: echo "VER=$(tr -d ' \r\n' < VERSION)" >> "$GITHUB_ENV"
+      - name: Toolchain id (dependency cache key)
+        id: tc
+        # static deps record absolute SDK paths (e.g. libm.tbd inside one Xcode), so a cache is only valid for the
+        # runner image and SDK it was built with
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then id="${ImageOS}-$(xcrun --show-sdk-path | sed 's#.*/##; s#[^A-Za-z0-9.]#_#g')-$(xcode-select -p | sed 's#/Contents/Developer##; s#.*/##')"
+          else id="${ImageOS:-unknown}"; fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"; echo "toolchain id: $id"
       - name: Cache dependencies
         id: deps-cache
         uses: actions/cache@v4
         with:
           path: build/deps-install
-          key: deps-windows-x64-rel-${{ hashFiles('cmake/deps/**') }}
+          key: deps-windows-x64-rel-${{ steps.tc.outputs.id }}-${{ hashFiles('cmake/deps/**') }}
       - name: Dependencies
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |

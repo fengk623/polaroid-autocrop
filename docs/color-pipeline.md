@@ -22,7 +22,7 @@ Rules
 3. Bit depth: 16-bit paths use `TYPE_RGB_16` transforms; floats only for DNG linearisation.
 4. Untagged scans display as sRGB with an "untagged" chip; exports stay untagged unless the user assigns.
 
-## Display (as implemented in v0.1.0)
+## Display (as implemented in v0.5.0)
 
 - macOS: scan → sRGB 8-bit; Qt windows are sRGB-tagged and macOS converts to the display.
 - Windows: scan → the primary monitor's ICC profile (`GetICMProfileW`), read once at start-up; sRGB when no

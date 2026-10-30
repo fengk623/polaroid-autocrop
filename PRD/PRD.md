@@ -80,9 +80,12 @@ It is not an editor. Grading happens in Photoshop / Lightroom / Capture One / Af
 
 ## 7. Version scope
 
-- **0.1–0.8** development milestones (phases 2–5).
-- **0.9.0** first public pre-release: all v1 features, CI packages for macOS (arm64) and Windows (x64),
-  items that need human verification listed in `docs/HUMAN-VERIFICATION.md`.
+- **0.1–0.4** internal development milestones (phases 0–2; never released).
+- **0.5.0** first public build, published as a GitHub pre-release (owner's decision, 2026-10-30): core and
+  desktop app, unsigned packages for macOS (universal) and Windows (x64); items that need human verification are
+  listed in `docs/HUMAN-VERIFICATION.md` and in the release notes.
+- **0.6–0.8** further milestones (phases 4–5, fixes from real use).
+- **0.9.0** release candidate: all v1 features, human-verification items addressed or explicitly deferred.
 - **1.0.0** after human verification on real Epson scans, real macOS/Windows windows and the 8 GB device tier.
 
 ## 8. Open questions

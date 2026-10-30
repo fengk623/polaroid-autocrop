@@ -8,7 +8,7 @@ All files: UTF-8 JSON, LF, 2-space indent, keys in lower camelCase. Unknown keys
 {
   "schema": "fk.project/1",
   "projectId": "uuid", "name": "Summer 2026", "createdAt": "ISO-8601", "modifiedAt": "ISO-8601",
-  "app": {"name": "FrameKeeper", "version": "0.1.0"},
+  "app": {"name": "FrameKeeper", "version": "0.5.0"},
   "settings": {"expectedCount": 4, "safetyMarginPx": 1.0, "exportDefaults": {}, "colorPolicy": "keep"},
   "scans": [{
     "scanId": "uuid", "path": "/abs/path/scan01.tif", "relPath": "../scans/scan01.tif",
@@ -58,7 +58,7 @@ Save: write `name.fkproj.tmp-<rand>` → flush+fsync → rename over `name.fkpro
  "icc": {"description": "…", "sha256": "hex"}, "dpi": [1600, 1600],
  "file": {"name": "…_P01_EDIT_v001.tif", "sha256": "hex"},
  "signature": "base64 of 4096 float32",
- "software": "FrameKeeper 0.1.0", "exportedAt": "ISO-8601"}
+ "software": "FrameKeeper 0.5.0", "exportedAt": "ISO-8601"}
 ```
 
 ## 5. XMP written into exports

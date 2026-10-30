@@ -3,7 +3,7 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
-## 0.1.0 — first public build
+## 0.5.0 — first public build (pre-release)
 
 - Detection of instant prints in flatbed TIFF scans (Polaroid 600 / i-Type / SX-70, Polaroid round frame,
   Instax Mini / Square / Wide), with confidence classes and review flags.
