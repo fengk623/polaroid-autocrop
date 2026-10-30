@@ -103,6 +103,25 @@ struct ProjectSettings {
     std::string privacy = "keep_all_safe";
 };
 
+// ---- sidecar / export record
+// ------------------------------------------------------------------------------------
+struct Sidecar {
+    std::string schema = "fk.sidecar/1";
+    std::string projectId, scanId, itemId, editVersionId, label;
+    int version = 0;
+    std::string scanFile;
+    Fingerprint scanFingerprint;
+    Shape inner{}, outer{};
+    ExportGeometry geometry{};
+    SizeI sourceSize{}, exportSize{};
+    int bits = 0, channels = 0;
+    std::string iccDescription, iccSha256;
+    double dpiX = 0, dpiY = 0;
+    std::string fileName, fileSha256;
+    Signature signature{};
+    std::string software, exportedAt;
+};
+
 struct Project {
     std::string schema = "fk.project/1";
     std::string projectId;
@@ -110,6 +129,10 @@ struct Project {
     std::string createdAt, modifiedAt;
     ProjectSettings settings;
     std::vector<ScanRecord> scans;
+    /// One record per export (UX-07): what a sidecar file holds, kept in the project so that relinking does
+    /// not depend on a `.fk.json` beside the graded file. Keyed by Sidecar::editVersionId.
+    std::vector<Sidecar> exportRecords;
+    std::vector<std::string> unparsedExportRecords; ///< records this version cannot read, kept verbatim
     std::string unknownJson; ///< unknown top-level keys preserved verbatim (forward compatibility)
 };
 
@@ -133,28 +156,19 @@ ItemRecord itemFromDetection(const DetectedItem& d, int index);
 ScanRecord* findScan(Project& p, const std::string& scanId);
 ItemRecord* findItem(Project& p, const std::string& itemId, ScanRecord** scanOut = nullptr);
 
-// ---- sidecar ------------------------------------------------------------------------------------
-struct Sidecar {
-    std::string schema = "fk.sidecar/1";
-    std::string projectId, scanId, itemId, editVersionId, label;
-    int version = 0;
-    std::string scanFile;
-    Fingerprint scanFingerprint;
-    Shape inner{}, outer{};
-    ExportGeometry geometry{};
-    SizeI sourceSize{}, exportSize{};
-    int bits = 0, channels = 0;
-    std::string iccDescription, iccSha256;
-    double dpiX = 0, dpiY = 0;
-    std::string fileName, fileSha256;
-    Signature signature{};
-    std::string software, exportedAt;
-};
+// ---- sidecar (declared above Project) ------------------------------------------------------
 Sidecar makeSidecar(const Project& p, const ScanRecord& s, const ItemRecord& it, const EditVersion& ev,
                     const ExportReport& rep);
 Status saveSidecar(const Sidecar& s, const std::filesystem::path& path);
 Result<Sidecar> loadSidecar(const std::filesystem::path& path);
 std::string sidecarPathFor(const std::string& imagePathUtf8); ///< `<stem>.fk.json` next to the image
+/// The export record for `editVersionId` kept in the project, or nullptr.
+const Sidecar* findExportRecord(const Project& p, const std::string& editVersionId);
+/// The project's record for this export; falls back to the portable sidecar file if one was written.
+Result<Sidecar> exportRecordFor(const Project& p, const EditVersion& ev);
+/// Copies readable sidecar files of exports that have no record yet into the project (done by loadProject for
+/// projects written before export records existed). Returns the number of records added.
+int importSidecarRecords(Project& p);
 
 // ---- relink ---------------------------------------------------------------------------------------
 enum class MatchSource : int { xmp = 0, sidecar = 1, file_name = 2, manual = 3, none = 4 };

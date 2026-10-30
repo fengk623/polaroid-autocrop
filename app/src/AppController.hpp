@@ -149,6 +149,7 @@ class AppController : public QObject {
     /// Item generation the cached composite preview was computed for (0 = no preview).
     quint64 compositePreviewGeneration(const std::string& itemId) const;
     JobRunner* jobRunner() const { return jobs_; }
+    int exportRecordCount() const { return static_cast<int>(project_.exportRecords.size()); }
     const fk::ItemRecord* item(const std::string& itemId) const;
     const fk::ScanRecord* scanOf(const std::string& itemId) const;
     /// Live (uncommitted) geometry while dragging; committed with setOuter/setInner on release.

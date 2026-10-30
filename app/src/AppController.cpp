@@ -126,6 +126,7 @@ void AppController::loadSettings() {
                                {"colorPolicy", "keep"},
                                {"privacy", "keep_all_safe"},
                                {"jpegQuality", 95},
+                               {"writeSidecar", false}, // portable .fk.json beside exports (UX-07: optional)
                                {"expectedCount", 4},
                                {"safetyMargin", 1.0},
                                {"finalMode", "real"},
@@ -1358,9 +1359,9 @@ void AppController::requestCompositePreview(const QString& itemId) {
     for (const auto& e : it->edits)
         if (!e.relinkedPath.empty()) ev = &e;
     if (!ev) return;
-    const std::string scanPath = s->path, editPath = ev->relinkedPath, sidecarPath = ev->sidecar,
-                      id = it->itemId;
+    const std::string scanPath = s->path, editPath = ev->relinkedPath, id = it->itemId;
     const fk::ItemRecord itemCopy = *it;
+    const fk::Result<fk::Sidecar> record = fk::exportRecordFor(project_, *ev);
     const QVariantMap check = relinkChecks_.count(id) ? relinkChecks_.at(id) : QVariantMap();
     const QVariantMap st = settings_;
     auto out = std::make_shared<QImage>();
@@ -1376,7 +1377,7 @@ void AppController::requestCompositePreview(const QString& itemId) {
                 *err = errText(src.error());
                 return;
             }
-            auto sc = fk::loadSidecar(fk::pathFromUtf8(sidecarPath));
+            const auto& sc = record;
             if (!sc) {
                 *err = errText(sc.error());
                 return;
@@ -1529,6 +1530,7 @@ struct ExportOutcome {
     bool ok = false;
     QString error;
     fk::EditVersion ev;
+    std::optional<fk::Sidecar> record; ///< export record kept in the project (UX-07)
     std::string fullPath;
 };
 } // namespace
@@ -1548,10 +1550,11 @@ void AppController::exportImageAreas(const QStringList& itemIds) {
     const fk::Project projCopy = project_;
     auto outcomes = std::make_shared<std::vector<ExportOutcome>>();
     const std::string dir = toStd(folder);
+    const bool writeSidecar = settings_.value("writeSidecar").toBool();
     const JobSnapshot snap = snapshotFor({}, {});
     jobs_->start(
         Lane::exportJob, tr("Exporting %n image area(s)", nullptr, static_cast<int>(work.size())),
-        [work, projCopy, outcomes, dir](JobContext& ctx) {
+        [work, projCopy, outcomes, dir, writeSidecar](JobContext& ctx) {
             std::string openPath;
             std::unique_ptr<fk::TiffSource> src;
             for (size_t i = 0; i < work.size(); ++i) {
@@ -1589,19 +1592,23 @@ void AppController::exportImageAreas(const QStringList& itemIds) {
                     continue;
                 }
                 ev.path = fk::pathToUtf8(rep->output);
-                ev.sidecar = fk::sidecarPathFor(ev.path);
                 ev.exportedAt = fk::isoDateTimeNowUtc();
                 ev.fileSha256 = rep->sha256;
                 ev.format = fk::fileExtension(req.write.format);
                 const fk::Sidecar sc = fk::makeSidecar(projCopy, w.scan, w.item, ev, *rep);
-                const auto st = fk::saveSidecar(sc, fk::pathFromUtf8(ev.sidecar));
-                if (!st.ok()) {
-                    o.error = errText(st.error());
-                    outcomes->push_back(o);
-                    continue;
+                // the record lives in the project; a portable sidecar file is optional (Settings)
+                if (writeSidecar) {
+                    ev.sidecar = fk::sidecarPathFor(ev.path);
+                    const auto st = fk::saveSidecar(sc, fk::pathFromUtf8(ev.sidecar));
+                    if (!st.ok()) {
+                        o.error = errText(st.error());
+                        outcomes->push_back(o);
+                        continue;
+                    }
                 }
                 o.ok = true;
                 o.ev = ev;
+                o.record = sc;
                 outcomes->push_back(o);
             }
         },
@@ -1619,6 +1626,7 @@ void AppController::exportImageAreas(const QStringList& itemIds) {
                 // edits; they are never written into a project opened after the export started
                 if (fk::ItemRecord* it = sameProj ? findItemMut(o.itemId) : nullptr) {
                     it->edits.push_back(o.ev);
+                    if (o.record) project_.exportRecords.push_back(*o.record);
                     ++ok;
                 }
             }
@@ -1741,7 +1749,9 @@ void AppController::relinkFiles(const QVariantList& urls) {
                         }
                 if (!c.sidecar) {
                     row["ok"] = false;
-                    row["message"] = tr("The export sidecar (.fk.json) is missing; geometry unknown.");
+                    row["message"] =
+                        tr("This print has no export record for the file in the project (exported "
+                           "by another project, or the project was not saved).");
                     rows->push_back(row);
                     continue;
                 }
@@ -1829,6 +1839,7 @@ struct FinalJobItem {
     fk::ScanRecord scan;
     fk::ItemRecord item;
     fk::EditVersion ev;
+    fk::Result<fk::Sidecar> record; ///< export record (project, else the portable sidecar file)
 };
 QColor parseColor(const QString& s) {
     QColor c(s);
@@ -1845,7 +1856,7 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
         if (!it || !s) continue;
         for (auto e = it->edits.rbegin(); e != it->edits.rend(); ++e)
             if (!e->relinkedPath.empty()) {
-                work.push_back({*s, *it, *e});
+                work.push_back({*s, *it, *e, fk::exportRecordFor(project_, *e)});
                 break;
             }
     }
@@ -1879,7 +1890,7 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                     fail(errText(src.error()));
                     continue;
                 }
-                auto sc = fk::loadSidecar(fk::pathFromUtf8(w.ev.sidecar));
+                const auto& sc = w.record;
                 if (!sc) {
                     fail(errText(sc.error()));
                     continue;

@@ -30,6 +30,19 @@ FkDialog {
             label: qsTr("Prints per scan"); labelWidth: 110
             FkSpin { from: 1; to: 12; value: App.settings.expectedCount; onValueModified: App.setSetting("expectedCount", value) }
         }
+        // UX-07: export records are kept in the project; the portable sidecar is optional (off by default)
+        FkCheck {
+            text: qsTr("Also write a portable sidecar (.fk.json) next to each export")
+            checked: App.settings.writeSidecar === true
+            onToggled: App.setSetting("writeSidecar", checked)
+        }
+        Text {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontCaption
+            color: Theme.textTertiary
+            text: qsTr("Not needed for relinking: the project keeps a record of every export. Useful when graded files are matched in another project.")
+        }
         Text {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap

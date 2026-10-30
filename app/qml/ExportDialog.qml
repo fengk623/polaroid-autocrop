@@ -63,7 +63,7 @@ FkDialog {
             wrapMode: Text.WordWrap
             font.pixelSize: Theme.fontCaption
             color: Theme.textTertiary
-            text: qsTr("Existing files are never overwritten: a new version number is used instead. A sidecar (.fk.json) is written next to each export so that graded files can be matched later.")
+            text: qsTr("Existing files are never overwritten: a new version number is used instead. Only the image files are written; the project keeps a record of each export so graded files can be relinked later. Save the project before closing.")
         }
         RowLayout {
             Layout.alignment: Qt.AlignRight

@@ -22,15 +22,24 @@ All files: UTF-8 JSON, LF, 2-space indent, keys in lower camelCase. Unknown keys
       "inner": {"kind": "ellipse", "center": [x,y], "rx": 0, "ry": 0, "angle": 0, "source": "manual"},
       "upright": 0, "confidence": 0.93, "reasons": [], "reviewed": false, "excluded": false,
       "edits": [{"editVersionId": "uuid", "version": 1, "path": "…_P01_EDIT_v001.tif",
-                 "sidecar": "…_P01_EDIT_v001.fk.json", "exportedAt": "ISO-8601",
+                 "sidecar": "", "exportedAt": "ISO-8601",
                  "relinked": {"path": "…", "sha256": "hex", "matchedBy": "xmp", "at": "ISO-8601"}}],
       "composite": {"maskMode": "hard_edge", "featherPx": 0, "preserveEdgePx": 0, "strokes": [],
                     "lastOutput": null},
       "history": {"undo": [], "redo": []}
     }]
-  }]
+  }],
+  "exportRecords": [{"schema": "fk.sidecar/1", "editVersionId": "uuid", "…": "same fields as §4"}]
 }
 ```
+`exportRecords` (since 0.6.0-alpha.3, UX-07): one record per export, with exactly the fields of a sidecar (§4):
+the exported geometry snapshot, sizes, bit depth, ICC, file name and SHA-256, content signature. Relinking takes
+the geometry from here, so no `.fk.json` is needed beside the graded file. `edits[].sidecar` is empty unless the
+portable sidecar option is on. Records of a schema this version cannot read are kept verbatim.
+Compatibility: `exportRecords` is a new **top-level** key in the same schema `fk.project/1`. Versions before
+0.6.0-alpha.3 preserve unknown top-level keys verbatim, so they open, edit and save such projects without losing the
+records (they just do not use them). Opening an older project imports the readable sidecar files of its exports
+into `exportRecords` (saved with the next save), so those exports keep relinking after their sidecars are gone.
 Save: write `name.fkproj.tmp-<rand>` → flush+fsync → rename over `name.fkproj`; previous file copied to
 `name.fkproj.bak` first. Load failure → offer `.bak`.
 
@@ -47,7 +56,9 @@ Save: write `name.fkproj.tmp-<rand>` → flush+fsync → rename over `name.fkpro
 ```
 `u,v` are fractions of the scan width/height.
 
-## 4. Sidecar `*.fk.json` — schema `fk.sidecar/1`
+## 4. Sidecar `*.fk.json` — schema `fk.sidecar/1` (optional since 0.6.0-alpha.3)
+Written next to an export only when Settings ▸ "Also write a portable sidecar" is on. The same object is always
+stored in the project's `exportRecords`.
 ```json
 {"schema": "fk.sidecar/1", "projectId": "uuid", "scanId": "uuid",
  "scanFingerprint": {"size": 0, "quickSha256": "hex"}, "scanFile": "scan01.tif",
