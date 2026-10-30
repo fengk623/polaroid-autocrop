@@ -36,6 +36,7 @@ const char* privacyPresetName(PrivacyPreset p) {
 
 MetadataSet applyPrivacy(const MetadataSet& in, PrivacyPreset p) {
     MetadataSet out = in;
+    out.preset = static_cast<int>(p);
     out.hasGps = false; // GPS is never copied (we do not write a GPS IFD in any preset)
     if (p == PrivacyPreset::remove_identity) {
         out.artist.clear();
@@ -98,10 +99,57 @@ std::string findValue(const std::string& xmp, const std::string& qname) {
 }
 } // namespace
 
+namespace {
+/// dc fields copied from the source XMP; the creator is identity and follows the preset (FK-004).
+std::vector<const char*> copiedDc(const MetadataSet& m) {
+    if (m.preset == static_cast<int>(PrivacyPreset::remove_identity))
+        return {"title", "description", "rights"};
+    return {"title", "description", "creator", "rights"};
+}
+} // namespace
+
+std::vector<MetadataField> writtenMetadata(const MetadataSet& m, TagChannel tags) {
+    std::vector<MetadataField> out;
+    auto add = [&](const char* name, const std::string& v, PrivacyClass c) {
+        if (!v.empty()) out.push_back({name, v.size() > 200 ? v.substr(0, 200) : v, c});
+    };
+    if (tags != TagChannel::none) {
+        if (tags == TagChannel::tiff) {
+            add("TIFF Make", m.make, PrivacyClass::safe);
+            add("TIFF Model", m.model, PrivacyClass::safe);
+        }
+        add("TIFF Artist", m.artist, PrivacyClass::identity);
+        add("TIFF Copyright", m.copyright, PrivacyClass::safe);
+        add("TIFF ImageDescription", m.imageDescription, PrivacyClass::safe);
+        add("TIFF DocumentName", m.documentName, PrivacyClass::safe);
+        add("TIFF HostComputer", m.hostComputer, PrivacyClass::identity);
+    }
+    if (!m.sourceXmp.empty())
+        for (const char* n : copiedDc(m)) {
+            std::string v = extractDc(m.sourceXmp, n);
+            if (v.empty()) continue;
+            // show the text, not the markup
+            std::string text;
+            bool tag = false;
+            for (char c : v) {
+                if (c == '<')
+                    tag = true;
+                else if (c == '>')
+                    tag = false;
+                else if (!tag && c != '\n')
+                    text += c;
+            }
+            const std::string name = std::string("XMP dc:") + n;
+            out.push_back({name, text.substr(0, 200),
+                           std::string(n) == "creator" ? PrivacyClass::identity : PrivacyClass::safe});
+        }
+    return out;
+}
+
 std::string buildXmp(const XmpIds& ids, const MetadataSet* source) {
     std::string dc;
     if (source && !source->sourceXmp.empty()) {
-        for (const char* n : {"title", "description", "creator", "rights"})
+        for (const char* n : copiedDc(*source))
             dc += extractDc(source->sourceXmp, n);
     }
     std::string x;

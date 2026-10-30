@@ -23,7 +23,7 @@
 | FK-001 | P1 | 未保存工程切换保护 | U008 | 自检 FK-001 5 项 | S：修复前只有退出时确认；U008：新建/打开/最近/拖入/恢复/退出统一询问，取消与保存失败不丢失修改 | 已完成（自动验证；真实窗口待验收） |
 | FK-002 | P1 | 回链旋转传递到合成 | U005 | 核心 `RelinkTransform.*` ×3；自检 FK-002 5 项；场景 R7 | R：修复前内容检测建议 180°，最终输出与未旋转相片不一致；U005：确认的旋转保存于工程，最终输出与整张相片导出逐像素一致，保存重开后仍一致 | 已完成（自动验证；真实窗口待验收） |
 | FK-003 | P1 | 缺失 ICC 解释与持久化 | U006 | 核心 `GradedProfile.*` ×3；自检 FK-003 4 项 | S：修复前无配置的调色图被当作扫描件色彩空间（核心测试中平均偏差约 1%）；U006：按确认的配置只转换一次，平均差 0.0000，重开工程后仍可解析 | 已完成（自动验证；真实窗口与外部软件待验收） |
-| FK-004 | P1 | 隐私预设覆盖 XMP 作者 | U009 | 核心 `KnownIssue.FK004_RemoveIdentityDropsCreatorFromSourceXmp`（WILL_FAIL） | R：测试失败，XMP 含 dc:creator | 未开始（已复现） |
+| FK-004 | P1 | 隐私预设覆盖 XMP 作者 | U009 | 核心 `Privacy.*`（含原 `KnownIssue.FK004_*`、四种格式字节级读回）；自检 FK-004 2 项 | R：修复前 XMP 含 dc:creator；U009：所有通道统一过滤，明示写入字段，读回无身份信息 | 已完成（自动验证；外部软件读取待验收） |
 | FK-005 | P1 | 统一内存预算与缓存生命周期 | U017 | 计划（批次内存测量） | S | 未开始 |
 | FK-006 | P1 | 异步代次、取消与失败状态 | U002（框架）、U017 | 自检 TS1–TS4（U002） | U002：变异测试——去掉过期检查后 TS1 存旧预览、TS2 编辑被覆盖 | 部分完成（框架：U002；预算与队列：U017） |
 | FK-007 | P1 | 源文件与调色图变更校验 | U007 | 核心 `SourceIdentity.*` ×5（含原 `KnownIssue.FK007_*`）；自检 FK-007 6 项 | R：修复前同路径同尺寸替换被当作原扫描；U007：全文件哈希核对，替换/中间改动/读取中改动被拒绝并说明原因；再次调色（同画面）照常使用；改名移动按内容找回 | 已完成（自动验证；真机待验收） |
@@ -39,7 +39,7 @@
 
 | 测试 | 类型 | 需求 | 期望（v1.0 行为） | 当前结果 | 转常规于 |
 | --- | --- | --- | --- | --- | --- |
-| `KnownIssue.FK004_RemoveIdentityDropsCreatorFromSourceXmp` | 核心 gtest，WILL_FAIL | FK-004 | 移除身份后 XMP 不含作者 | 失败（XMP 含 `dc:creator`） | U009 |
+| `KnownIssue.FK004_RemoveIdentityDropsCreatorFromSourceXmp` | 核心 gtest，WILL_FAIL | FK-004 | 移除身份后 XMP 不含作者 | 已转常规（U009）：`Privacy.RemoveIdentityDropsCreatorFromSourceXmp` 等 | U009 |
 | `KnownIssue.FK007_ReplacedScanAtSamePathIsNotTrusted` | 核心 gtest，WILL_FAIL | FK-007 | 同路径被替换的扫描不被信任 | 已转常规（U007）：`SourceIdentity.ReplacedScanAtSamePathIsNotTrusted` | U007 |
 | `KnownIssue.FK008_DamagedProjectOffersItsBackup` | 核心 gtest，WILL_FAIL | FK-008 | 损坏工程提示可用备份 | 已转常规（U008）：`DataProtection.DamagedProjectOffersItsBackup` | U008 |
 | UX-01 count warning stays after the count is corrected | 应用自检 known-issue | UX-01 | 更正片数后警告更新 | 复现 | U011 |

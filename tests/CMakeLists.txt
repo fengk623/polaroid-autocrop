@@ -28,16 +28,10 @@ fk_add_gtest(test_composite composite core/test_composite.cpp)
 fk_add_gtest(test_relink relink core/test_relink.cpp)
 fk_add_gtest(test_project project core/test_project.cpp)
 
-# Known issues (Stage A): each test fails on the current code and is registered with WILL_FAIL, so a fix makes it
-# fail loudly and the fixing unit moves it into the regular suite (docs/v1/TRACEABILITY.md).
-add_executable(test_known_issues core/test_known_issues.cpp)
-target_link_libraries(test_known_issues PRIVATE fk::core fk_test_support GTest::gtest GTest::gtest_main)
-fk_set_warnings(test_known_issues)
-# FK-007 moved to test_project (SourceIdentity.*) by U007, FK-008 (DataProtection.*) by U008.
-foreach(_ki FK004_RemoveIdentityDropsCreatorFromSourceXmp)
-  add_test(NAME KnownIssue.${_ki} COMMAND test_known_issues --gtest_filter=KnownIssue.${_ki})
-  set_tests_properties(KnownIssue.${_ki} PROPERTIES WILL_FAIL TRUE LABELS known-issue)
-endforeach()
+# Known issues (Stage A): a test that states the v1.0 behaviour and fails on the current code was registered with
+# WILL_FAIL until the fixing unit moved it into the regular suite (docs/v1/TRACEABILITY.md). All three core known
+# issues are fixed (FK-007 → SourceIdentity.*, FK-008 → DataProtection.*, FK-004 → Privacy.*); add
+# core/test_known_issues.cpp again with `set_tests_properties(... WILL_FAIL TRUE LABELS known-issue)` for new ones.
 
 # Detection evaluation on a generated corpus (TEST-PLAN §4, RFC-0016). Needs the tools.
 if(FK_BUILD_TOOLS)

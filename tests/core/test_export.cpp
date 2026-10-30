@@ -8,6 +8,7 @@
 
 #include <tiffio.h>
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <numbers>
@@ -260,4 +261,93 @@ TEST(Export, SourceFileUntouched) {
         ASSERT_TRUE(exportRegion(**src, cropRequest(s->dir / "o.tif", 0, 0, 50, 50), {}, {}).ok());
     }
     EXPECT_EQ(before, fk::test::sha256OfFile(s->path));
+}
+
+// ---- FK-004 (U009): privacy presets on every output format, read back independently
+// ---------------------------
+
+namespace {
+/// A scan carrying identity in every channel FrameKeeper reads: TIFF Artist/HostComputer and an XMP
+/// dc:creator.
+std::filesystem::path scanWithIdentity(const std::filesystem::path& dir) {
+    const auto p = dir / "identity.tif";
+    const ImageBuffer img = fk::test::makePatternImage(200, 150, 3, 8, 3);
+    TIFF* t = TIFFOpen(p.string().c_str(), "w");
+    EXPECT_NE(t, nullptr);
+    TIFFSetField(t, TIFFTAG_IMAGEWIDTH, 200u);
+    TIFFSetField(t, TIFFTAG_IMAGELENGTH, 150u);
+    TIFFSetField(t, TIFFTAG_SAMPLESPERPIXEL, 3);
+    TIFFSetField(t, TIFFTAG_BITSPERSAMPLE, 8);
+    TIFFSetField(t, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+    TIFFSetField(t, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    TIFFSetField(t, TIFFTAG_ROWSPERSTRIP, 16u);
+    TIFFSetField(t, TIFFTAG_MAKE, "EPSON");
+    TIFFSetField(t, TIFFTAG_MODEL, "Perfection V750");
+    TIFFSetField(t, TIFFTAG_ARTIST, "Ann Example");
+    TIFFSetField(t, TIFFTAG_HOSTCOMPUTER, "ann-host-1234");
+    TIFFSetField(t, TIFFTAG_COPYRIGHT, "(c) Rights Holder");
+    const std::string xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF><rdf:Description>"
+                            "<dc:creator><rdf:Seq><rdf:li>Ann Example</rdf:li></rdf:Seq></dc:creator>"
+                            "<dc:title><rdf:Alt><rdf:li>Beach day</rdf:li></rdf:Alt></dc:title>"
+                            "</rdf:Description></rdf:RDF></x:xmpmeta>";
+    TIFFSetField(t, TIFFTAG_XMLPACKET, static_cast<uint32_t>(xmp.size()), xmp.data());
+    const std::vector<uint8_t> icc = Profile::sRGB().icc(); // DNG export needs the scan's profile
+    TIFFSetField(t, TIFFTAG_ICCPROFILE, static_cast<uint32_t>(icc.size()), icc.data());
+    for (uint32_t y = 0; y < 150; ++y)
+        TIFFWriteScanline(t, const_cast<uint8_t*>(img.row(y)), y, 0);
+    TIFFClose(t);
+    return p;
+}
+
+std::string fileBytes(const std::filesystem::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), {});
+}
+} // namespace
+
+TEST(Privacy, RemoveIdentityLeavesNoIdentityInAnyFormat) {
+    TempDir dir;
+    auto src = openTiff(scanWithIdentity(dir.path()));
+    ASSERT_TRUE(src.ok());
+    EXPECT_EQ((*src)->metadata().artist, "Ann Example");
+    struct Case {
+        FileFormat fmt;
+        const char* ext;
+    };
+    for (const Case c : {Case{FileFormat::tiff, "tif"}, Case{FileFormat::png, "png"},
+                         Case{FileFormat::jpeg, "jpg"}, Case{FileFormat::dng, "dng"}})
+        for (PrivacyPreset preset :
+             {PrivacyPreset::keep_all_safe, PrivacyPreset::remove_location, PrivacyPreset::remove_identity}) {
+            ExportRequest r = cropRequest(
+                dir / (std::string("out_") + privacyPresetName(preset) + "." + c.ext), 10, 10, 190, 140);
+            r.write.format = c.fmt;
+            r.privacy = preset;
+            if (c.fmt == FileFormat::jpeg) r.allowDepthReduction = true;
+            auto rep = exportRegion(**src, r, {}, {});
+            ASSERT_TRUE(rep.ok()) << c.ext << " " << rep.error().message;
+            // independent read-back: the raw bytes of the written file
+            const std::string bytes = fileBytes(rep->output);
+            const bool identityGone = preset == PrivacyPreset::remove_identity;
+            EXPECT_EQ(bytes.find("Ann Example") == std::string::npos, identityGone)
+                << c.ext << " " << privacyPresetName(preset);
+            const bool tiffTags = c.fmt == FileFormat::tiff || c.fmt == FileFormat::dng;
+            EXPECT_EQ(bytes.find("ann-host-1234") != std::string::npos, tiffTags && !identityGone) << c.ext;
+            // safe fields stay (title in XMP everywhere; scanner make in TIFF/DNG tags)
+            EXPECT_NE(bytes.find("Beach day"), std::string::npos) << c.ext;
+            if (c.fmt == FileFormat::tiff) {
+                EXPECT_NE(bytes.find("EPSON"), std::string::npos) << c.ext;
+            }
+            // the list shown to the user matches what was written
+            const MetadataSet filtered = applyPrivacy((*src)->metadata(), preset);
+            const auto listed = writtenMetadata(filtered, c.fmt == FileFormat::tiff  ? TagChannel::tiff
+                                                          : c.fmt == FileFormat::dng ? TagChannel::dng
+                                                                                     : TagChannel::none);
+            for (const auto& f : listed)
+                EXPECT_NE(bytes.find(f.value), std::string::npos)
+                    << c.ext << " lists " << f.name << " = " << f.value;
+            const bool listsIdentity = std::any_of(listed.begin(), listed.end(), [](const MetadataField& f) {
+                return f.cls == PrivacyClass::identity;
+            });
+            EXPECT_EQ(listsIdentity, !identityGone) << c.ext;
+        }
 }

@@ -263,3 +263,18 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
 - Tests: core `DataProtection.*` ×5 (incl. the former `KnownIssue.FK008`, WILL_FAIL list now only FK-004); core
   suite 171 pass. Self-test (fixture): 11 FK-001/FK-008 checks pass, all others pass. Read-only/disk-full simulated by
   an unwritable path (the container runs as root, so permission-based read-only cannot be simulated reliably).
+
+### 19:30–20:10 — PR #10 green, U009
+- PR #10 (U008): all checks green incl. test packages; waiting for the owner's merge (after #9).
+- U009 (branch `unit/U009-privacy`), FK-004. Root cause: `buildXmp` copied `dc:creator` from the source XMP for every
+  preset; `applyPrivacy` cleared only the TIFF Artist/HostComputer. Fix: the filtered `MetadataSet` carries its
+  preset and `buildXmp` copies the creator only when identity is kept; `writtenMetadata(filtered, TagChannel)` states
+  per channel what an output carries (DNG Make/Model are FrameKeeper's own — found by the read-back test, which first
+  expected the scanner make in DNG [failed]; the list now says what DNG really writes). Export tab lists the written
+  fields for the current scan/preset/format and what is never written. Scan metadata cached in the preview/detection
+  jobs.
+- Known issue `KnownIssue.FK004_*` moved into `Privacy.*`; no core known issues remain, `test_known_issues` removed
+  (CMake comment says how to add one again).
+- Tests: core `Privacy.*` incl. byte-level read-back of TIFF/PNG/JPEG/DNG × 3 presets; mutation (always copy the
+  creator) → 3 failures, restored (no MUTATION markers). Core suite 173/173. Self-test: 2 FK-004 checks on a copy of
+  the scan carrying identity (preview lists identity only when kept; TIFF/PNG/JPEG exports carry none).
