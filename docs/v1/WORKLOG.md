@@ -186,3 +186,25 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     UX-07 known issues became regular checks (9 checks) incl. "new session: unchanged export through a new alignment
     is bit-exact"; remaining known issues UX-01, FK-010, FK-002 (+FK-011 scenario) still reproduced. Relink scenario:
     R1 unique (hash), R2 ambiguous with 1 candidate, R3/R4 unique (name + picture), R6/R6b none (choose the print).
+
+### 16:20–17:05 — PR #5 merged, PR #6, U004 fix, U005
+- Owner merged PR #5 (U003). PR #6 (U004) opened against main (stacked on U003); all checks green on `76428d0`.
+- Owner asked whether a PR can be merged once all checks pass: yes — docs/repo, core ×3, app ×3 and both test
+  packages green ("Publish release" is skipped on PRs by design).
+- U004 real-scan run (owner's scans, Linux, offscreen): all relink v2 checks pass on polaroid_92 (1200 dpi) and
+  img20260702_0005 (800 dpi 4-up). Found: on polaroid_92 the new alignment chose the straightened shape for an
+  unchanged pixel-crop export because both shapes had the same size [failed: composite resampled, "row 259
+  differs"]. Fix `76428d0` on the U004 branch: the pixel crop wins a size tie → re-run bit-exact [passed].
+- The same runs flagged two known-issue checks as "no longer reproduces" although their precondition was not met
+  (8-bit scans for the 16-bit FK-010 issue; no count warning for UX-01). Not a fix — the checks now record
+  "not applicable" (U005).
+- U005 (branch `unit/U005-relink-transform`), FK-002: `checkEdited` limits turns by size, the picture decides only
+  when unambiguous (pass + lead ≥ 0.15), otherwise `choose_rotation`; ticking confirms turn/scale/lower depth, stored
+  as `edits[].relinked.transform`; preview and output use it as stored (root cause of FK-002:
+  `sizeMatches ? 0 : suggestedRotate` ignored a 180° turn of a same-size file). Relink dialog "Orientation" combo;
+  rail shows the stored turn; final dialog asks only for relinks of earlier versions. Dialog combo selection now
+  follows the model (U004 snapshot showed "Choose the print…" on a unique row) [U004 bug, fixed here].
+- Tests: core `RelinkTransform.*` ×3, full core suite 160/160. Self-test (fixture): all pass; FK-002 known issue →
+  5 checks (turn found + confirmation required, stored, final bit-exact with the full print, kept after
+  save/reopen, still bit-exact). Real scans: polaroid_92 47 PASS / UX-01 known / FK-010 n/a; img20260702_0005 all
+  pass, UX-01 and FK-010 n/a. Relink scenario R7 (turned 180°) snapshot checked.
