@@ -26,7 +26,8 @@ FkDialog {
         rows = next
     }
     readonly property var choiceKeys: ["itemId", "editVersionId", "label", "scanName", "source", "actions", "score", "signaturePass",
-                                       "sizeMatches", "rotate", "depthLower", "ok", "newAlignment", "alignmentKey", "conflict", "alignmentMode"]
+                                       "sizeMatches", "rotate", "depthLower", "ok", "newAlignment", "alignmentKey", "conflict", "alignmentMode",
+                                       "rotationReliable", "rotateSource", "allowedRotations", "rotationScores", "gradedW", "gradedH"]
     function choose(index, value) {
         const next = rows.slice()
         const r = Object.assign({}, next[index])
@@ -43,10 +44,37 @@ FkDialog {
         next[index] = r
         rows = next
     }
+    // FK-002: the turn chosen by the user is stored with the relink and used by preview and output
+    function setRotation(index, deg) {
+        const next = rows.slice()
+        const r = Object.assign({}, next[index])
+        r.rotate = deg
+        r.rotateSource = "user"
+        r.actions = (r.actions || []).filter(a => a !== "choose_rotation" && a !== "rotate")
+        if (deg !== 0) r.actions.push("rotate")
+        r.accept = r.ok === true
+        next[index] = r
+        rows = next
+    }
+    function indexIn(model, value) {
+        for (let i = 0; i < model.length; ++i)
+            if (model[i].value === value) return i
+        return 0
+    }
+    function needsOrientation(r) { return (r.actions || []).indexOf("choose_rotation") >= 0 && r.rotateSource !== "user" }
+    function orientationModel(r) {
+        const m = needsOrientation(r) ? [{ text: qsTr("Choose the orientation…"), value: -1 }] : []
+        const scores = r.rotationScores || []
+        for (const deg of (r.allowedRotations || []))
+            m.push({ text: (deg === 0 ? qsTr("as exported") : qsTr("turned %1°").arg(deg))
+                           + " · " + qsTr("picture %1 %").arg(Math.round((scores[deg / 90] || 0) * 100)), value: deg })
+        return m
+    }
     function actionText(a) {
         return ({ "rotate": qsTr("rotate back"), "scale": qsTr("scale to the exported size"), "accept_lower_depth": qsTr("accept lower bit depth"),
                   "choose_icc": qsTr("no colour profile: assume the exported one"), "confirm_content": qsTr("content differs — confirm it is this print"),
-                  "manual_alignment": qsTr("different aspect ratio: cannot be placed") })[a] || a
+                  "manual_alignment": qsTr("different aspect ratio: cannot be placed"),
+                  "choose_rotation": qsTr("orientation unclear: choose it") })[a] || a
     }
     function decisionText(r) {
         if (r.decision === "unique") return r.newAlignment ? qsTr("new alignment") : qsTr("matched")
@@ -94,7 +122,7 @@ FkDialog {
                         Layout.fillWidth: true
                         spacing: 6
                         FkCheck {
-                            enabled: rowItem.opt !== null && rowItem.modelData.ok === true
+                            enabled: rowItem.opt !== null && rowItem.modelData.ok === true && !d.needsOrientation(rowItem.modelData)
                             checked: rowItem.modelData.accept === true
                             onToggled: d.rows[rowItem.index].accept = checked
                         }
@@ -105,7 +133,8 @@ FkDialog {
                         FkCombo {
                             Layout.preferredWidth: 260
                             model: d.choiceModel(rowItem.modelData)
-                            value: rowItem.modelData.choice === undefined ? -1 : rowItem.modelData.choice
+                            // index from the model itself (indexOfValue is not re-evaluated when the model changes)
+                            currentIndex: d.indexIn(model, rowItem.modelData.choice === undefined ? -1 : rowItem.modelData.choice)
                             onPicked: (v) => { if (v !== -1) d.choose(rowItem.index, v) }
                         }
                     }
@@ -116,6 +145,22 @@ FkDialog {
                         font.pixelSize: Theme.fontCaption
                         color: Theme.textSecondary
                         text: rowItem.opt ? rowItem.opt.evidence.map(e => (e.supports ? "✓ " : "✗ ") + e.text).join(" · ") : ""
+                    }
+                    RowLayout {
+                        // orientation of the graded file (FK-002): shown when more than one turn fits its size
+                        visible: rowItem.opt !== null && (rowItem.modelData.allowedRotations || []).length > 1
+                        spacing: 6
+                        Text {
+                            text: qsTr("Orientation")
+                            font.pixelSize: Theme.fontCaption
+                            color: Theme.textSecondary
+                        }
+                        FkCombo {
+                            Layout.preferredWidth: 240
+                            model: d.orientationModel(rowItem.modelData)
+                            currentIndex: d.indexIn(model, d.needsOrientation(rowItem.modelData) ? -1 : rowItem.modelData.rotate)
+                            onPicked: (v) => { if (v !== -1) d.setRotation(rowItem.index, v) }
+                        }
                     }
                     Text {
                         // not decided: what speaks for each candidate, so the choice is informed
@@ -152,7 +197,7 @@ FkDialog {
             wrapMode: Text.WordWrap
             font.pixelSize: Theme.fontCaption
             color: Theme.textTertiary
-            text: qsTr("Checked files are attached to their print. The file name or a similar picture never outweighs contradicting evidence; when they disagree you choose. Rotation and size adjustments are confirmed when compositing.")
+            text: qsTr("Checked files are attached to their print. The file name or a similar picture never outweighs contradicting evidence; when they disagree you choose. Checking a file also confirms its orientation and size adjustment; both are stored with the relink and used for the preview and the output.")
         }
         RowLayout {
             Layout.alignment: Qt.AlignRight

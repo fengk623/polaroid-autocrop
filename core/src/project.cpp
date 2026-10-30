@@ -252,11 +252,19 @@ json itemJson(const ItemRecord& it) {
     json edits = json::array();
     for (const auto& e : it.edits) {
         json r = json(nullptr);
-        if (!e.relinkedPath.empty())
+        if (!e.relinkedPath.empty()) {
             r = json{{"path", e.relinkedPath},
                      {"sha256", e.relinkedSha256},
                      {"matchedBy", e.matchedBy},
                      {"at", e.relinkedAt}};
+            if (const RelinkTransform& t = e.relinkTransform; t.set)
+                r["transform"] = {{"rotate", t.rotate},
+                                  {"rotateSource", t.rotateSource},
+                                  {"scale", t.scale},
+                                  {"lowerDepth", t.lowerDepth},
+                                  {"contentScore", t.contentScore},
+                                  {"gradedSize", json::array({t.gradedSize.w, t.gradedSize.h})}};
+        }
         edits.push_back({{"editVersionId", e.editVersionId},
                          {"version", e.version},
                          {"path", e.path},
@@ -329,6 +337,18 @@ ItemRecord itemFrom(const json& j) {
             ev.relinkedSha256 = e["relinked"].value("sha256", "");
             ev.matchedBy = e["relinked"].value("matchedBy", "");
             ev.relinkedAt = e["relinked"].value("at", "");
+            if (e["relinked"].contains("transform") && e["relinked"]["transform"].is_object()) {
+                const auto& t = e["relinked"]["transform"];
+                RelinkTransform& x = ev.relinkTransform;
+                x.set = true;
+                x.rotate = ((t.value("rotate", 0) % 4) + 4) % 4;
+                x.rotateSource = t.value("rotateSource", "");
+                x.scale = t.value("scale", false);
+                x.lowerDepth = t.value("lowerDepth", false);
+                x.contentScore = t.value("contentScore", 0.0);
+                if (t.contains("gradedSize") && t["gradedSize"].is_array() && t["gradedSize"].size() == 2)
+                    x.gradedSize = {t["gradedSize"][0].get<int64_t>(), t["gradedSize"][1].get<int64_t>()};
+            }
         }
         it.edits.push_back(ev);
     }
@@ -871,39 +891,50 @@ RelinkCandidate findMatch(const std::filesystem::path& edited, const Project& p)
 RelinkCheck checkEdited(const Sidecar& sc, const ImageBuffer& edited, const ImageInfo& info) {
     RelinkCheck r;
     const SizeI e{edited.width(), edited.height()};
-    const CompositeCheck g = checkEditedGeometry(sc.exportSize, edited, sc.bits);
+    const SizeI ex = sc.exportSize;
+    const CompositeCheck g = checkEditedGeometry(ex, edited, sc.bits);
     r.sizeMatches = g.sizeMatches;
     r.aspectMatches = g.aspectMatches;
     r.depthLower = edited.bits() < sc.bits;
     r.iccMissing = info.icc.empty() && !sc.iccSha256.empty();
     r.iccDiffers = !info.icc.empty() && sha256Hex(info.icc.data(), info.icc.size()) != sc.iccSha256;
+    // turns whose size fits: same orientation {0,2}, swapped {1,3}, both for a square image area
+    auto fits = [&](SizeI t) {
+        if (e.w <= 0 || e.h <= 0 || t.w <= 0 || t.h <= 0) return false;
+        return std::abs((static_cast<double>(e.w) / e.h) / (static_cast<double>(t.w) / t.h) - 1.0) < 0.005;
+    };
+    if (fits(ex)) r.allowedRotations.insert(r.allowedRotations.end(), {0, 2});
+    if (fits({ex.h, ex.w})) r.allowedRotations.insert(r.allowedRotations.end(), {1, 3});
+    std::sort(r.allowedRotations.begin(), r.allowedRotations.end());
     const Signature es = computeSignature(edited);
-    double best = -2;
-    int bestK = 0;
-    for (int k = 0; k < 4; ++k) {
-        const double sc2 = compareSignatures(rotateSignature(sc.signature, k), es);
-        if (sc2 > best) {
-            best = sc2;
+    for (int k = 0; k < 4; ++k)
+        r.rotationScores[static_cast<size_t>(k)] = compareSignatures(rotateSignature(sc.signature, k), es);
+    std::vector<int> cand = r.allowedRotations;
+    if (cand.empty()) cand = {0, 1, 2, 3};
+    int bestK = cand.front();
+    for (int k : cand)
+        if (r.rotationScores[static_cast<size_t>(k)] > r.rotationScores[static_cast<size_t>(bestK)])
             bestK = k;
-        }
-    }
-    r.signatureScore = best;
-    r.signaturePass = best >= kSignatureMatchThreshold;
+    double second = -2;
+    for (int k : cand)
+        if (k != bestK) second = std::max(second, r.rotationScores[static_cast<size_t>(k)]);
     r.suggestedRotate = bestK;
-    if (!r.sizeMatches) {
-        if (bestK % 2 == 1 || g.suggestedRotate)
+    r.signatureScore = r.rotationScores[static_cast<size_t>(bestK)];
+    r.signaturePass = r.signatureScore >= kSignatureMatchThreshold;
+    r.rotationReliable = r.signaturePass && r.signatureScore - second >= kOrientationMargin;
+    if (r.allowedRotations.empty()) {
+        r.actionsNeeded.push_back("manual_alignment");
+    } else {
+        if (!r.rotationReliable)
+            r.actionsNeeded.push_back("choose_rotation");
+        else if (bestK != 0)
             r.actionsNeeded.push_back("rotate");
-        else if (r.aspectMatches)
-            r.actionsNeeded.push_back("scale");
-        else
-            r.actionsNeeded.push_back("manual_alignment");
-    } else if (bestK != 0 && r.signaturePass) {
-        r.actionsNeeded.push_back("rotate");
+        const SizeI target = (bestK & 1) ? SizeI{ex.h, ex.w} : ex;
+        if (!(e == target)) r.actionsNeeded.push_back("scale");
     }
     if (r.depthLower) r.actionsNeeded.push_back("accept_lower_depth");
     if (r.iccMissing) r.actionsNeeded.push_back("choose_icc");
     if (!r.signaturePass) r.actionsNeeded.push_back("confirm_content");
-    (void)e;
     return r;
 }
 

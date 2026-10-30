@@ -756,3 +756,121 @@ TEST(RelinkV2, AResizedGradedFileOfASquarePrintIsPlacedByItsPicture) {
         EXPECT_EQ(g.mode, mode) << geometryModeName(mode);
     }
 }
+
+// ---- confirmed relink transform (FK-002, U005, RFC-0006 §Confirmed transform)
+// ------------------------------------
+
+/// `img` turned by k × 90° clockwise.
+ImageBuffer turned(const ImageBuffer& img, int k) {
+    k = ((k % 4) + 4) % 4;
+    const int64_t W = img.width(), H = img.height();
+    const bool swap = k & 1;
+    auto r = ImageBuffer::create(swap ? H : W, swap ? W : H, img.channels(), img.bits());
+    EXPECT_TRUE(r.ok());
+    ImageBuffer out = std::move(r.value());
+    const size_t px = static_cast<size_t>(img.channels()) * (img.bits() / 8);
+    for (int64_t y = 0; y < H; ++y)
+        for (int64_t x = 0; x < W; ++x) {
+            int64_t nx = x, ny = y;
+            if (k == 1) nx = H - 1 - y, ny = x;
+            if (k == 2) nx = W - 1 - x, ny = H - 1 - y;
+            if (k == 3) nx = y, ny = W - 1 - x;
+            std::memcpy(out.row(ny) + nx * px, img.row(y) + x * px, px);
+        }
+    return out;
+}
+
+TEST(RelinkTransform, TheSizeLimitsTheTurnsAndThePictureDecides) {
+    auto f = smoothExport(); // 120 × 170 image area: not square
+    const Sidecar& rec = f->p.exportRecords[0];
+    auto px = readImageFile(f->editPath);
+    ASSERT_TRUE(px.ok());
+    for (int k = 0; k < 4; ++k) {
+        const RelinkCheck c = checkEdited(rec, turned(*px, k), {});
+        const std::vector<int> expect = (k & 1) ? std::vector<int>{1, 3} : std::vector<int>{0, 2};
+        EXPECT_EQ(c.allowedRotations, expect) << k;
+        EXPECT_EQ(c.suggestedRotate, k);
+        EXPECT_TRUE(c.rotationReliable) << k << " margin " << c.signatureScore;
+        const auto& a = c.actionsNeeded;
+        EXPECT_EQ(std::count(a.begin(), a.end(), "rotate"), k ? 1 : 0) << k;
+        EXPECT_EQ(std::count(a.begin(), a.end(), "scale"), 0) << k;
+    }
+    // a different crop cannot be placed in any orientation
+    auto wrong = ImageBuffer::create(150, 150, 3, 16);
+    ASSERT_TRUE(wrong.ok());
+    const RelinkCheck w = checkEdited(rec, *wrong, {});
+    EXPECT_TRUE(w.allowedRotations.empty());
+    EXPECT_NE(std::find(w.actionsNeeded.begin(), w.actionsNeeded.end(), "manual_alignment"),
+              w.actionsNeeded.end());
+}
+
+TEST(RelinkTransform, ASymmetricPictureLeavesTheTurnToTheUser) {
+    // picture symmetric under a half turn: 0° and 180° look the same, so the picture cannot decide
+    const int64_t W = 120, H = 170;
+    auto r = ImageBuffer::create(W, H, 3, 16);
+    ASSERT_TRUE(r.ok());
+    ImageBuffer sym = std::move(r.value());
+    for (int64_t y = 0; y < H; ++y)
+        for (int64_t x = 0; x < W; ++x) {
+            const double dx = (x - (W - 1) / 2.0) / W, dy = (y - (H - 1) / 2.0) / H;
+            const double v = 0.5 + 0.3 * std::cos(9 * dx * dy) * std::cos(7 * dx) + 0.1 * std::cos(11 * dy);
+            for (int c = 0; c < 3; ++c) {
+                const uint16_t u = static_cast<uint16_t>(std::clamp(v, 0.0, 1.0) * 65535);
+                std::memcpy(sym.row(y) + (x * 3 + c) * 2, &u, 2);
+            }
+        }
+    Sidecar rec;
+    rec.exportSize = {W, H};
+    rec.bits = 16;
+    rec.signature = computeSignature(sym);
+    const RelinkCheck c = checkEdited(rec, turned(sym, 2), {});
+    EXPECT_TRUE(c.signaturePass);
+    EXPECT_FALSE(c.rotationReliable);
+    EXPECT_NE(std::find(c.actionsNeeded.begin(), c.actionsNeeded.end(), "choose_rotation"),
+              c.actionsNeeded.end());
+    // a square image area allows all four turns
+    Sidecar sq = rec;
+    sq.exportSize = {120, 120};
+    auto s2 = ImageBuffer::create(120, 120, 3, 16);
+    ASSERT_TRUE(s2.ok());
+    EXPECT_EQ(checkEdited(sq, *s2, {}).allowedRotations, (std::vector<int>{0, 1, 2, 3}));
+}
+
+TEST(RelinkTransform, StoredWithTheRelinkAndKeptBySaving) {
+    auto f = smoothExport();
+    EditVersion& ev = f->p.scans[0].items[0].edits.back();
+    ev.relinkedPath = pathToUtf8(f->dir / "graded.tif");
+    ev.matchedBy = "file_name+content";
+    ev.relinkTransform.set = true;
+    ev.relinkTransform.rotate = 2;
+    ev.relinkTransform.rotateSource = "user";
+    ev.relinkTransform.scale = true;
+    ev.relinkTransform.contentScore = 0.93;
+    ev.relinkTransform.gradedSize = {85, 60};
+    const auto file = f->dir / "t.fkproj";
+    ASSERT_TRUE(saveProject(f->p, file).ok());
+    auto back = loadProject(file);
+    ASSERT_TRUE(back.ok());
+    const RelinkTransform& t = back->scans[0].items[0].edits.back().relinkTransform;
+    EXPECT_TRUE(t.set);
+    EXPECT_EQ(t.rotate, 2);
+    EXPECT_EQ(t.rotateSource, "user");
+    EXPECT_TRUE(t.scale);
+    EXPECT_FALSE(t.lowerDepth);
+    EXPECT_NEAR(t.contentScore, 0.93, 1e-9);
+    EXPECT_EQ(t.gradedSize, (SizeI{85, 60}));
+    // a relink saved by an earlier version has no transform: decided again from the picture
+    std::string text = slurp(file);
+    const auto pos = text.find("\"transform\"");
+    ASSERT_NE(pos, std::string::npos);
+    const auto end = text.find('}', pos);
+    text.erase(pos, end - pos + 1);
+    // drop the comma left before the removed member
+    const auto comma = text.rfind(',', pos);
+    text.erase(comma, 1);
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << text;
+    auto old = loadProject(file);
+    ASSERT_TRUE(old.ok()) << old.error().message;
+    EXPECT_FALSE(old->scans[0].items[0].edits.back().relinkTransform.set);
+    EXPECT_FALSE(old->scans[0].items[0].edits.back().relinkedPath.empty());
+}

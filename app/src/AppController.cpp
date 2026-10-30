@@ -90,6 +90,41 @@ std::string stemOf(const std::string& path) {
     return fk::pathToUtf8(fk::pathFromUtf8(path).stem());
 }
 
+/// Compositing adjustment of a relinked graded file (FK-002, RFC-0006 §Confirmed transform): the transform
+/// confirmed at relink time, applied as stored; relinks made by earlier versions get the turn the picture
+/// decides unambiguously. Returns false with `error` when the file changed since it was confirmed or its
+/// orientation is uncertain.
+bool relinkAdjust(const fk::EditVersion& ev, const fk::Sidecar& rec, const fk::ImageBuffer& edited,
+                  const fk::ImageInfo& ei, bool legacyScale, bool legacyDepth, fk::EditAdjust& adjust,
+                  QString& error) {
+    if (const fk::RelinkTransform& t = ev.relinkTransform; t.set) {
+        if (t.gradedSize.w > 0 && !(t.gradedSize == fk::SizeI{edited.width(), edited.height()})) {
+            error =
+                AppController::tr("The graded file changed since it was relinked (%1 × %2 px, was %3 × %4). "
+                                  "Relink it again.")
+                    .arg(edited.width())
+                    .arg(edited.height())
+                    .arg(t.gradedSize.w)
+                    .arg(t.gradedSize.h);
+            return false;
+        }
+        adjust.rotate = t.rotate;
+        adjust.allowScale = t.scale;
+        adjust.allowDepthReduction = t.lowerDepth;
+        return true;
+    }
+    const fk::RelinkCheck chk = fk::checkEdited(rec, edited, ei);
+    if (!chk.rotationReliable && chk.allowedRotations.size() > 1) {
+        error = AppController::tr("The orientation of the graded file is uncertain. Relink it and choose the "
+                                  "orientation.");
+        return false;
+    }
+    adjust.rotate = chk.suggestedRotate;
+    adjust.allowScale = legacyScale;
+    adjust.allowDepthReduction = legacyDepth;
+    return true;
+}
+
 } // namespace
 
 // ---- construction / settings ---------------------------------------------------------------------------
@@ -1241,7 +1276,12 @@ QVariantMap AppController::currentItem() const {
                              {"format", toQ(e.format)},
                              {"exportedAt", toQ(e.exportedAt)},
                              {"relinkedPath", toQ(e.relinkedPath)},
-                             {"matchedBy", toQ(e.matchedBy)}};
+                             {"matchedBy", toQ(e.matchedBy)},
+                             {"transformSet", e.relinkTransform.set},
+                             {"rotate", e.relinkTransform.rotate * 90},
+                             {"rotateSource", toQ(e.relinkTransform.rotateSource)},
+                             {"scaled", e.relinkTransform.scale},
+                             {"contentScore", e.relinkTransform.contentScore}};
         relinked = relinked || !e.relinkedPath.empty();
     }
     m["edits"] = edits;
@@ -1361,6 +1401,7 @@ void AppController::requestCompositePreview(const QString& itemId) {
     if (!ev) return;
     const std::string scanPath = s->path, editPath = ev->relinkedPath, id = it->itemId;
     const fk::ItemRecord itemCopy = *it;
+    const fk::EditVersion evCopy = *ev;
     const fk::Result<fk::Sidecar> record = fk::exportRecordFor(project_, *ev);
     const QVariantMap check = relinkChecks_.count(id) ? relinkChecks_.at(id) : QVariantMap();
     const QVariantMap st = settings_;
@@ -1397,10 +1438,7 @@ void AppController::requestCompositePreview(const QString& itemId) {
             req.editExact = !sc->geometry.resampled;
             req.edited = &*edited;
             req.editedIcc = ei.icc;
-            const auto chk = fk::checkEditedGeometry(sc->exportSize, *edited, (*src)->info().bitsPerSample);
-            req.adjust.rotate = chk.sizeMatches ? 0 : chk.suggestedRotate;
-            req.adjust.allowScale = true; // preview only
-            req.adjust.allowDepthReduction = true;
+            if (!relinkAdjust(evCopy, *sc, *edited, ei, true, true, req.adjust, *err)) return;
             req.mask.mode = st.value("maskMode").toString() == QLatin1String("feather")
                                 ? fk::MaskMode::feather
                             : st.value("maskMode").toString() == QLatin1String("preserve_edge")
@@ -1735,10 +1773,28 @@ fk::Result<fk::ImageBuffer> bufferOf(const QImage& image) {
     return buf;
 }
 
-const QStringList kChoiceKeys = {"itemId",       "editVersionId", "label",      "scanName",
-                                 "source",       "actions",       "score",      "signaturePass",
-                                 "sizeMatches",  "rotate",        "depthLower", "ok",
-                                 "newAlignment", "alignmentKey",  "conflict",   "alignmentMode"};
+const QStringList kChoiceKeys = {"itemId",
+                                 "editVersionId",
+                                 "label",
+                                 "scanName",
+                                 "source",
+                                 "actions",
+                                 "score",
+                                 "signaturePass",
+                                 "sizeMatches",
+                                 "rotate",
+                                 "depthLower",
+                                 "ok",
+                                 "newAlignment",
+                                 "alignmentKey",
+                                 "conflict",
+                                 "alignmentMode",
+                                 "rotationReliable",
+                                 "rotateSource",
+                                 "allowedRotations",
+                                 "rotationScores",
+                                 "gradedW",
+                                 "gradedH"};
 
 /// Copies the chosen option into the row's top-level fields (what applyRelink and the dialog read).
 void selectOption(QVariantMap& row, int choice, bool accept) {
@@ -1909,6 +1965,20 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
                         om["signaturePass"] = chk.signaturePass;
                         om["sizeMatches"] = chk.sizeMatches;
                         om["rotate"] = chk.suggestedRotate * 90;
+                        om["rotationReliable"] = chk.rotationReliable;
+                        om["rotateSource"] =
+                            chk.rotationReliable
+                                ? (chk.suggestedRotate ? QStringLiteral("content") : QStringLiteral("none"))
+                                : QString();
+                        QVariantList allowed, scores;
+                        for (int k : chk.allowedRotations)
+                            allowed << k * 90;
+                        for (double x : chk.rotationScores)
+                            scores << x;
+                        om["allowedRotations"] = allowed;
+                        om["rotationScores"] = scores;
+                        om["gradedW"] = static_cast<qlonglong>(img->width());
+                        om["gradedH"] = static_cast<qlonglong>(img->height());
                         om["depthLower"] = chk.depthLower;
                         const bool placeable = !actions.contains(QStringLiteral("manual_alignment"));
                         om["ok"] = placeable;
@@ -1921,8 +1991,10 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
                                     : tr("The graded file's aspect ratio differs from the export; it cannot "
                                          "be "
                                          "placed without stretching.");
+                        // pre-accepted only when nothing needs confirming: same size, no turn, clear picture
                         om["acceptDefault"] = a.decision == fk::RelinkDecision::unique && placeable &&
-                                              !o.newAlignment && chk.signaturePass && chk.sizeMatches;
+                                              !o.newAlignment && chk.signaturePass && chk.sizeMatches &&
+                                              chk.rotationReliable && chk.suggestedRotate == 0;
                         options << om;
                     }
                 }
@@ -2003,12 +2075,18 @@ void AppController::dropFiles(const QVariantList& urls) {
 }
 
 void AppController::applyRelink(const QVariantList& rows) {
-    int n = 0, changed = 0;
+    int n = 0, changed = 0, unoriented = 0;
     for (const QVariant& v : rows) {
         const QVariantMap r = v.toMap();
         if (!r.value("accept").toBool() || !r.value("ok").toBool()) continue;
         fk::ItemRecord* it = findItemMut(toStd(r.value("itemId").toString()));
         if (!it) continue;
+        const QStringList actions = r.value("actions").toStringList();
+        if (actions.contains(QStringLiteral("choose_rotation")) &&
+            r.value("rotateSource").toString() != QLatin1String("user")) {
+            ++unoriented; // the picture cannot tell the turn: the user must choose it (FK-002)
+            continue;
+        }
         fk::EditVersion* ev = nullptr;
         if (r.value("newAlignment").toBool()) {
             auto pa = pendingAlignments_.find(r.value("alignmentKey").toString());
@@ -2035,12 +2113,25 @@ void AppController::applyRelink(const QVariantList& rows) {
         ev->relinkedSha256 = toStd(r.value("sha256").toString());
         ev->matchedBy = toStd(r.value("source").toString());
         ev->relinkedAt = fk::isoDateTimeNowUtc();
+        fk::RelinkTransform& t = ev->relinkTransform;
+        t.set = true;
+        t.rotate = ((r.value("rotate").toInt() / 90) % 4 + 4) % 4;
+        t.rotateSource = toStd(r.value("rotateSource").toString());
+        if (t.rotateSource.empty()) t.rotateSource = t.rotate ? "content" : "none";
+        t.scale = actions.contains(QStringLiteral("scale"));
+        t.lowerDepth = actions.contains(QStringLiteral("accept_lower_depth"));
+        const QVariantList scores = r.value("rotationScores").toList();
+        t.contentScore = scores.size() == 4 ? scores[t.rotate].toDouble() : r.value("score").toDouble();
+        t.gradedSize = {r.value("gradedW").toLongLong(), r.value("gradedH").toLongLong()};
         relinkChecks_[it->itemId] = r;
         invalidateItem(it->itemId);
         ++n;
     }
     if (changed)
         notify(tr("%n print(s) changed after the check; check the graded file again.", nullptr, changed),
+               QStringLiteral("warning"));
+    if (unoriented)
+        notify(tr("%n file(s) not relinked: choose the orientation first.", nullptr, unoriented),
                QStringLiteral("warning"));
     if (n) {
         touch(false);
@@ -2061,6 +2152,10 @@ QVariantMap AppController::prepareFinal(const QStringList& itemIds) {
         const QVariantMap m{{"id", toQ(id)}, {"label", toQ(it->label)}};
         if (rel) {
             ready << m;
+            const fk::EditVersion* ev = nullptr;
+            for (const auto& e : it->edits)
+                if (!e.relinkedPath.empty()) ev = &e;
+            if (ev && ev->relinkTransform.set) continue; // confirmed when relinked
             if (auto c = relinkChecks_.find(id); c != relinkChecks_.end())
                 for (const auto& a : c->second.value("actions").toStringList())
                     if (!needs.contains(a)) needs << a;
@@ -2154,11 +2249,11 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                     req.editExact = !sc->geometry.resampled;
                     req.edited = &*edited;
                     req.editedIcc = ei.icc;
-                    const auto chk =
-                        fk::checkEditedGeometry(sc->exportSize, *edited, (*src)->info().bitsPerSample);
-                    req.adjust.rotate = chk.sizeMatches ? 0 : chk.suggestedRotate;
-                    req.adjust.allowScale = allowScale;
-                    req.adjust.allowDepthReduction = allowDepth;
+                    QString why;
+                    if (!relinkAdjust(w.ev, *sc, *edited, ei, allowScale, allowDepth, req.adjust, why)) {
+                        fail(why);
+                        continue;
+                    }
                     const QString mm = st.value("maskMode").toString();
                     req.mask.mode = mm == QLatin1String("feather")         ? fk::MaskMode::feather
                                     : mm == QLatin1String("preserve_edge") ? fk::MaskMode::preserve_edge

@@ -144,6 +144,12 @@ void SelfTest::known(const QString& ticket, const QString& name, bool reproduced
                       << detail;
 }
 
+void SelfTest::knownNotApplicable(const QString& ticket, const QString& name, const QString& why) {
+    known_.append(
+        QJsonObject{{"ticket", ticket}, {"name", name}, {"status", "not_applicable"}, {"detail", why}});
+    qInfo().noquote() << "N/A(known issue, precondition not met)" << ticket << name << why;
+}
+
 void SelfTest::runTaskSafety(const QString& exportDir, const QString& projectPath) {
     // RFC-0010 §Task safety (FK-006, U002): a result computed from state that changed meanwhile is never
     // applied; every job ends as succeeded, failed, cancelled or outdated; cancelled exports leave no temp
@@ -264,8 +270,13 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
         const QStringList w2 = app_->currentScan().value("warnings").toStringList();
         const bool still = std::any_of(w2.begin(), w2.end(),
                                        [](const QString& x) { return x.startsWith("count_mismatch"); });
-        known(QStringLiteral("UX-01"), QStringLiteral("count warning stays after the count is corrected"),
-              hadMismatch && still, QStringLiteral("before %1, after %2").arg(w.join(';'), w2.join(';')));
+        if (!hadMismatch)
+            knownNotApplicable(QStringLiteral("UX-01"),
+                               QStringLiteral("count warning stays after the count is corrected"),
+                               QStringLiteral("no count warning on this scan: %1").arg(w.join(';')));
+        else
+            known(QStringLiteral("UX-01"), QStringLiteral("count warning stays after the count is corrected"),
+                  still, QStringLiteral("before %1, after %2").arg(w.join(';'), w2.join(';')));
         app_->setSetting(QStringLiteral("expectedCount"), before);
     }
 
@@ -329,15 +340,22 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
         QCoreApplication::processEvents();
         const bool sixteen = app_->currentScan().value("bits").toInt() == 16;
         const bool claimed = app_->currentItem().value("frameBitExact").toBool();
-        known(QStringLiteral("FK-010"), QStringLiteral("16→8-bit export still claims bit-identical pixels"),
-              sixteen && claimed,
-              QStringLiteral("scan bits %1, frameBitExact %2")
-                  .arg(app_->currentScan().value("bits").toInt())
-                  .arg(claimed));
+        if (!sixteen)
+            knownNotApplicable(QStringLiteral("FK-010"),
+                               QStringLiteral("16→8-bit export still claims bit-identical pixels"),
+                               QStringLiteral("scan bits %1").arg(app_->currentScan().value("bits").toInt()));
+        else
+            known(QStringLiteral("FK-010"),
+                  QStringLiteral("16→8-bit export still claims bit-identical pixels"), claimed,
+                  QStringLiteral("scan bits %1, frameBitExact %2")
+                      .arg(app_->currentScan().value("bits").toInt())
+                      .arg(claimed));
         app_->setSetting(QStringLiteral("exportBits"), bits);
     }
 
-    // FK-002: a same-size graded file rotated by 180° is composited without rotating it back
+    // FK-002 (U005, was a known issue): a same-size graded file turned by 180° — the picture finds the turn,
+    // the user confirms it, the turn is stored with the relink and the output turns the file back; after
+    // saving and reopening the project the stored turn is used again.
     {
         const QString itemFile = QFileInfo(f).fileName();
         const QString rot = QDir(kiDir).filePath(QStringLiteral("rot180"));
@@ -346,38 +364,59 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
             QDir(rot).filePath(itemFile); // export name in another folder → matched by file name
         const bool written = rewriteRotated180(f, r);
         QVariantList rows = relinkRows(r);
-        QString why;
-        bool reproduced = false;
-        if (written && rows.size() == 1 && rows.first().toMap().value("matched").toBool()) {
-            QVariantMap row = rows.first().toMap();
-            const int suggested = row.value("rotate").toInt();
-            row["accept"] = true;
-            app_->applyRelink({row});
-            const QString itemId = row.value("itemId").toString();
-            app_->setSetting(QStringLiteral("finalMode"), QStringLiteral("real"));
+        QVariantMap row = rows.isEmpty() ? QVariantMap() : rows.first().toMap();
+        check(QStringLiteral("180° graded file: turn found by the picture, confirmation required"),
+              written && row.value("decision").toString() == QLatin1String("unique") &&
+                  row.value("rotate").toInt() == 180 && row.value("rotationReliable").toBool() &&
+                  row.value("actions").toStringList().contains(QStringLiteral("rotate")) &&
+                  !row.value("accept").toBool(),
+              QStringLiteral("rotate %1 reliable %2 accept %3 actions %4")
+                  .arg(row.value("rotate").toInt())
+                  .arg(row.value("rotationReliable").toBool())
+                  .arg(row.value("accept").toBool())
+                  .arg(row.value("actions").toStringList().join(',')));
+        row["accept"] = true; // the user confirms
+        app_->applyRelink({row});
+        const QString itemId = row.value("itemId").toString();
+        auto storedTurn = [&]() -> int {
+            const fk::ItemRecord* it = app_->item(itemId.toStdString());
+            if (!it) return -1;
+            for (auto e = it->edits.rbegin(); e != it->edits.rend(); ++e)
+                if (!e->relinkedPath.empty()) return e->relinkTransform.set ? e->relinkTransform.rotate : -2;
+            return -3;
+        };
+        check(QStringLiteral("180° turn stored with the relink"), storedTurn() == 2,
+              QString::number(storedTurn()));
+        app_->setSetting(QStringLiteral("finalMode"), QStringLiteral("real"));
+        const QString stem = QFileInfo(f).completeBaseName().section(QStringLiteral("_EDIT_"), 0, 0);
+        const QStringList fulls = filesMatching(exportDir, stem + QStringLiteral("_FULL_v001.tif"));
+        auto finalEqualsFullPrint = [&](QString& why) {
             const QStringList before = filesMatching(exportDir, QStringLiteral("*_FINAL_v*.tif"));
             app_->exportFinal({itemId}, {});
             app_->waitIdle(300000);
             QStringList after = filesMatching(exportDir, QStringLiteral("*_FINAL_v*.tif"));
             for (const auto& b : before)
                 after.removeAll(b);
-            const QString stem = QFileInfo(f).completeBaseName().section(QStringLiteral("_EDIT_"), 0, 0);
-            const QStringList fulls = filesMatching(exportDir, stem + QStringLiteral("_FULL_v001.tif"));
-            if (after.size() == 1 && fulls.size() == 1) {
-                const bool same = samePixels(after.first(), fulls.first(), why);
-                reproduced = suggested == 180 && !same;
-                why = QStringLiteral("content check suggested %1°, final equals the unrotated print: %2 (%3)")
-                          .arg(suggested)
-                          .arg(same)
-                          .arg(why);
-            } else {
+            if (after.size() != 1 || fulls.size() != 1) {
                 why = QStringLiteral("final files %1, full prints %2").arg(after.size()).arg(fulls.size());
+                return false;
             }
-        } else {
-            why = QStringLiteral("graded copy not matched");
-        }
-        known(QStringLiteral("FK-002"),
-              QStringLiteral("180° same-size graded file composited without rotation"), reproduced, why);
+            return samePixels(after.first(), fulls.first(), why);
+        };
+        QString why;
+        check(QStringLiteral("final output turns the graded file back (bit-exact with the full print)"),
+              finalEqualsFullPrint(why), why);
+        // persisted: save, reopen, compose again
+        const QString proj = QDir(kiDir).filePath(QStringLiteral("fk002.fkproj"));
+        QFile::remove(proj);
+        app_->saveProjectAs(proj);
+        app_->openProject(proj);
+        app_->waitIdle(300000);
+        check(QStringLiteral("reopened project keeps the confirmed turn"), storedTurn() == 2,
+              QString::number(storedTurn()));
+        QString why2;
+        check(QStringLiteral("reopened project: final output still bit-exact"), finalEqualsFullPrint(why2),
+              why2);
     }
 
     // UX-07 (U004, was a known issue): after a restart without saving, the export has no record in the new
@@ -543,6 +582,8 @@ int SelfTest::scenarioRelink() {
             out.append(QJsonObject{{"fileName", m.value("fileName").toString()},
                                    {"decision", m.value("decision").toString()},
                                    {"options", static_cast<int>(m.value("options").toList().size())},
+                                   {"rotate", m.value("rotate").toInt()},
+                                   {"rotationReliable", m.value("rotationReliable").toBool()},
                                    {"matched", m.value("matched").toBool()},
                                    {"source", m.value("source").toString()},
                                    {"ok", m.value("ok").toBool()},
@@ -571,6 +612,12 @@ int SelfTest::scenarioRelink() {
     const bool r5ok = rewriteWithoutMetadata(f, r5, fk::FileFormat::jpeg);
     observe(QStringLiteral("R5 prepare"), {{"written", r5ok}});
     if (r5ok) relink(QStringLiteral("R5 JPEG, export name, no XMP"), r5, QString());
+    // R7 turned by 180° in the editor, export name, no XMP (FK-002: the turn needs confirmation)
+    const QString r7 = QDir(gradedDir).filePath(QStringLiteral("turned"));
+    QDir().mkpath(r7);
+    const QString r7f = QDir(r7).filePath(QFileInfo(f).fileName());
+    observe(QStringLiteral("R7 prepare"), {{"written", rewriteRotated180(f, r7f)}});
+    relink(QStringLiteral("R7 turned 180°, export name, no XMP"), r7f, QStringLiteral("R7-dialog"));
     // R6 new session: the project was never saved, the app restarted, the scan imported again
     app_->newProject();
     app_->importScans({scan_});

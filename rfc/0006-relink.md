@@ -88,3 +88,30 @@ U006), re-verification of changed files (FK-007, U007), recovery snapshot of an 
 `signatureOfExport(image, geometry, downscale)`;
 `alignmentRecord(project, scan, item, geometry, areaSignature, gradedFileName, gradedSha256)`.
 Tests: core `RelinkV2.*` (12), app self-test UX-07 checks (9; they replace the 3 former UX-07 known issues).
+
+## Confirmed transform (v0.6.0-alpha.5, U005, FK-002)
+
+Status: Accepted (2026-10-30), implemented in U005. Before: the output re-guessed the orientation at every composite
+and ignored it whenever the graded file kept the export size (`sizeMatches ? 0 : suggestedRotate`), so a graded file
+turned by 180° was placed upside down (FK-002 known issue).
+
+- **Turns the size allows.** Same aspect as the export → {0°, 180°}; swapped → {90°, 270°}; a square image area →
+  all four; none → a different crop (manual alignment, never stretched). The picture is compared only among these.
+- **Reliable or the user's choice.** The best allowed turn is used when its picture correlation passes (≥ 0.80) and
+  leads every other allowed turn by ≥ 0.15 (`kOrientationMargin`). Otherwise — pictures symmetric under the turn, low
+  texture — the action `choose_rotation` asks the user (dialog "Orientation"; the row cannot be ticked until chosen;
+  `applyRelink` refuses an unchosen one).
+- **Confirmed, then stored.** Ticking a row confirms its turn and, separately, the resampling to the export size
+  (`scale`, same aspect after the turn) and a lower bit depth. Any turn or resampling needs that tick (no
+  pre-accepting). Stored per relinked edit version as `relinked.transform` {rotate, rotateSource none|content|user,
+  scale, lowerDepth, contentScore, gradedSize}.
+- **Used as stored.** Composite preview and final output take the stored transform; nothing is re-guessed. A graded
+  file whose size differs from the confirmed size is refused ("changed since it was relinked") — full change
+  detection is FK-007/U007. Relinks saved by earlier versions (no transform) get the turn only when the picture
+  decides it unambiguously; otherwise the user is asked to relink.
+- Crop stays separate: export geometry is versioned per export record (U003); a graded file with a different crop is
+  a manual alignment, not a scale.
+
+Compatibility: `transform` is a new member of `edits[].relinked` in `fk.project/1`. Earlier versions ignore it when
+reading and drop it when they save; reopened here, such a relink behaves like one of an earlier version (above).
+Tests: core `RelinkTransform.*` (3); self-test FK-002 checks (5, replacing the known issue), relink scenario R7.
