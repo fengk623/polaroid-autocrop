@@ -9,7 +9,7 @@
 | 需求 | 优先级 | 简述 | Unit | 测试（现有/计划） | 当前证据 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
 | UX-01 | P1 | 自动识别片数开关 | U011 | 应用 known-issue “count warning stays after the count is corrected” → 修复后转常规 | U：图 1；R：2026-10-30 自检复现（WORKLOG） | 未开始（已复现） |
-| UX-02 | P1 | 内外框精度；纯画面与像素裁切区分 | U010（导出）、U012（检测） | 真实扫描 GT 回归集；导出边缘白框测量 | U：图 2–5；R：polaroid_92 导出四边残白 4–10 px；4-up 外框落在亮带 ≈0.8–0.9 mm | 未开始（已复现） |
+| UX-02 | P1 | 内外框精度；纯画面与像素裁切区分 | U010（导出）、U012（检测） | 真实扫描 GT 回归集；导出边缘白框测量 | U：图 2–5；R：polaroid_92 导出四边残白 4–10 px；4-up 外框落在亮带 ≈0.8–0.9 mm | 部分完成（U010 导出：默认标注拉正、输出计划、圆形画面；检测精度 U012） |
 | UX-03 | P1 | Shift 切换与规则形状 | U013 | 真实输入事件回归（计划） | U：图 2 | 未开始 |
 | UX-04 | P1 | 整张扫描件旋转 | U014 | 自检场景 `upright`（现状观察）；整图旋转回归（计划） | U：图 6–7；R：转正只改导出方向、画布不变 | 未开始（已复现） |
 | UX-05 | P1 | 图库首页与图库内审阅 | U018、U019、U020 | 计划 | U：图 8–12 | 未开始 |
@@ -29,7 +29,7 @@
 | FK-007 | P1 | 源文件与调色图变更校验 | U007 | 核心 `SourceIdentity.*` ×5（含原 `KnownIssue.FK007_*`）；自检 FK-007 6 项 | R：修复前同路径同尺寸替换被当作原扫描；U007：全文件哈希核对，替换/中间改动/读取中改动被拒绝并说明原因；再次调色（同画面）照常使用；改名移动按内容找回 | 已完成（自动验证；真机待验收） |
 | FK-008 | P1 | 备份恢复与可重现工程 | U008（UX-05 图库部分在 U018） | 核心 `DataProtection.*` ×5（含原 `KnownIssue.FK008_*`）；自检 FK-008 6 项 | R：修复前损坏工程只报“damaged”；U008：提示并恢复备份、保留损坏原件、损坏文件不覆盖好备份、恢复快照、输出参数随工程保存 | 部分完成（工程部分完成；图库在 U018） |
 | FK-009 | P1 | Windows 文字与真实窗口验收 | U024 | 计划；真机部分待验收 | C：历史 offscreen 截图问题；本地 Linux 截图中英文可读 | 未开始 |
-| FK-010 | P1 | 真实输出计划驱动无损提示 | U010 | 应用 known-issue “16→8-bit export still claims bit-identical pixels” | R：16-bit 扫描设 8-bit 导出仍标逐像素一致 | 未开始（已复现） |
+| FK-010 | P1 | 真实输出计划驱动无损提示 | U010 | 核心 `ExportPlan.*` ×3；自检 FK-010 2 项 | R：修复前 16→8 位仍标“逐像素一致”；U010：提示来自核心输出计划，降位深需明确确认 | 已完成（自动验证；真实窗口待验收） |
 | FK-011 | P2 | 多显示器色彩与灰度预览一致 | U025 | 应用 known-issue “MinIsWhite full-resolution display is inverted”（场景 `miniswhite`） | R：同一行预览均值 15.8 vs 原始分辨率 239.2 | 未开始（已复现） |
 | FK-012 | P2 | DNG 与外部软件互操作 | U026 | 计划；FORMAT-MATRIX 冻结 | S | 未开始 |
 | FK-013 | P2 | 实现、文档与测试契约一致 | U027（U001 起逐步） | 测试报告区分已知问题（U001） | S | 未开始 |
@@ -47,7 +47,7 @@
 | UX-07 editor suffix _1 without XMP: no match | 应用自检 known-issue | UX-07 | 证据匹配或手动选目标 | 已转常规（U004）：“editor suffix _1 matched by name and picture” | U004 |
 | UX-07 new session: unchanged export cannot be relinked | 应用自检 known-issue | UX-07 | 保存后的工程重开可回导；未保存时有恢复快照 | 已转常规（U003 保存重开；U004 新建对位 4 项）；恢复快照仍待 U008 | U003/U004（U008） |
 | FK-002 180° same-size graded file composited without rotation | 应用自检 known-issue | FK-002 | 合成使用确认的旋转 | 已转常规（U005）：5 项 FK-002 检查 | U005 |
-| FK-010 16→8-bit export still claims bit-identical pixels | 应用自检 known-issue | FK-010 | 提示依据真实输出计划 | 复现 | U010 |
+| FK-010 16→8-bit export still claims bit-identical pixels | 应用自检 known-issue | FK-010 | 提示依据真实输出计划 | 已转常规（U010）：“FK-010 16→8-bit export is not announced as bit-identical”“FK-010 8-bit export only with explicit consent” | U010 |
 | FK-011 MinIsWhite full-resolution display is inverted | 应用自检 known-issue（场景） | FK-011 | 预览与原始分辨率一致 | 复现 | U025 |
 
 ## Release 登记

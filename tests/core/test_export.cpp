@@ -351,3 +351,152 @@ TEST(Privacy, RemoveIdentityLeavesNoIdentityInAnyFormat) {
             EXPECT_EQ(listsIdentity, !identityGone) << c.ext;
         }
 }
+
+// ---- FK-010 / UX-02 (U010): the output plan is what gets written
+// -------------------------------------------------
+
+namespace {
+/// An outer frame tilted by 2°, so "straightened" really rotates.
+Quad rotatedRectFrame() {
+    const double a = 2.0 * std::numbers::pi / 180.0;
+    const Vec2 c{110, 105};
+    std::array<Vec2, 4> q;
+    const Vec2 d[4] = {{-100, -80}, {100, -80}, {100, 80}, {-100, 80}};
+    for (int i = 0; i < 4; ++i)
+        q[i] = {c.x + std::cos(a) * d[i].x - std::sin(a) * d[i].y,
+                c.y + std::sin(a) * d[i].x + std::cos(a) * d[i].y};
+    return normalizeQuad(q);
+}
+} // namespace
+
+TEST(ExportPlan, PromptsFollowTheRealOutputAcrossFormatsDepthsAndGeometry) {
+    for (int srcBits : {8, 16}) {
+        auto s = makeScan(3, srcBits);
+        auto src = openTiff(s->path);
+        ASSERT_TRUE(src.ok());
+        for (FileFormat fmt : {FileFormat::tiff, FileFormat::png, FileFormat::jpeg, FileFormat::dng})
+            for (int bits : {0, 8, 16})
+                for (GeometryMode mode : {GeometryMode::pixel_crop, GeometryMode::straightened})
+                    for (bool convert : {false, true}) {
+                        const std::string tag = std::string(fileExtension(fmt)) + " src" +
+                                                std::to_string(srcBits) + " out" + std::to_string(bits) +
+                                                " " + geometryModeName(mode) +
+                                                (convert ? " convert" : " keep");
+                        ExportRequest r = cropRequest(s->dir / ("p." + std::string(fileExtension(fmt))), 20.3,
+                                                      30.6, 200.2, 180.4);
+                        r.frame = rotatedRectFrame();
+                        r.mode = mode;
+                        r.write.format = fmt;
+                        r.write.bits = bits;
+                        if (convert) {
+                            r.color.kind = ColorPolicy::convert;
+                            r.color.icc = Profile::sRGB().icc();
+                        }
+                        auto plan = planExport((*src)->info(), r);
+                        ASSERT_TRUE(plan.ok()) << tag << " " << plan.error().message;
+                        r.allowDepthReduction = plan->reducesDepth; // the user's explicit consent
+                        auto rep = exportRegion(**src, r, {}, {});
+                        ASSERT_TRUE(rep.ok()) << tag << " " << rep.error().message;
+                        EXPECT_EQ(rep->size, plan->geometry.outSize) << tag;
+                        EXPECT_EQ(rep->bits, plan->outBits) << tag;
+                        EXPECT_EQ(rep->channels, plan->outChannels) << tag;
+                        EXPECT_EQ(rep->frameBitExact, plan->frameBitExact) << tag;
+                        EXPECT_EQ(rep->notExactReasons, plan->notExactReasons) << tag;
+                        EXPECT_EQ(plan->reducesDepth, plan->outBits < srcBits) << tag;
+                        EXPECT_EQ(plan->interpolation,
+                                  mode == GeometryMode::pixel_crop ? "none" : "Lanczos-3")
+                            << tag;
+                        // FK-010: "bit-identical" is never claimed when the depth is reduced
+                        if (plan->reducesDepth) {
+                            EXPECT_FALSE(plan->frameBitExact) << tag;
+                        }
+                        // independent read-back (Linear DNG: libtiff tags, the image readers do not decode
+                        // it)
+                        if (fmt == FileFormat::dng) {
+                            TIFF* t = TIFFOpen(rep->output.string().c_str(), "r");
+                            ASSERT_NE(t, nullptr) << tag;
+                            uint32_t w = 0, h = 0;
+                            uint16_t bps = 0, spp = 0;
+                            TIFFGetField(t, TIFFTAG_IMAGEWIDTH, &w);
+                            TIFFGetField(t, TIFFTAG_IMAGELENGTH, &h);
+                            TIFFGetField(t, TIFFTAG_BITSPERSAMPLE, &bps);
+                            TIFFGetField(t, TIFFTAG_SAMPLESPERPIXEL, &spp);
+                            TIFFClose(t);
+                            EXPECT_EQ(static_cast<int64_t>(w), plan->geometry.outSize.w) << tag;
+                            EXPECT_EQ(static_cast<int64_t>(h), plan->geometry.outSize.h) << tag;
+                            EXPECT_EQ(bps, plan->outBits) << tag;
+                            EXPECT_EQ(spp, plan->outChannels) << tag;
+                        } else {
+                            ImageInfo back;
+                            auto img = readImageFile(rep->output, &back);
+                            ASSERT_TRUE(img.ok()) << tag;
+                            EXPECT_EQ(back.width, plan->geometry.outSize.w) << tag;
+                            EXPECT_EQ(back.height, plan->geometry.outSize.h) << tag;
+                            EXPECT_EQ(back.bitsPerSample, plan->outBits) << tag;
+                            EXPECT_EQ(back.channels, plan->outChannels) << tag;
+                        }
+                        std::filesystem::remove(rep->output);
+                    }
+    }
+}
+
+TEST(ExportPlan, DepthReductionNeedsConsent) {
+    auto s = makeScan(3, 16);
+    auto src = openTiff(s->path);
+    ASSERT_TRUE(src.ok());
+    ExportRequest r = cropRequest(s->dir / "e.tif", 10, 10, 100, 100);
+    r.write.bits = 8;
+    auto plan = planExport((*src)->info(), r);
+    ASSERT_TRUE(plan.ok());
+    EXPECT_TRUE(plan->reducesDepth);
+    EXPECT_FALSE(plan->frameBitExact);
+    auto refused = exportRegion(**src, r, {}, {});
+    ASSERT_FALSE(refused.ok());
+    EXPECT_EQ(refused.error().code, Errc::needs_confirmation);
+    r.allowDepthReduction = true;
+    EXPECT_TRUE(exportRegion(**src, r, {}, {}).ok());
+}
+
+TEST(ExportPlan, RoundImageAreaIsTransparentOrFilledAndSaysSo) {
+    auto s = makeScan(3, 16);
+    auto src = openTiff(s->path);
+    ASSERT_TRUE(src.ok());
+    for (FileFormat fmt : {FileFormat::tiff, FileFormat::png, FileFormat::jpeg, FileFormat::dng}) {
+        ExportRequest r = cropRequest(s->dir / ("round." + std::string(fileExtension(fmt))), 0, 0, 1, 1);
+        r.target = ExportTarget::image_area;
+        r.region = Shape::fromEllipse({{160, 120}, 80, 80, 0});
+        r.frame = rectQuad(60, 20, 260, 220);
+        r.write.format = fmt;
+        r.allowDepthReduction = true;
+        auto plan = planExport((*src)->info(), r);
+        ASSERT_TRUE(plan.ok());
+        auto rep = exportRegion(**src, r, {}, {});
+        ASSERT_TRUE(rep.ok()) << fileExtension(fmt) << " " << rep.error().message;
+        EXPECT_EQ(rep->channels, plan->outChannels);
+        auto has = [](const std::vector<std::string>& v, const char* what) {
+            return std::any_of(v.begin(), v.end(),
+                               [&](const std::string& n) { return n.find(what) != std::string::npos; });
+        };
+        if (fmt == FileFormat::dng) {
+            EXPECT_TRUE(has(plan->notes, "keep the scanned frame"));
+            EXPECT_EQ(rep->channels, 3);
+            continue;
+        }
+        auto img = readImageFile(rep->output);
+        ASSERT_TRUE(img.ok());
+        const int64_t w = img->width(), h = img->height();
+        if (fmt == FileFormat::tiff || fmt == FileFormat::png) {
+            EXPECT_TRUE(has(plan->notes, "transparent"));
+            EXPECT_TRUE(has(rep->notes, "transparent"));
+            ASSERT_EQ(img->channels(), 4);
+            EXPECT_EQ(img->sample16(0, 0, 3), 0) << "corner outside the circle is transparent";
+            EXPECT_EQ(img->sample16(w / 2, h / 2, 3), 65535) << "centre is opaque";
+        } else if (fmt == FileFormat::jpeg) {
+            EXPECT_TRUE(has(plan->notes, "filled white"));
+            EXPECT_GT(img->sample16(0, 0, 0), 64000);
+            EXPECT_GT(img->sample16(1, 1, 1), 64000);
+        } else {
+            EXPECT_TRUE(has(plan->notes, "keep the scanned frame"));
+        }
+    }
+}

@@ -173,6 +173,26 @@ Status OutputStage::open(const Params& p, ExportReport& rep) {
         }
         }
     }
+    // UX-02: round image area — what happens outside the circle is decided here and stated in the report
+    colorCh_ = lay_.outCh;
+    if (p.clip && !lay_.srcAlpha) {
+        ellipse_ = p.clip;
+        outToScan_ = p.outToScan;
+        outPerScanPx_ = p.outPerScanPx;
+        if (p.write.format == FileFormat::tiff || p.write.format == FileFormat::png) {
+            clip_ = Clip::alpha;
+            lay_.outCh += 1;
+            w_.hasAlpha = true;
+            lay_.notes.push_back("round image area: transparent outside the circle");
+        } else if (p.write.format == FileFormat::jpeg) {
+            clip_ = Clip::white;
+            lay_.notes.push_back(
+                "round image area: filled white outside the circle (JPEG has no transparency)");
+        } else {
+            lay_.notes.push_back(
+                "round image area: the corners keep the scanned frame (Linear DNG has no transparency)");
+        }
+    }
     rep.output = p.output;
     rep.size = p.outSize;
     rep.bits = lay_.outBits;
@@ -183,7 +203,13 @@ Status OutputStage::open(const Params& p, ExportReport& rep) {
     rep.iccSha256 = w_.icc.empty() ? std::string() : sha256Hex(w_.icc.data(), w_.icc.size());
     rep.dpiX = w_.dpiX;
     rep.dpiY = w_.dpiY;
-    FK_TRY(conv_.init(lay_.srcCh, lay_.srcBits, lay_.outCh, lay_.outBits, xf, lay_.srcAlpha));
+    FK_TRY(conv_.init(lay_.srcCh, lay_.srcBits, colorCh_, lay_.outBits, xf, lay_.srcAlpha));
+    if (clip_ != Clip::none) {
+        auto cr = AccountedBuffer::allocate(MemCategory::band,
+                                            static_cast<size_t>(p.outSize.w) * colorCh_ * (lay_.outBits / 8));
+        if (!cr) return cr.error();
+        colorRow_ = std::move(cr.value());
+    }
     auto sink = createSink(p.output, w_);
     if (!sink) return sink.error();
     sink_ = std::move(*sink);
@@ -197,9 +223,51 @@ Status OutputStage::open(const Params& p, ExportReport& rep) {
     return {};
 }
 
+namespace {
+/// Coverage of output pixel (u, v) by the ellipse: 1 inside, 0 outside, a one-pixel ramp across the edge.
+double ellipseCoverage(const Ellipse& e, const Mat3& outToScan, double outPerScanPx, double u, double v) {
+    const Vec2 p = outToScan.apply({u + 0.5, v + 0.5});
+    const double c = std::cos(e.angleRad), s = std::sin(e.angleRad);
+    const double dx = p.x - e.c.x, dy = p.y - e.c.y;
+    const double x = c * dx + s * dy, y = -s * dx + c * dy;
+    if (e.rx <= 0 || e.ry <= 0) return 0;
+    const double q = std::sqrt((x * x) / (e.rx * e.rx) + (y * y) / (e.ry * e.ry));
+    const double distScan = (q - 1.0) * std::min(e.rx, e.ry); // signed, ≈ scan px outside the edge
+    return std::clamp(0.5 - distScan * outPerScanPx, 0.0, 1.0);
+}
+} // namespace
+
 Status OutputStage::writeRows(const uint8_t* rows, int64_t n, size_t stride) {
     for (int64_t r = 0; r < n; ++r) {
-        conv_.convert(rows + static_cast<size_t>(r) * stride, outRow_.data(), size_.w);
+        if (clip_ != Clip::none) {
+            conv_.convert(rows + static_cast<size_t>(r) * stride, colorRow_.data(), size_.w);
+            const int bs = lay_.outBits / 8;
+            const double maxV = lay_.outBits == 8 ? 255.0 : 65535.0;
+            for (int64_t u = 0; u < size_.w; ++u) {
+                const double cov = ellipseCoverage(*ellipse_, outToScan_, outPerScanPx_,
+                                                   static_cast<double>(u), static_cast<double>(y_));
+                const uint8_t* in = colorRow_.data() + static_cast<size_t>(u) * colorCh_ * bs;
+                uint8_t* out = outRow_.data() + static_cast<size_t>(u) * lay_.outCh * bs;
+                for (int c = 0; c < colorCh_; ++c) {
+                    double v =
+                        bs == 1 ? in[c] : static_cast<double>(reinterpret_cast<const uint16_t*>(in)[c]);
+                    if (clip_ == Clip::white) v = v * cov + maxV * (1.0 - cov);
+                    if (bs == 1)
+                        out[c] = static_cast<uint8_t>(std::lround(v));
+                    else
+                        reinterpret_cast<uint16_t*>(out)[c] = static_cast<uint16_t>(std::lround(v));
+                }
+                if (clip_ == Clip::alpha) {
+                    const double a = std::round(cov * maxV);
+                    if (bs == 1)
+                        out[colorCh_] = static_cast<uint8_t>(a);
+                    else
+                        reinterpret_cast<uint16_t*>(out)[colorCh_] = static_cast<uint16_t>(a);
+                }
+            }
+        } else {
+            conv_.convert(rows + static_cast<size_t>(r) * stride, outRow_.data(), size_.w);
+        }
         hash_.update(outRow_.data(), outRow_.size());
         sig_->addRows(y_, 1, outRow_.data(), outRow_.size(), lay_.outCh, lay_.outBits);
         FK_TRY(sink_->writeRows(outRow_.data(), 1, outRow_.size()));

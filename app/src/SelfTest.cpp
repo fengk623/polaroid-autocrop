@@ -378,23 +378,37 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
               brief(c4));
     }
 
-    // FK-010: reducing 16-bit to 8-bit on export is still announced as bit-identical
+    // FK-010 (U010, was a known issue): prompts follow the core's plan of the real output; reducing 16-bit
+    // data needs an explicit yes
     {
         const QVariant bits = app_->settings().value("exportBits");
         app_->setSetting(QStringLiteral("exportBits"), 8);
         QCoreApplication::processEvents();
         const bool sixteen = app_->currentScan().value("bits").toInt() == 16;
-        const bool claimed = app_->currentItem().value("frameBitExact").toBool();
-        if (!sixteen)
-            knownNotApplicable(QStringLiteral("FK-010"),
-                               QStringLiteral("16→8-bit export still claims bit-identical pixels"),
+        const QVariantMap item = app_->currentItem();
+        if (sixteen) {
+            check(QStringLiteral("FK-010 16→8-bit export is not announced as bit-identical"),
+                  !item.value("frameBitExact").toBool() &&
+                      item.value("exportPlan").toMap().value("reducesDepth").toBool() &&
+                      item.value("notExactReason").toString().contains(QLatin1String("8 bits")),
+                  item.value("notExactReason").toString());
+            const QString id = app_->currentItemId();
+            const QStringList before = filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif"));
+            app_->exportImageAreas({id}); // no consent
+            app_->waitIdle(300000);
+            const qsizetype refused =
+                filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif")).size() - before.size();
+            app_->exportImageAreas({id}, true); // the user confirmed
+            app_->waitIdle(300000);
+            const qsizetype written =
+                filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif")).size() - before.size() - refused;
+            check(QStringLiteral("FK-010 8-bit export only with explicit consent"),
+                  refused == 0 && written == 1,
+                  QStringLiteral("without consent %1, with consent %2").arg(refused).arg(written));
+        } else {
+            knownNotApplicable(QStringLiteral("FK-010"), QStringLiteral("16→8-bit export prompt"),
                                QStringLiteral("scan bits %1").arg(app_->currentScan().value("bits").toInt()));
-        else
-            known(QStringLiteral("FK-010"),
-                  QStringLiteral("16→8-bit export still claims bit-identical pixels"), claimed,
-                  QStringLiteral("scan bits %1, frameBitExact %2")
-                      .arg(app_->currentScan().value("bits").toInt())
-                      .arg(claimed));
+        }
         app_->setSetting(QStringLiteral("exportBits"), bits);
     }
 
@@ -873,7 +887,7 @@ void SelfTest::runPrivacy() {
     for (const QString fmt : {QStringLiteral("tif"), QStringLiteral("png"), QStringLiteral("jpg")}) {
         app_->setSetting(QStringLiteral("exportFormat"), fmt);
         app_->setSetting(QStringLiteral("exportBits"), fmt == QLatin1String("jpg") ? 8 : 0);
-        app_->exportImageAreas({id});
+        app_->exportImageAreas({id}, true);
         app_->waitIdle(300000);
         for (const QString& f : filesMatching(exp, QStringLiteral("*.") + fmt)) {
             QFile file(f);
@@ -1093,6 +1107,8 @@ int SelfTest::run() {
     QDir(exportDir).removeRecursively();
     app_->setSetting(QStringLiteral("exportFolder"), exportDir);
     app_->setSetting(QStringLiteral("exportFormat"), QStringLiteral("tif"));
+    const QString defaultGeometry =
+        app_->settings().value("geometryMode").toString(); // fresh settings: the default
     app_->setSetting(QStringLiteral("geometryMode"), QStringLiteral("crop"));
     app_->setSetting(QStringLiteral("applyUpright"), false);
     app_->setSetting(QStringLiteral("finalMode"), QStringLiteral("real"));
@@ -1139,6 +1155,19 @@ int SelfTest::run() {
         canvas->setProperty("tool", QStringLiteral("select"));
     }
 
+    // UX-02 / D4 (U010): "image only" is straightened by default, labelled as resampled, from the core's plan
+    {
+        app_->setSetting(QStringLiteral("geometryMode"), defaultGeometry);
+        const QVariantMap plan = app_->currentItem().value("exportPlan").toMap();
+        check(QStringLiteral("image area exports default to labelled straightening"),
+              defaultGeometry == QLatin1String("straighten") && plan.value("resampled").toBool() &&
+                  plan.value("geometry").toString().contains(QLatin1String("straightened")) &&
+                  !app_->currentItem().value("frameBitExact").toBool(),
+              app_->settings().value("geometryMode").toString() + QStringLiteral(" · ") +
+                  plan.value("geometry").toString());
+    }
+    // the bit-exact round trip below is about the pixel crop: chosen explicitly
+    app_->setSetting(QStringLiteral("geometryMode"), QStringLiteral("crop"));
     // export image areas (all prints, low-confidence ones included for the test)
     app_->exportImageAreas({});
     app_->waitIdle(300000);

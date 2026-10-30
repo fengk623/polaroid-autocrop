@@ -72,8 +72,14 @@ struct ExportPlan {
     uint64_t freeBytes = 0;
     uint64_t estimatedPeakMemory = 0;
     std::string iccDescription;
+    /// FK-010 (U010): the real output, so prompts follow it — not the settings.
+    bool reducesDepth = false;      ///< 16 → 8 bits (needs the user's explicit consent)
+    std::string interpolation;      ///< "none" (pixel copy) or "Lanczos-3"
+    std::vector<std::string> notes; ///< alpha dropped, round image area handling, …
 };
 Result<ExportPlan> planExport(const ImageSource& src, const ExportRequest& req);
+/// The same plan from the scan's summary (no file access; for prompts). The disk figures stay 0.
+Result<ExportPlan> planExport(const ImageInfo& in, const ExportRequest& req);
 
 Result<ExportReport> exportRegion(ImageSource& src, const ExportRequest& req, const CancelToken& cancel,
                                   const ProgressFn& progress);

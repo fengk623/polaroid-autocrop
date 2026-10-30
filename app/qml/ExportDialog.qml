@@ -15,6 +15,7 @@ FkDialog {
         ids = list
         fullPrint = full
         plan = App.prepareExport(list)
+        depthBox.checked = false
         open()
     }
     contentItem: ColumnLayout {
@@ -24,9 +25,21 @@ FkDialog {
             wrapMode: Text.WordWrap
             font.pixelSize: Theme.fontBody
             color: Theme.textPrimary
-            text: qsTr("%n print(s) will be written as %1, %2.", "", d.plan.count || 0)
-                  .arg((App.settings.exportFormat || "tif").toUpperCase())
-                  .arg(App.settings.geometryMode === "straighten" ? qsTr("straightened") : qsTr("pixel crop (bit-identical)"))
+            text: qsTr("%n print(s) will be written as %1.", "", d.plan.count || 0).arg((App.settings.exportFormat || "tif").toUpperCase())
+        }
+        // FK-010: the real output of the first print, from the core's plan
+        Text {
+            readonly property var p: d.plan.plan || ({})
+            visible: p.width !== undefined
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontCaption
+            color: Theme.textSecondary
+            text: visible ? qsTr("First print: %1 × %2 px, %3-bit, %4 channel(s), %5 · %6")
+                              .arg(p.width).arg(p.height).arg(p.bits).arg(p.channels).arg(p.icc || qsTr("untagged")).arg(p.geometry)
+                            + (p.bitExact ? " · " + qsTr("pixels identical to the scan") : " · " + qsTr("not identical: %1").arg((p.reasons || []).join("; ")))
+                            + ((p.notes || []).length ? " · " + p.notes.join("; ") : "")
+                          : ""
         }
         RowLayout {
             Layout.fillWidth: true
@@ -34,13 +47,11 @@ FkDialog {
             Text { Layout.fillWidth: true; text: d.plan.folder || ""; elide: Text.ElideMiddle; font.pixelSize: Theme.fontCaption; color: Theme.textPrimary }
             FkButton { text: qsTr("Choose…"); onClicked: d.chooseFolder() }
         }
-        Text {
+        FkCheck {
+            // FK-010: reducing 16-bit data needs an explicit yes
+            id: depthBox
             visible: d.plan.reducesDepth === true
-            Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            font.pixelSize: Theme.fontCaption
-            color: Theme.warning
-            text: qsTr("16-bit scans will be written with 8 bits per channel (JPEG or 8-bit setting).")
+            text: qsTr("Write 8 bits per channel from 16-bit scans (JPEG or the 8-bit setting); the extra precision is lost")
         }
         ColumnLayout {
             visible: (d.plan.unreviewed || []).length > 0
@@ -72,10 +83,11 @@ FkDialog {
             FkButton {
                 primary: true
                 text: (d.plan.unreviewed || []).length > 0 ? qsTr("Export anyway") : qsTr("Export")
+                enabled: d.plan.reducesDepth !== true || depthBox.checked
                 onClicked: {
                     d.close()
-                    if (d.fullPrint) App.exportFullPrints(d.ids)
-                    else App.exportImageAreas(d.ids)
+                    if (d.fullPrint) App.exportFullPrints(d.ids, depthBox.checked)
+                    else App.exportImageAreas(d.ids, depthBox.checked)
                 }
             }
         }

@@ -278,3 +278,16 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
 - Tests: core `Privacy.*` incl. byte-level read-back of TIFF/PNG/JPEG/DNG × 3 presets; mutation (always copy the
   creator) → 3 failures, restored (no MUTATION markers). Core suite 173/173. Self-test: 2 FK-004 checks on a copy of
   the scan carrying identity (preview lists identity only when kept; TIFF/PNG/JPEG exports carry none).
+
+### 20:10–21:00 — PR #11 green, U010
+- PR #11 (U009) all checks green. PRs #9, #10, #11 wait for the owner's merge, in order.
+- U010 (branch `unit/U010-export-plan`), UX-02 export part + FK-010. Root cause FK-010: the app computed
+  "bit-identical" as `crop && format != jpg`, ignoring the output depth, and set `allowDepthReduction = true` for every
+  export. Core: `planExport(ImageInfo, request)` (no file access) with `reducesDepth`, `interpolation`, notes;
+  `exportRegion` uses it and refuses an unconsented reduction; round image areas in `OutputStage` (PNG/TIFF alpha
+  with a one-pixel ramp, JPEG white, DNG unchanged + note). App: `outputPlan` worded for the UI (Export tab line,
+  export dialog first-print line, "not identical" reasons), explicit 8-bit consent checkbox, `exportImageAreas` /
+  `exportFullPrints(ids, allowDepthReduction)`, default geometry "straighten" (D4), Segmented order/tooltips.
+- Tests: core `ExportPlan.*` ×3 — matrix of 96 combinations (first run read DNG back with the image reader, which
+  does not decode Linear DNG [failed] — now libtiff tags), consent, round area per format; core suite 176 pass.
+  Self-test (fixture): default straightening labelled (2.81°, Lanczos-3); FK-010 known issue → 2 checks; all pass.
