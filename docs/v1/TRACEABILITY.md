@@ -14,7 +14,7 @@
 | UX-04 | P1 | 整张扫描件旋转 | U014 | 自检场景 `upright`（现状观察）；整图旋转回归（计划） | U：图 6–7；R：转正只改导出方向、画布不变 | 未开始（已复现） |
 | UX-05 | P1 | 图库首页与图库内审阅 | U018、U019、U020 | 计划 | U：图 8–12 | 未开始 |
 | UX-06 | P1 | 两个工作区与顶部工具栏 | U021 | FEATURE-FREEZE 回归 | U：图 13 | 未开始 |
-| UX-07 | P1 | 回导修复、取消必需侧车 | U003、U004（主体）、U005、U006、U007 | 应用 known-issue ×3（改名无 XMP 无侧车；`_1` 后缀；新会话）→ 修复后转常规；场景 `relink` R1–R6 | U：图 14–15；R：R2/R4/R6 复现 | 未开始（已复现；图 14 文件名空白 Linux 未复现，待 Windows） |
+| UX-07 | P1 | 回导修复、取消必需侧车 | U003、U004（主体）、U005、U006、U007 | `ExportRecords.*`（U003）；自检“export records in the project”“reopened project relinks without a sidecar”“portable sidecar written when enabled”（U003）；应用 known-issue ×3 → U004 转常规；场景 `relink` R1–R6 | U：图 14–15；R：R2/R4/R6 复现；U003：导出不再需要侧车 | 部分完成（U003 侧车可选；回导匹配 U004；图 14 文件名空白待 Windows） |
 | UX-08 | P1 | 自然融合蒙版默认值 | U015 | 计划 | U：图 16–17 | 未开始 |
 | UX-09 | P2 | 数值拖动与双击输入 | U016 | 计划 | U：图 16–17 | 未开始 |
 | UX-10 | P2 | 边缘折叠条与全宽底部导航 | U022 | 计划 | U：图 18–24 | 未开始 |

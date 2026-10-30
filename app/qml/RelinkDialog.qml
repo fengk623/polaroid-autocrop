@@ -1,4 +1,4 @@
-// Relink results: matched print, method (XMP → sidecar → file name), content check, needed confirmations.
+// Relink results: matched print, method (XMP → sidecar → file name; geometry from the project's export record), content check, needed confirmations.
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic

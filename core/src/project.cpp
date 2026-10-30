@@ -18,6 +18,11 @@ namespace fk {
 
 using json = nlohmann::ordered_json;
 
+namespace {
+json sidecarJson(const Sidecar& s);
+Result<Sidecar> sidecarFromJson(const json& j);
+} // namespace
+
 const char* boundarySourceName(BoundarySource s) {
     switch (s) {
     case BoundarySource::automatic:
@@ -411,8 +416,8 @@ int schemaVersion(const std::string& schema, const std::string& prefix) {
     }
 }
 
-const std::vector<std::string> kKnownProjectKeys = {"schema",     "projectId", "name",     "createdAt",
-                                                    "modifiedAt", "app",       "settings", "scans"};
+const std::vector<std::string> kKnownProjectKeys = {
+    "schema", "projectId", "name", "createdAt", "modifiedAt", "app", "settings", "scans", "exportRecords"};
 
 } // namespace
 
@@ -441,6 +446,21 @@ std::string projectToJson(const Project& p) {
     j["scans"] = json::array();
     for (const auto& s : p.scans)
         j["scans"].push_back(scanJson(s));
+    // export records (UX-07, U003): the geometry, colour and file identity of every export, so relinking
+    // needs no sidecar next to the graded file. A top-level key: older versions keep it verbatim (unknown
+    // keys).
+    if (!p.exportRecords.empty() || !p.unparsedExportRecords.empty()) {
+        json recs = json::array();
+        for (const auto& r : p.exportRecords)
+            recs.push_back(sidecarJson(r));
+        for (const auto& raw : p.unparsedExportRecords) {
+            try {
+                recs.push_back(json::parse(raw));
+            } catch (...) {
+            }
+        }
+        j["exportRecords"] = std::move(recs);
+    }
     if (!p.unknownJson.empty()) {
         try {
             const json extra = json::parse(p.unknownJson);
@@ -483,6 +503,13 @@ Result<Project> projectFromJson(const std::string& text, OpenMode* mode) {
         }
         for (const auto& s : j.value("scans", json::array()))
             p.scans.push_back(scanFrom(s));
+        for (const auto& r : j.value("exportRecords", json::array())) {
+            auto rec = sidecarFromJson(r);
+            if (rec)
+                p.exportRecords.push_back(std::move(*rec));
+            else
+                p.unparsedExportRecords.push_back(r.dump()); // kept verbatim (e.g. a newer record schema)
+        }
         json extra = json::object();
         for (auto it = j.begin(); it != j.end(); ++it)
             if (std::find(kKnownProjectKeys.begin(), kKnownProjectKeys.end(), it.key()) ==
@@ -501,7 +528,25 @@ Result<Project> loadProject(const std::filesystem::path& path, OpenMode* mode) {
     auto p = projectFromJson(*text, mode);
     if (!p) return p.error();
     resolveScanPaths(*p, path.parent_path());
+    importSidecarRecords(*p);
     return p;
+}
+
+int importSidecarRecords(Project& p) {
+    // Projects from before U003 kept export geometry only in `.fk.json` files beside the exports. Copy each
+    // one that is still readable into the project so relinking no longer depends on it (saved with the
+    // project).
+    int n = 0;
+    for (const auto& s : p.scans)
+        for (const auto& it : s.items)
+            for (const auto& ev : it.edits) {
+                if (ev.sidecar.empty() || findExportRecord(p, ev.editVersionId)) continue;
+                auto sc = loadSidecar(pathFromUtf8(ev.sidecar));
+                if (!sc || sc->editVersionId != ev.editVersionId) continue;
+                p.exportRecords.push_back(std::move(*sc));
+                ++n;
+            }
+    return n;
 }
 
 Status saveProject(const Project& p, const std::filesystem::path& path) {
@@ -637,7 +682,8 @@ Sidecar makeSidecar(const Project& p, const ScanRecord& s, const ItemRecord& it,
     return sc;
 }
 
-Status saveSidecar(const Sidecar& s, const std::filesystem::path& path) {
+namespace {
+json sidecarJson(const Sidecar& s) {
     json j;
     j["schema"] = "fk.sidecar/" + std::to_string(kSidecarSchemaVersion);
     j["projectId"] = s.projectId;
@@ -669,14 +715,11 @@ Status saveSidecar(const Sidecar& s, const std::filesystem::path& path) {
     j["signature"] = encodeSignature(s.signature);
     j["software"] = s.software;
     j["exportedAt"] = s.exportedAt;
-    return writeFileAtomic(path, j.dump(2), false);
+    return j;
 }
 
-Result<Sidecar> loadSidecar(const std::filesystem::path& path) {
-    auto text = readTextFile(path);
-    if (!text) return text.error();
+Result<Sidecar> sidecarFromJson(const json& j) {
     try {
-        const json j = json::parse(*text);
         const int v = schemaVersion(j.value("schema", ""), "fk.sidecar/");
         if (v < 1) return makeError(Errc::parse_error, "Not a FrameKeeper sidecar");
         if (v > kSidecarSchemaVersion)
@@ -728,6 +771,36 @@ Result<Sidecar> loadSidecar(const std::filesystem::path& path) {
         return makeError(Errc::parse_error, "The sidecar file is damaged", e.what());
     }
 }
+} // namespace
+
+Status saveSidecar(const Sidecar& s, const std::filesystem::path& path) {
+    return writeFileAtomic(path, sidecarJson(s).dump(2), false);
+}
+
+Result<Sidecar> loadSidecar(const std::filesystem::path& path) {
+    auto text = readTextFile(path);
+    if (!text) return text.error();
+    json j;
+    try {
+        j = json::parse(*text);
+    } catch (const std::exception& e) {
+        return makeError(Errc::parse_error, "The sidecar file is damaged", e.what());
+    }
+    return sidecarFromJson(j);
+}
+
+const Sidecar* findExportRecord(const Project& p, const std::string& editVersionId) {
+    if (editVersionId.empty()) return nullptr;
+    for (const auto& r : p.exportRecords)
+        if (r.editVersionId == editVersionId) return &r;
+    return nullptr;
+}
+
+Result<Sidecar> exportRecordFor(const Project& p, const EditVersion& ev) {
+    if (const Sidecar* r = findExportRecord(p, ev.editVersionId)) return *r;
+    if (!ev.sidecar.empty()) return loadSidecar(pathFromUtf8(ev.sidecar));
+    return makeError(Errc::not_found, "No export record for this file in the project");
+}
 
 std::string sidecarPathFor(const std::string& imagePathUtf8) {
     const auto p = pathFromUtf8(imagePathUtf8);
@@ -752,7 +825,7 @@ RelinkCandidate findMatch(const std::filesystem::path& edited, const Project& p)
                 if (!ev && !it.edits.empty()) ev = &it.edits.back();
                 if (ev) {
                     if (c.editVersionId.empty()) c.editVersionId = ev->editVersionId;
-                    auto sc = loadSidecar(pathFromUtf8(ev->sidecar));
+                    auto sc = exportRecordFor(p, *ev);
                     if (sc) c.sidecar = *sc;
                 }
                 return true;

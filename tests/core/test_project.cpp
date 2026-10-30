@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iterator>
 
 using namespace fk;
 using fk::test::TempDir;
@@ -306,4 +307,96 @@ TEST(Template, SaveLoadRoundTrip) {
     ASSERT_EQ(q->slots.size(), 4u);
     EXPECT_DOUBLE_EQ(q->slots[2].outer[1].x, t.slots[2].outer[1].x);
     EXPECT_EQ(q->scanSize, t.scanSize);
+}
+
+// ---- export records in the project (UX-07, U003) ----------------------------------------------------
+
+std::string slurp(const std::filesystem::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+
+/// The same export as exportedEdit(), recorded only in the project: no sidecar file anywhere.
+std::unique_ptr<RelinkFixture> exportedEditRecordOnly() {
+    auto f = exportedEdit();
+    ItemRecord& it = f->p.scans[0].items[0];
+    EditVersion& ev = it.edits.back();
+    f->p.exportRecords.push_back(makeSidecar(f->p, f->p.scans[0], it, ev, f->rep));
+    std::filesystem::remove(pathFromUtf8(ev.sidecar));
+    ev.sidecar.clear();
+    return f;
+}
+
+TEST(ExportRecords, SaveLoadRoundTrip) {
+    auto f = exportedEditRecordOnly();
+    const auto file = f->dir / "p.fkproj";
+    ASSERT_TRUE(saveProject(f->p, file).ok());
+    auto back = loadProject(file);
+    ASSERT_TRUE(back.ok()) << back.error().message;
+    ASSERT_EQ(back->exportRecords.size(), 1u);
+    const Sidecar& a = f->p.exportRecords[0];
+    const Sidecar& b = back->exportRecords[0];
+    EXPECT_EQ(b.editVersionId, a.editVersionId);
+    EXPECT_EQ(b.itemId, a.itemId);
+    EXPECT_EQ(b.exportSize, a.exportSize);
+    EXPECT_EQ(b.geometry.sourceRect.x, a.geometry.sourceRect.x);
+    EXPECT_EQ(b.geometry.sourceRect.w, a.geometry.sourceRect.w);
+    EXPECT_EQ(b.fileSha256, a.fileSha256);
+    EXPECT_NEAR(compareSignatures(b.signature, a.signature), 1.0, 1e-6);
+    // the project file is the only place the record lives
+    EXPECT_FALSE(std::filesystem::exists(f->dir / "roll1_P01_EDIT_v001.fk.json"));
+}
+
+TEST(ExportRecords, RelinkUsesTheProjectRecordWithoutASidecar) {
+    auto f = exportedEditRecordOnly();
+    // by embedded XMP
+    auto m1 = findMatch(f->editPath, f->p);
+    EXPECT_EQ(m1.source, MatchSource::xmp);
+    ASSERT_TRUE(m1.sidecar.has_value());
+    EXPECT_EQ(m1.sidecar->exportSize, f->rep.size);
+    // by file name, elsewhere, without our metadata
+    auto pixels = readImageFile(f->editPath);
+    ASSERT_TRUE(pixels.ok());
+    std::filesystem::create_directories(f->dir / "graded");
+    const auto byName = f->dir / "graded" / "roll1_P01_EDIT_v001.png";
+    writePlainPng(*pixels, byName);
+    auto m2 = findMatch(byName, f->p);
+    EXPECT_EQ(m2.source, MatchSource::file_name);
+    ASSERT_TRUE(m2.sidecar.has_value()) << "geometry must come from the project record";
+    EXPECT_EQ(m2.sidecar->editVersionId, f->p.exportRecords[0].editVersionId);
+}
+
+TEST(ExportRecords, RecordsOfANewerSchemaAreKeptVerbatim) {
+    TempDir t;
+    Project p = newProject("t");
+    const auto file = t / "p.fkproj";
+    ASSERT_TRUE(saveProject(p, file).ok());
+    std::string text = slurp(file);
+    const auto pos = text.rfind('}');
+    text.insert(pos, R"(, "exportRecords": [{"schema": "fk.sidecar/99", "future": true}])");
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << text;
+    auto loaded = loadProject(file);
+    ASSERT_TRUE(loaded.ok()) << loaded.error().message;
+    EXPECT_TRUE(loaded->exportRecords.empty());
+    ASSERT_EQ(loaded->unparsedExportRecords.size(), 1u);
+    ASSERT_TRUE(saveProject(*loaded, file).ok());
+    EXPECT_NE(slurp(file).find("fk.sidecar/99"), std::string::npos);
+}
+
+TEST(ExportRecords, OlderProjectsImportTheirSidecarsOnOpen) {
+    auto f = exportedEdit(); // pre-U003 style: sidecar file only, no record in the project
+    ASSERT_TRUE(f->p.exportRecords.empty());
+    const auto file = f->dir / "old.fkproj";
+    ASSERT_TRUE(saveProject(f->p, file).ok());
+    auto back = loadProject(file);
+    ASSERT_TRUE(back.ok());
+    ASSERT_EQ(back->exportRecords.size(), 1u);
+    EXPECT_EQ(back->exportRecords[0].editVersionId, f->p.scans[0].items[0].edits[0].editVersionId);
+    // after saving again the sidecar file is no longer needed
+    ASSERT_TRUE(saveProject(*back, file).ok());
+    std::filesystem::remove(pathFromUtf8(f->p.scans[0].items[0].edits[0].sidecar));
+    auto again = loadProject(file);
+    ASSERT_TRUE(again.ok());
+    auto m = findMatch(f->editPath, *again);
+    ASSERT_TRUE(m.sidecar.has_value());
 }

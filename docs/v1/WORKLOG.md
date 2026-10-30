@@ -135,3 +135,21 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   FAIL "job succeeded, corner x 260.589 (edited to 263.589)" — the old behaviour silently replaced the user's edit.
   Code restored (no MUTATION markers left; verified by grep).
 - Docs: RFC-0010 §Task safety, release notes v0.6.0-alpha.2, USER-GUIDE §8, UNITS, TRACEABILITY.
+
+### 15:20–15:45 — U001 merge/release, U002 PR, U003
+- PR #3 (U001) checks all green incl. packaging and the packaged-app version/commit check (release run 41120596615,
+  artifacts windows 105.9 MB, macos 60.0 MB). Merged → `3c009f881254fd3494861e63f2a1a636640245fe`.
+- Release run 41122756426 (publish, main 3c009f8): Windows packaging ok; macOS failed at `hdiutil: create failed -
+  Resource busy` (known intermittent runner problem) [failed]. Re-ran the failed jobs on the same commit (no new
+  tag elsewhere). Added an hdiutil retry to tools/release/package-macos.sh on the U002 branch (484555e), trap T19.
+- U002 rebased on main, PR #4 opened.
+- U003 (branch `unit/U003-export-records`): export records in the project. Decision: no schema bump — a top-level
+  `exportRecords` key in fk.project/1 is preserved verbatim by every earlier version (unknown top-level keys), so the
+  change is backward and forward compatible and needs no migration copy (UNITS U003 updated, RFC-0009 §Export
+  records). Core: sidecar JSON helpers shared by files and records, `findExportRecord`, `exportRecordFor`,
+  `importSidecarRecords` (on open). App: export writes the record (sidecar file only with the new `writeSidecar`
+  setting, default off), composite preview and final export read the record, relink message for a missing record,
+  Settings checkbox, export dialog text; 6 zh strings.
+- Tests: core `ExportRecords.*` ×4 pass; full core suite 144/144 (incl. 3 known-issue WILL_FAIL); app self-test 33
+  checks pass incl. 4 new U003 checks; 7 known issues still reproduced (UX-07 "new session" message changed to the
+  missing-record text — still reproduced, unsaved project).

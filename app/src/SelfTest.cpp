@@ -607,8 +607,11 @@ int SelfTest::run() {
     app_->waitIdle(300000);
     const QStringList edits = filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif"));
     check(QStringLiteral("image areas exported"), edits.size() == items, QString::number(edits.size()));
-    check(QStringLiteral("sidecars written"),
-          filesMatching(exportDir, QStringLiteral("*.fk.json")).size() == edits.size());
+    // UX-07 (U003): no sidecar files by default; the project keeps one export record per export
+    check(QStringLiteral("no sidecar files by default"),
+          filesMatching(exportDir, QStringLiteral("*.fk.json")).isEmpty());
+    check(QStringLiteral("export records in the project"), app_->exportRecordCount() == edits.size(),
+          QString::number(app_->exportRecordCount()));
 
     // relink the unchanged exports (matched by XMP), then composite back
     QVariantList rows;
@@ -673,6 +676,28 @@ int SelfTest::run() {
     app_->waitIdle(120000);
     check(QStringLiteral("project keeps prints"), app_->counts().value("prints").toInt() == items);
     snapshot(QStringLiteral("07-reopened"));
+
+    // UX-07 (U003): after saving and reopening, an unchanged export relinks with no sidecar file anywhere
+    {
+        QVariantList rows;
+        auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+        app_->relinkFiles({edits.first()});
+        app_->waitIdle(300000);
+        disconnect(c);
+        QMetaObject::invokeMethod(window_, "closeDialogs");
+        const QVariantMap r = rows.isEmpty() ? QVariantMap() : rows.first().toMap();
+        check(QStringLiteral("reopened project relinks without a sidecar"),
+              r.value("matched").toBool() && r.value("ok").toBool(),
+              r.value("source").toString() + QStringLiteral(" ") + r.value("message").toString());
+        // the portable sidecar is still available as an option
+        app_->setSetting(QStringLiteral("writeSidecar"), true);
+        app_->exportImageAreas({app_->currentItemId()});
+        app_->waitIdle(300000);
+        app_->setSetting(QStringLiteral("writeSidecar"), false);
+        check(QStringLiteral("portable sidecar written when enabled"),
+              filesMatching(exportDir, QStringLiteral("*.fk.json")).size() == 1,
+              QString::number(filesMatching(exportDir, QStringLiteral("*.fk.json")).size()));
+    }
 
     runTaskSafety(exportDir, proj);
     runKnownIssues(exportDir);
