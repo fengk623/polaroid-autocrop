@@ -37,6 +37,9 @@ class SelfTest : public QObject {
     /// issue): recorded as not applicable, neither reproduced nor a failure.
     void knownNotApplicable(const QString& ticket, const QString& name, const QString& why);
     void runKnownIssues(const QString& exportDir);
+    /// FK-001 / FK-008 (U008): the replace guard, failed saves, backup restore, recovery snapshots, output
+    /// settings.
+    void runDataProtection();
     void runTaskSafety(const QString& exportDir, const QString& projectPath);
     int scenarioMinIsWhite();
     QJsonArray known_;

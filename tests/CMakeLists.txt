@@ -33,8 +33,8 @@ fk_add_gtest(test_project project core/test_project.cpp)
 add_executable(test_known_issues core/test_known_issues.cpp)
 target_link_libraries(test_known_issues PRIVATE fk::core fk_test_support GTest::gtest GTest::gtest_main)
 fk_set_warnings(test_known_issues)
-# FK-007 moved to test_project (SourceIdentity.*) by U007.
-foreach(_ki FK004_RemoveIdentityDropsCreatorFromSourceXmp FK008_DamagedProjectOffersItsBackup)
+# FK-007 moved to test_project (SourceIdentity.*) by U007, FK-008 (DataProtection.*) by U008.
+foreach(_ki FK004_RemoveIdentityDropsCreatorFromSourceXmp)
   add_test(NAME KnownIssue.${_ki} COMMAND test_known_issues --gtest_filter=KnownIssue.${_ki})
   set_tests_properties(KnownIssue.${_ki} PROPERTIES WILL_FAIL TRUE LABELS known-issue)
 endforeach()

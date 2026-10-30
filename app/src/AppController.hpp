@@ -13,6 +13,7 @@
 #include <QObject>
 #include <QRectF>
 #include <QSettings>
+#include <QTimer>
 #include <QVariant>
 
 #include <map>
@@ -79,6 +80,21 @@ class AppController : public QObject {
     Q_INVOKABLE bool openProject(const QVariant& url);
     Q_INVOKABLE bool saveProject();
     Q_INVOKABLE bool saveProjectAs(const QVariant& url);
+    // ---- data protection (FK-001, FK-008, RFC-0017) ----
+    /// What replacing the open project would lose: {unsaved (dirty with content), jobs (running/queued
+    /// count)}.
+    Q_INVOKABLE QVariantMap replaceInfo() const;
+    /// FK-008: the damaged project at `url` is moved aside (kept) and its backup opened at the same path,
+    /// unsaved.
+    Q_INVOKABLE bool restoreBackup(const QVariant& url);
+    /// Recovery snapshots of unsaved work (crash or forced quit): {file, name, projectPath, savedAt}.
+    Q_INVOKABLE QVariantList recoverySnapshots() const;
+    Q_INVOKABLE bool recoverSnapshot(const QString& file);
+    Q_INVOKABLE void discardSnapshot(const QString& file);
+    /// The user chose "Don't save": the snapshot of the current project is no longer wanted.
+    Q_INVOKABLE void discardCurrentRecovery();
+    /// Writes the recovery snapshot now (normally a few seconds after the last change).
+    Q_INVOKABLE void writeRecovery();
     Q_INVOKABLE void importScans(const QVariantList& urls);
     Q_INVOKABLE void importFolder(const QVariant& url);
     Q_INVOKABLE void removeScan(const QString& scanId);
@@ -187,6 +203,10 @@ class AppController : public QObject {
     void compositePreviewReady(const QString& itemId);
     void notification(const QString& text, const QString& kind);
     void relinkResults(const QVariantList& rows);
+    /// FK-008: opening failed because the file is damaged; a backup from the last save can be restored.
+    void backupAvailable(const QString& path, const QString& backupName, const QString& backupTime);
+    /// A project file was dropped: QML asks about unsaved changes before opening it (FK-001).
+    void openRequested(const QString& url);
     void relinkRowUpdated(const QVariantMap& row);
     void exportFinished(const QString& folder, int written, int failed);
     void confirmationNeeded(const QString& title, const QString& text);
@@ -264,6 +284,12 @@ class AppController : public QObject {
     /// Profiles offered for interpreting graded files (FK-003), by SHA-256; the chosen one moves into the
     /// project.
     std::map<std::string, std::vector<uint8_t>> knownIcc_;
+    QTimer* recoveryTimer_ = nullptr;
+    QString recoveryDir() const;
+    QString recoveryFileFor(const std::string& projectId) const;
+    /// Takes over a loaded project (open, restore, recover): runtime state, settings, previews.
+    void adoptProject(fk::Project p, const QString& path, bool readOnly, bool dirty);
+    void syncOutputSettings();
     JobRunner* jobs_;
     ScanListModel* scans_;
     ItemListModel* items_;

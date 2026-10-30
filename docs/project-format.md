@@ -51,6 +51,9 @@ none/content/user, `scale` (resampling to the export size confirmed), `lowerDept
 Preview and output use it as stored. Absent (relinks of earlier versions; earlier versions drop it on save): the
 turn is taken from the picture only when unambiguous. `matchedBy` lists the supporting evidence since 0.6.0-alpha.4
 (older values: `xmp`, `sidecar`, `file_name`).
+`settings.output` (since 0.6.0-alpha.8, FK-008): the output parameters (geometryMode, applyUpright, finalMode,
+finalFormat, finalBits, mask and frame settings, writeSidecar, jpegQuality) as a JSON object; absent in older
+projects (the app keeps its current parameters). Backups and recovery snapshots: RFC-0017.
 `fingerprint.fullSha256` (FK-007): written at import since 0.6.0-alpha.7 (added when a scan of an older project is
 opened); with it every change of the scan file is detected before output. `transform.gradedIccSha256` (since
 0.6.0-alpha.7): the graded file's embedded profile at relink, to tell a re-grade from a re-profiled file.

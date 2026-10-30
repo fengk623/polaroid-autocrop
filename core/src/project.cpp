@@ -10,6 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -509,6 +510,12 @@ std::string projectToJson(const Project& p) {
         {"exportFolder", p.settings.exportFolder},   {"exportFormat", p.settings.exportFormat},
         {"exportBits", p.settings.exportBits},       {"exportCompression", p.settings.exportCompression},
         {"colorPolicy", p.settings.colorPolicy},     {"privacy", p.settings.privacy}};
+    if (!p.settings.outputJson.empty()) {
+        try {
+            j["settings"]["output"] = json::parse(p.settings.outputJson);
+        } catch (...) {
+        }
+    }
     j["scans"] = json::array();
     for (const auto& s : p.scans)
         j["scans"].push_back(scanJson(s));
@@ -575,6 +582,7 @@ Result<Project> projectFromJson(const std::string& text, OpenMode* mode) {
             p.settings.exportCompression = s.value("exportCompression", "lzw");
             p.settings.colorPolicy = s.value("colorPolicy", "keep");
             p.settings.privacy = s.value("privacy", "keep_all_safe");
+            if (s.contains("output") && s["output"].is_object()) p.settings.outputJson = s["output"].dump();
         }
         for (const auto& s : j.value("scans", json::array()))
             p.scans.push_back(scanFrom(s));
@@ -608,7 +616,14 @@ Result<Project> loadProject(const std::filesystem::path& path, OpenMode* mode) {
     auto text = readTextFile(path);
     if (!text) return text.error();
     auto p = projectFromJson(*text, mode);
-    if (!p) return p.error();
+    if (!p) {
+        Error e = p.error();
+        if (e.code == Errc::parse_error)
+            if (auto bak = usableBackup(path))
+                e.detail = "a backup from the last save is available: " + pathToUtf8(bak->filename()) +
+                           (e.detail.empty() ? std::string() : "; " + e.detail);
+        return e;
+    }
     resolveScanPaths(*p, path.parent_path());
     importSidecarRecords(*p);
     return p;
@@ -631,6 +646,34 @@ int importSidecarRecords(Project& p) {
     return n;
 }
 
+std::optional<std::filesystem::path> usableBackup(const std::filesystem::path& projectPath) {
+    auto bak = projectPath;
+    bak += ".bak";
+    std::error_code ec;
+    if (!std::filesystem::exists(bak, ec)) return std::nullopt;
+    auto text = readTextFile(bak);
+    if (!text || !projectFromJson(*text)) return std::nullopt;
+    return bak;
+}
+
+Result<std::filesystem::path> setAsideDamaged(const std::filesystem::path& projectPath) {
+    std::string stamp = isoDateTimeNowUtc(); // 2026-10-30T18:00:00Z → 20261030-180000
+    stamp.erase(
+        std::remove_if(stamp.begin(), stamp.end(), [](char c) { return c == '-' || c == ':' || c == 'Z'; }),
+        stamp.end());
+    std::replace(stamp.begin(), stamp.end(), 'T', '-');
+    auto aside = projectPath;
+    aside += ".damaged-" + stamp;
+    std::error_code ec;
+    for (int i = 2; std::filesystem::exists(aside, ec); ++i) {
+        aside = projectPath;
+        aside += ".damaged-" + stamp + "-" + std::to_string(i);
+    }
+    std::filesystem::rename(projectPath, aside, ec);
+    if (ec) return makeError(Errc::io_write, "Cannot move the damaged project aside", ec.message());
+    return aside;
+}
+
 Status saveProject(const Project& p, const std::filesystem::path& path) {
     Project copy = p;
     copy.modifiedAt = isoDateTimeNowUtc();
@@ -640,7 +683,15 @@ Status saveProject(const Project& p, const std::filesystem::path& path) {
         auto rel = std::filesystem::relative(pathFromUtf8(s.path), path.parent_path(), ec);
         if (!ec && !rel.empty()) s.relPath = pathToUtf8(rel.generic_u8string().empty() ? rel : rel);
     }
-    return writeFileAtomic(path, projectToJson(copy), true);
+    // FK-008: the previous file becomes the backup only when it is a readable project — a damaged file never
+    // replaces a good backup
+    bool previousIsGood = false;
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) {
+        auto text = readTextFile(path);
+        previousIsGood = text && projectFromJson(*text).ok();
+    }
+    return writeFileAtomic(path, projectToJson(copy), previousIsGood);
 }
 
 void resolveScanPaths(Project& p, const std::filesystem::path& projectDir) {

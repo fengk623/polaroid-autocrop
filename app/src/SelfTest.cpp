@@ -691,6 +691,126 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
     }
 }
 
+void SelfTest::runDataProtection() {
+    const QString d = QDir(dir_).filePath(QStringLiteral("data-protection"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    QObject* dialog = window_ ? window_->findChild<QObject*>(QStringLiteral("replaceConfirm")) : nullptr;
+    auto dialogOpen = [&] { return dialog && dialog->property("visible").toBool(); };
+    auto ask = [&](const QString& action, const QString& url) {
+        QMetaObject::invokeMethod(window_, "replaceProject", Q_ARG(QVariant, action), Q_ARG(QVariant, url));
+        QCoreApplication::processEvents();
+    };
+    auto answer = [&](const QString& choice) {
+        QMetaObject::invokeMethod(window_, "finishReplace", Q_ARG(QVariant, choice));
+        QCoreApplication::processEvents();
+        app_->waitIdle(300000);
+    };
+    auto scans = [&] { return app_->counts().value("scans").toInt(); };
+
+    // a project with unsaved work, saved once to a file
+    const QString saved = QDir(d).filePath(QStringLiteral("saved.fkproj"));
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    app_->saveProjectAs(saved);
+    app_->saveProject(); // second save: saved.fkproj.bak exists
+    app_->setSetting(QStringLiteral("expectedCount"),
+                     app_->settings().value("expectedCount").toInt() + 1); // unsaved
+    check(QStringLiteral("FK-001 setup: unsaved changes"), app_->dirty() && scans() == 1,
+          QStringLiteral("dirty %1, scans %2").arg(app_->dirty()).arg(scans()));
+
+    // FK-001: "New" asks; Cancel keeps everything
+    ask(QStringLiteral("new"), QString());
+    check(QStringLiteral("FK-001 new project with unsaved changes asks first"), dialogOpen() && scans() == 1,
+          QStringLiteral("dialog %1, scans %2").arg(dialogOpen()).arg(scans()));
+    answer(QStringLiteral("cancel"));
+    check(QStringLiteral("FK-001 cancel keeps the project and its unsaved changes"),
+          !dialogOpen() && scans() == 1 && app_->dirty());
+    // dropping a project file goes through the same question
+    app_->dropFiles({QUrl::fromLocalFile(saved)});
+    QCoreApplication::processEvents();
+    check(QStringLiteral("FK-001 dropping a project file asks first"), dialogOpen() && app_->dirty(),
+          QStringLiteral("dialog %1").arg(dialogOpen()));
+    answer(QStringLiteral("cancel"));
+
+    // a failed Save As keeps path, name and unsaved state
+    const QString pathBefore = app_->projectPath();
+    const bool savedOk = app_->saveProjectAs(QDir(d).filePath(QStringLiteral("no-such-dir/x.fkproj")));
+    check(QStringLiteral("FK-001 failed save keeps the project path and unsaved changes"),
+          !savedOk && app_->projectPath() == pathBefore && app_->dirty(),
+          QStringLiteral("path %1").arg(app_->projectPath()));
+
+    // FK-008 recovery snapshot: written while unsaved, offered after a crash, recovered unsaved
+    app_->writeRecovery();
+    const int ownHidden = static_cast<int>(app_->recoverySnapshots().size());
+    app_->newProject(); // what a crash looks like to the next session: the snapshot is still there
+    const QVariantList snaps = app_->recoverySnapshots();
+    const bool recovered =
+        !snaps.isEmpty() && app_->recoverSnapshot(snaps.first().toMap().value("file").toString());
+    app_->waitIdle(300000);
+    check(QStringLiteral("FK-008 unsaved work is recovered from the snapshot (unsaved, same path)"),
+          ownHidden == 0 && recovered && scans() == 1 && app_->dirty() && app_->projectPath() == saved,
+          QStringLiteral("snapshots %1, recovered %2, scans %3, path %4")
+              .arg(snaps.size())
+              .arg(recovered)
+              .arg(scans())
+              .arg(app_->projectPath()));
+    // "Don't save" drops the snapshot
+    ask(QStringLiteral("new"), QString());
+    answer(QStringLiteral("dontsave"));
+    check(QStringLiteral("FK-008 \"Don't save\" discards the snapshot"),
+          scans() == 0 && app_->recoverySnapshots().isEmpty(),
+          QStringLiteral("scans %1, snapshots %2").arg(scans()).arg(app_->recoverySnapshots().size()));
+
+    // output parameters travel with the project
+    app_->openProject(saved);
+    app_->waitIdle(300000);
+    const QVariant finalMode = app_->settings().value("finalMode");
+    app_->setSetting(QStringLiteral("finalMode"), QStringLiteral("synthetic"));
+    app_->saveProject();
+    app_->setSetting(QStringLiteral("finalMode"), QStringLiteral("real"));
+    app_->openProject(saved);
+    app_->waitIdle(300000);
+    check(QStringLiteral("FK-008 output parameters are saved with the project"),
+          app_->settings().value("finalMode").toString() == QLatin1String("synthetic"),
+          app_->settings().value("finalMode").toString());
+    app_->setSetting(QStringLiteral("finalMode"), finalMode);
+    app_->saveProject();
+    app_->saveProject(); // the backup is a good file again
+
+    // FK-008: a damaged project offers its backup; restoring keeps the damaged file
+    QString backupFor;
+    auto bc = connect(app_, &AppController::backupAvailable, this,
+                      [&](const QString& path, const QString&, const QString&) { backupFor = path; });
+    app_->newProject();
+    {
+        QFile f(saved);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write("{ damaged");
+    }
+    const bool opened = app_->openProject(saved);
+    disconnect(bc);
+    check(QStringLiteral("FK-008 a damaged project offers its backup"), !opened && backupFor == saved,
+          backupFor);
+    const bool restored = app_->restoreBackup(saved);
+    app_->waitIdle(300000);
+    const QStringList aside = QDir(d).entryList({QStringLiteral("saved.fkproj.damaged-*")}, QDir::Files);
+    QString asideText;
+    if (!aside.isEmpty()) {
+        QFile f(QDir(d).filePath(aside.first()));
+        if (f.open(QIODevice::ReadOnly)) asideText = QString::fromUtf8(f.readAll());
+    }
+    check(QStringLiteral("FK-008 backup restored unsaved; the damaged file is kept"),
+          restored && scans() == 1 && app_->dirty() && aside.size() == 1 &&
+              asideText == QLatin1String("{ damaged"),
+          QStringLiteral("restored %1, scans %2, kept %3").arg(restored).arg(scans()).arg(aside.join(',')));
+    const bool savedAgain = app_->saveProject();
+    check(QStringLiteral("FK-008 the restored project saves to its own path"),
+          savedAgain && app_->openProject(saved) && scans() == 1);
+    app_->waitIdle(300000);
+    app_->newProject();
+}
+
 int SelfTest::scenarioMinIsWhite() {
     // FK-011: rows from the TIFF reader are already in normal polarity; the display converter inverts
     // MinIsWhite again, so Preview (proxy) and Full (rows) disagree.
@@ -1037,6 +1157,7 @@ int SelfTest::run() {
 
     runTaskSafety(exportDir, proj);
     runKnownIssues(exportDir);
+    runDataProtection();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

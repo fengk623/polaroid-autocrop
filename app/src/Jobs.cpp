@@ -123,6 +123,10 @@ void JobRunner::cancelAll() {
         j->ctx.cancel.cancel();
 }
 
+int JobRunner::activeCount() const {
+    return model_->activeCount();
+}
+
 bool JobRunner::busy() const {
     return !jobs_.empty();
 }

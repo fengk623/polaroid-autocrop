@@ -17,6 +17,9 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocale>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QUrl>
@@ -208,6 +211,11 @@ AppController::AppController(QObject* parent)
                             QStringLiteral("FrameKeeper"), this);
     loadSettings();
     connect(jobs_, &JobRunner::busyChanged, this, &AppController::busyChanged);
+    // FK-008: unsaved work is snapshotted a few seconds after the last change (never into the project file)
+    recoveryTimer_ = new QTimer(this);
+    recoveryTimer_->setSingleShot(true);
+    recoveryTimer_->setInterval(3000);
+    connect(recoveryTimer_, &QTimer::timeout, this, &AppController::writeRecovery);
     newProject();
 }
 
@@ -264,6 +272,23 @@ QVariantMap AppController::settings() const {
     return settings_;
 }
 
+namespace {
+/// FK-008: output parameters saved with the project (besides the typed ProjectSettings), so a reopened
+/// project produces the same outputs.
+const QStringList kOutputKeys = {
+    "geometryMode", "applyUpright", "jpegQuality",   "writeSidecar",   "finalMode",        "finalFormat",
+    "finalBits",    "frameMode",    "frameUnit",     "frameTop",       "frameRight",       "frameBottom",
+    "frameLeft",    "frameRatioW",  "frameRatioH",   "frameMinMargin", "frameColorSource", "frameColor",
+    "maskMode",     "featherPx",    "preserveEdgePx"};
+} // namespace
+
+void AppController::syncOutputSettings() {
+    QJsonObject o;
+    for (const auto& k : kOutputKeys)
+        o[k] = QJsonValue::fromVariant(settings_.value(k));
+    project_.settings.outputJson = QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString();
+}
+
 void AppController::setSetting(const QString& key, const QVariant& value) {
     if (settings_.value(key) == value) return;
     settings_[key] = value;
@@ -294,6 +319,8 @@ void AppController::setSetting(const QString& key, const QVariant& value) {
         ps.colorPolicy = toStd(value.toString());
     else if (key == QLatin1String("privacy"))
         ps.privacy = toStd(value.toString());
+    else if (kOutputKeys.contains(key))
+        syncOutputSettings();
     else
         projectKey = false;
     if (projectKey && !project_.scans.empty()) {
@@ -398,6 +425,8 @@ void AppController::newProject() {
     project_ = fk::newProject(toStd(tr("Untitled")));
     project_.settings.expectedCount = settings_.value("expectedCount").toInt();
     project_.settings.safetyMarginPx = settings_.value("safetyMargin").toDouble();
+    syncOutputSettings();
+    if (recoveryTimer_) recoveryTimer_->stop();
     projectPath_.clear();
     dirty_ = readOnly_ = false;
     curScan_.clear();
@@ -420,15 +449,38 @@ bool AppController::openProject(const QVariant& url) {
     auto p = fk::loadProject(toPath(path), &mode);
     if (!p) {
         notify(tr("Cannot open the project: %1").arg(errText(p.error())), QStringLiteral("error"));
+        // FK-008: a damaged file whose backup is intact → offer to restore it (the damaged file is kept)
+        if (p.error().code == fk::Errc::parse_error)
+            if (auto bak = fk::usableBackup(toPath(path))) {
+                const QFileInfo bi(toQ(fk::pathToUtf8(*bak)));
+                Q_EMIT backupAvailable(path, bi.fileName(),
+                                       QLocale().toString(bi.lastModified(), QLocale::ShortFormat));
+            }
         return false;
     }
-    newProject();
-    project_ = std::move(*p);
-    projectPath_ = path;
-    readOnly_ = mode == fk::OpenMode::read_only;
+    adoptProject(std::move(*p), path, mode == fk::OpenMode::read_only, false);
     if (readOnly_)
         notify(tr("This project was saved by a newer version and is opened read-only."),
                QStringLiteral("warning"));
+    QStringList recent = settings_.value("recentProjects").toStringList();
+    recent.removeAll(path);
+    recent.prepend(path);
+    while (recent.size() > 8)
+        recent.removeLast();
+    setSetting(QStringLiteral("recentProjects"), recent);
+    // unsaved work of this project from a crash or a forced quit
+    if (QFileInfo::exists(recoveryFileFor(project_.projectId)))
+        notify(tr("Unsaved changes of this project from an earlier session can be recovered: File ▸ Recover "
+                  "Unsaved Work…"),
+               QStringLiteral("warning"));
+    return true;
+}
+
+void AppController::adoptProject(fk::Project p, const QString& path, bool readOnly, bool dirty) {
+    newProject();
+    project_ = std::move(p);
+    projectPath_ = path;
+    readOnly_ = readOnly;
     const auto& ps = project_.settings;
     settings_["expectedCount"] = ps.expectedCount;
     settings_["safetyMargin"] = ps.safetyMarginPx;
@@ -438,6 +490,14 @@ bool AppController::openProject(const QVariant& url) {
     settings_["exportCompression"] = toQ(ps.exportCompression);
     settings_["colorPolicy"] = toQ(ps.colorPolicy);
     settings_["privacy"] = toQ(ps.privacy);
+    // FK-008: the project's output parameters (projects of earlier versions keep the current ones)
+    if (!ps.outputJson.empty()) {
+        const QJsonObject o = QJsonDocument::fromJson(QByteArray::fromStdString(ps.outputJson)).object();
+        for (auto it = o.begin(); it != o.end(); ++it)
+            if (kOutputKeys.contains(it.key())) settings_[it.key()] = it.value().toVariant();
+    } else {
+        syncOutputSettings();
+    }
     for (const auto& s : project_.scans) {
         ScanRuntime& r = rt_[s.scanId];
         r.state = s.missing   ? QStringLiteral("missing")
@@ -447,19 +507,116 @@ bool AppController::openProject(const QVariant& url) {
         for (const auto& it : s.items)
             detected_[it.itemId] = {it.outer, it.inner};
     }
-    QStringList recent = settings_.value("recentProjects").toStringList();
-    recent.removeAll(path);
-    recent.prepend(path);
-    while (recent.size() > 8)
-        recent.removeLast();
-    setSetting(QStringLiteral("recentProjects"), recent);
+    dirty_ = dirty;
     rebuildModels();
     Q_EMIT projectChanged();
     Q_EMIT settingsChanged();
     for (const auto& s : project_.scans)
         if (!s.missing && !s.changed) loadPreview(s.scanId);
     if (!project_.scans.empty()) selectScan(toQ(project_.scans.front().scanId));
+    if (dirty_) recoveryTimer_->start();
+}
+
+QVariantMap AppController::replaceInfo() const {
+    return {{"unsaved", dirty_ && !project_.scans.empty()}, {"jobs", jobs_->activeCount()}};
+}
+
+bool AppController::restoreBackup(const QVariant& url) {
+    const QString path = localPath(url);
+    const auto bak = fk::usableBackup(toPath(path));
+    if (!bak) {
+        notify(tr("No usable backup of this project was found."), QStringLiteral("error"));
+        return false;
+    }
+    auto p = fk::loadProject(*bak);
+    if (!p) {
+        notify(tr("Cannot open the backup: %1").arg(errText(p.error())), QStringLiteral("error"));
+        return false;
+    }
+    auto aside = fk::setAsideDamaged(toPath(path));
+    if (!aside) {
+        notify(errText(aside.error()), QStringLiteral("error"));
+        return false;
+    }
+    adoptProject(std::move(*p), path, false, true);
+    notify(tr("Backup restored. The damaged file was kept as %1. Save to write the project again.")
+               .arg(QFileInfo(toQ(fk::pathToUtf8(*aside))).fileName()),
+           QStringLiteral("warning"));
     return true;
+}
+
+// ---- recovery snapshots (FK-008, RFC-0017: never written into the project file) ----
+
+QString AppController::recoveryDir() const {
+    const QByteArray dir = qgetenv("FK_SETTINGS_DIR");
+    const QString base = dir.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                                       : QString::fromLocal8Bit(dir);
+    return QDir(base).filePath(QStringLiteral("recovery"));
+}
+
+QString AppController::recoveryFileFor(const std::string& projectId) const {
+    return QDir(recoveryDir()).filePath(toQ(projectId) + QStringLiteral(".fkrecovery"));
+}
+
+void AppController::writeRecovery() {
+    if (!dirty_ || project_.scans.empty() || readOnly_) return;
+    QDir().mkpath(recoveryDir());
+    QJsonObject o;
+    o["schema"] = QStringLiteral("fk.recovery/1");
+    o["projectPath"] = projectPath_;
+    o["name"] = toQ(project_.name);
+    o["savedAt"] = toQ(fk::isoDateTimeNowUtc());
+    o["project"] = QJsonDocument::fromJson(QByteArray::fromStdString(fk::projectToJson(project_))).object();
+    const auto st = fk::writeFileAtomic(toPath(recoveryFileFor(project_.projectId)),
+                                        QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString(), false);
+    if (!st.ok()) qWarning("recovery snapshot not written: %s", st.error().message.c_str());
+}
+
+void AppController::discardCurrentRecovery() {
+    if (recoveryTimer_) recoveryTimer_->stop();
+    QFile::remove(recoveryFileFor(project_.projectId));
+}
+
+QVariantList AppController::recoverySnapshots() const {
+    QVariantList out;
+    for (const QFileInfo& fi :
+         QDir(recoveryDir()).entryInfoList({QStringLiteral("*.fkrecovery")}, QDir::Files, QDir::Time)) {
+        QFile f(fi.absoluteFilePath());
+        if (!f.open(QIODevice::ReadOnly)) continue;
+        const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+        if (o.value("schema").toString() != QLatin1String("fk.recovery/1")) continue;
+        // the open project's own snapshot is not "earlier" work
+        if (fi.completeBaseName() == toQ(project_.projectId) && dirty_) continue;
+        out << QVariantMap{{"file", fi.absoluteFilePath()},
+                           {"name", o.value("name").toString()},
+                           {"projectPath", o.value("projectPath").toString()},
+                           {"savedAt", QLocale().toString(fi.lastModified(), QLocale::ShortFormat)}};
+    }
+    return out;
+}
+
+bool AppController::recoverSnapshot(const QString& file) {
+    QFile f(file);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+    const QByteArray pj = QJsonDocument(o.value("project").toObject()).toJson(QJsonDocument::Compact);
+    auto p = fk::projectFromJson(pj.toStdString());
+    if (!p) {
+        notify(tr("The recovery snapshot cannot be read: %1").arg(errText(p.error())),
+               QStringLiteral("error"));
+        return false;
+    }
+    const QString path = o.value("projectPath").toString();
+    fk::resolveScanPaths(
+        *p, toPath(path.isEmpty() ? QFileInfo(file).absolutePath() : QFileInfo(path).absolutePath()));
+    adoptProject(std::move(*p), path, false, true);
+    notify(tr("Unsaved work recovered. Save the project to keep it."), QStringLiteral("warning"));
+    return true;
+}
+
+void AppController::discardSnapshot(const QString& file) {
+    if (QFileInfo(file).absolutePath() == QFileInfo(recoveryDir() + QStringLiteral("/x")).absolutePath())
+        QFile::remove(file);
 }
 
 bool AppController::saveProject() {
@@ -474,6 +631,7 @@ bool AppController::saveProject() {
         return false;
     }
     dirty_ = false;
+    discardCurrentRecovery(); // saved: the snapshot is no longer needed
     Q_EMIT projectChanged();
     return true;
 }
@@ -482,10 +640,19 @@ bool AppController::saveProjectAs(const QVariant& url) {
     QString path = localPath(url);
     const QString ext = QStringLiteral(".") + QString::fromLatin1(fk::product::kProjectExt);
     if (!path.endsWith(ext)) path += ext;
+    // FK-001: a failed save keeps the project as it was (path, name, read-only state, unsaved changes)
+    const QString oldPath = projectPath_;
+    const std::string oldName = project_.name;
+    const bool oldReadOnly = readOnly_;
     if (project_.name == toStd(tr("Untitled"))) project_.name = toStd(QFileInfo(path).completeBaseName());
     projectPath_ = path;
     readOnly_ = false;
-    return saveProject();
+    if (saveProject()) return true;
+    projectPath_ = oldPath;
+    project_.name = oldName;
+    readOnly_ = oldReadOnly;
+    Q_EMIT projectChanged();
+    return false;
 }
 
 AppController::JobSnapshot AppController::snapshotFor(const std::string& scanId,
@@ -531,6 +698,7 @@ quint64 AppController::compositePreviewGeneration(const std::string& itemId) con
 
 void AppController::touch(bool structural) {
     dirty_ = true;
+    if (recoveryTimer_) recoveryTimer_->start(); // FK-008: snapshot a few seconds after the last change
     if (structural)
         rebuildModels();
     else
@@ -2274,7 +2442,7 @@ void AppController::dropFiles(const QVariantList& urls) {
         const QString file = localPath(u);
         const QString lower = file.toLower();
         if (lower.endsWith(QLatin1String(".fkproj"))) {
-            openProject(u);
+            Q_EMIT openRequested(file); // FK-001: QML asks about unsaved changes first
             return;
         }
         bool isGraded = !(lower.endsWith(QLatin1String(".tif")) || lower.endsWith(QLatin1String(".tiff")));
