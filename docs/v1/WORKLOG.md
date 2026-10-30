@@ -109,3 +109,29 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   USER-GUIDE.zh-CN}.md; docs/release-notes/v0.6.0-alpha.1.md. docs/reference-audit.md row ids renamed FK-nnn → SL-nnn
   (374 occurrences) so they cannot be confused with the requirement tickets FK-001…FK-014.
 - Checks: check-docs, check-repo, check-licenses, check-no-network, check-i18n (480 strings), check-format: ok.
+
+### 15:08 — U001 PR
+- PR #3 opened (`unit/U001-foundation`, head 7a97934 after rebase on ce93e05). Checks running.
+
+### 15:10 — v0.5.0 baseline release
+- Release run 41119771659 (old workflow) succeeded: macOS universal DMG 64 418 114 B, Windows portable ZIP
+  59 085 479 B, Setup.exe 48 012 621 B, SHA256SUMS. It created a **draft** v0.5.0 (target ce93e05).
+- Publishing it from this session failed: `PATCH /releases/429444571` → HTTP 403 "Creating, editing, or deleting
+  releases is not permitted for this session type." [blocked → owner]. Not worked around; the owner was asked to
+  publish the draft as a pre-release. From U001 on, the release workflow (Actions token) creates published
+  pre-releases itself, which is the pipeline the owner authorised.
+
+### 15:00–15:18 — U002 task safety (branch `unit/U002-task-safety`, on top of U001)
+- Req: FK-006 (part 1); related UX-07, UX-09, FK-005
+- Change: Jobs: states queued/running/succeeded/failed/cancelled/outdated, `JobContext::fail`, `done` returns
+  `JobDone{applied|outdated|failed, message}`, late progress never reopens a finished job, test delay hook,
+  `finalState(id)`. AppController: `JobSnapshot` generations (project/scan/item/composite), `invalidateItem` replaces
+  the scattered preview erasures and is also called by upright rotation and scan removal; all nine completion
+  handlers check freshness (table in RFC-0010 §Task safety); composite previews coalesce per print; mask settings bump
+  the composite generation. LeftRail job list shows every state and failure messages. tools/check-i18n.py now joins
+  adjacent C++ string literals (it missed a split `tr()` string). 6 new zh strings.
+- Tests: self-test TS1–TS4 (Linux local): all pass; existing self-test checks and the 7 known issues unchanged.
+  Mutation run with both freshness checks disabled (`false &&`): TS1 FAIL "job succeeded, preview stored 1", TS2
+  FAIL "job succeeded, corner x 260.589 (edited to 263.589)" — the old behaviour silently replaced the user's edit.
+  Code restored (no MUTATION markers left; verified by grep).
+- Docs: RFC-0010 §Task safety, release notes v0.6.0-alpha.2, USER-GUIDE §8, UNITS, TRACEABILITY.

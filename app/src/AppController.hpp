@@ -144,6 +144,11 @@ class AppController : public QObject {
         std::vector<const fk::ItemRecord*> items;
     };
     CanvasScan canvasScan() const;
+    // test access (self-test): generations and the job runner
+    quint64 itemGeneration(const std::string& itemId) const;
+    /// Item generation the cached composite preview was computed for (0 = no preview).
+    quint64 compositePreviewGeneration(const std::string& itemId) const;
+    JobRunner* jobRunner() const { return jobs_; }
     const fk::ItemRecord* item(const std::string& itemId) const;
     const fk::ScanRecord* scanOf(const std::string& itemId) const;
     /// Live (uncommitted) geometry while dragging; committed with setOuter/setInner on release.
@@ -222,6 +227,23 @@ class AppController : public QObject {
     std::map<std::string, UndoState> undo_;
     std::map<std::string, std::pair<fk::Shape, fk::Shape>> detected_; ///< itemId → detected outer/inner
     std::map<std::string, QImage> compositePreviews_;
+    // ---- task safety (RFC-0010 §Task safety, FK-006) ----
+    /// Generations: a background result is applied only if what it was computed from is still current.
+    struct JobSnapshot {
+        quint64 project = 0, scan = 0, item = 0, composite = 0;
+        std::string scanId, itemId;
+    };
+    JobSnapshot snapshotFor(const std::string& scanId, const std::string& itemId) const;
+    bool sameProject(const JobSnapshot& s) const { return s.project == projectGen_; }
+    bool sameScan(const JobSnapshot& s) const;
+    bool sameItem(const JobSnapshot& s) const;
+    bool sameComposite(const JobSnapshot& s) const { return sameItem(s) && s.composite == compositeGen_; }
+    /// An item's geometry, orientation or relinked file changed: newer generation, cached preview dropped.
+    void invalidateItem(const std::string& itemId);
+    quint64 projectGen_ = 1, compositeGen_ = 1;
+    std::map<std::string, quint64> scanGen_, itemGen_;
+    std::map<std::string, quint64> previewGen_; ///< item → item generation its cached composite preview shows
+    std::map<std::string, int> previewJob_;     ///< item → in-flight composite preview job (coalescing)
     std::map<std::string, QVariantMap> relinkChecks_; ///< itemId → last content/geometry check
     JobRunner* jobs_;
     ScanListModel* scans_;

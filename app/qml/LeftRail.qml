@@ -288,6 +288,8 @@ Rectangle {
                             required property real progress
                             required property string state
                             required property real elapsed
+                            required property string message
+                            readonly property bool active: state === "queued" || state === "running"
                             Layout.fillWidth: true
                             spacing: 2
                             RowLayout {
@@ -297,21 +299,34 @@ Rectangle {
                                     text: title
                                     elide: Text.ElideRight
                                     font.pixelSize: Theme.fontCaption
-                                    color: state === "running" ? Theme.textPrimary : Theme.textTertiary
+                                    color: active ? Theme.textPrimary : Theme.textTertiary
                                 }
                                 Text {
-                                    text: state === "running" ? Math.round(progress * 100) + " %"
-                                          : state === "cancelled" ? qsTr("cancelled") : qsTr("done %1 s").arg(elapsed.toFixed(1))
+                                    // every job ends in exactly one state (RFC-0010 §Task safety)
+                                    text: state === "queued" ? qsTr("queued")
+                                          : state === "running" ? Math.round(progress * 100) + " %"
+                                          : state === "cancelled" ? qsTr("cancelled")
+                                          : state === "failed" ? qsTr("failed")
+                                          : state === "outdated" ? qsTr("outdated, not applied")
+                                          : qsTr("done %1 s").arg(elapsed.toFixed(1))
                                     font.pixelSize: Theme.fontCaption
                                     font.features: { "tnum": 1 }
-                                    color: Theme.textTertiary
+                                    color: state === "failed" ? Theme.error : Theme.textTertiary
                                 }
                                 ToolBtn {
-                                    visible: state === "running"
+                                    visible: active
                                     iconName: "close"; tip: qsTr("Cancel")
                                     implicitWidth: 22; implicitHeight: 22
                                     onClicked: cmd.cancelJob(jobId)
                                 }
+                            }
+                            Text {
+                                visible: state === "failed" && message.length > 0
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                text: message
+                                font.pixelSize: Theme.fontCaption
+                                color: Theme.error
                             }
                             Rectangle {
                                 visible: state === "running"

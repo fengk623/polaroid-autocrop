@@ -25,7 +25,7 @@
 | FK-003 | P1 | 缺失 ICC 解释与持久化 | U006 | 计划 | S：需求文档审查；待 U006 复现 | 未开始 |
 | FK-004 | P1 | 隐私预设覆盖 XMP 作者 | U009 | 核心 `KnownIssue.FK004_RemoveIdentityDropsCreatorFromSourceXmp`（WILL_FAIL） | R：测试失败，XMP 含 dc:creator | 未开始（已复现） |
 | FK-005 | P1 | 统一内存预算与缓存生命周期 | U017 | 计划（批次内存测量） | S | 未开始 |
-| FK-006 | P1 | 异步代次、取消与失败状态 | U002（框架）、U017 | 计划 | S | 未开始 |
+| FK-006 | P1 | 异步代次、取消与失败状态 | U002（框架）、U017 | 自检 TS1–TS4（U002） | U002：变异测试——去掉过期检查后 TS1 存旧预览、TS2 编辑被覆盖 | 部分完成（框架：U002；预算与队列：U017） |
 | FK-007 | P1 | 源文件与调色图变更校验 | U007 | 核心 `KnownIssue.FK007_ReplacedScanAtSamePathIsNotTrusted`（WILL_FAIL） | R：同路径同尺寸替换被当作原扫描 | 未开始（已复现） |
 | FK-008 | P1 | 备份恢复与可重现工程 | U008、U018 | 核心 `KnownIssue.FK008_DamagedProjectOffersItsBackup`（WILL_FAIL） | R：损坏工程只报“damaged”，不提有效 .bak | 未开始（已复现） |
 | FK-009 | P1 | Windows 文字与真实窗口验收 | U024 | 计划；真机部分待验收 | C：历史 offscreen 截图问题；本地 Linux 截图中英文可读 | 未开始 |

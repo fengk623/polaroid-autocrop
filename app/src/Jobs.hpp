@@ -1,5 +1,9 @@
 // Background jobs (RFC-0010): lanes with bounded concurrency, progress, cancellation, results delivered on
 // the UI thread. Core calls never run on the UI thread (CONTRACT-ui-core §1).
+// Task safety (RFC-0010 §Task safety, FK-006): every job ends in exactly one state — succeeded, failed,
+// cancelled or outdated. A job reports failure through JobContext::fail() or by returning JobApply::failed
+// from `done`; the `done` callback decides whether its result still matches the current state and returns
+// JobApply::outdated when it does not, in which case nothing was written and the job list says so.
 #pragma once
 
 #include "fk/common.hpp"
@@ -11,6 +15,7 @@
 
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace fkapp {
@@ -20,6 +25,41 @@ enum class Lane { detect, exportJob, io };
 struct JobContext {
     fk::CancelToken cancel;
     std::function<void(double, const QString&)> progress; ///< thread-safe, throttled
+    /// Marks the job as failed (worker thread). The first message is kept and shown in the job list.
+    void fail(const QString& message) {
+        std::lock_guard<std::mutex> lk(m_);
+        if (!failed_) failMessage_ = message;
+        failed_ = true;
+    }
+    bool failed() const {
+        std::lock_guard<std::mutex> lk(m_);
+        return failed_;
+    }
+    QString failMessage() const {
+        std::lock_guard<std::mutex> lk(m_);
+        return failMessage_;
+    }
+
+  private:
+    mutable std::mutex m_;
+    bool failed_ = false;
+    QString failMessage_;
+};
+
+/// How a job ended, as seen by its `done` callback on the UI thread.
+struct JobOutcome {
+    bool cancelled = false;
+    bool failed = false;
+    QString message; ///< failure message
+};
+
+/// What `done` did with the result: applied it; found it outdated and discarded it unchanged; or found that
+/// the work failed (the message is shown in the job list).
+enum class JobApply { applied, outdated, failed };
+struct JobDone {
+    JobApply apply = JobApply::applied;
+    QString message;
+    JobDone(JobApply a = JobApply::applied, QString m = {}) : apply(a), message(std::move(m)) {}
 };
 
 class JobModel;
@@ -31,14 +71,22 @@ class JobRunner : public QObject {
     explicit JobRunner(QObject* parent = nullptr);
     ~JobRunner() override;
     JobModel* model() const { return model_; }
-    /// Returns the job id.
+    /// Returns the job id. `done` runs on the UI thread after `work`, also when the job was cancelled or
+    /// failed.
     int start(Lane lane, const QString& title, std::function<void(JobContext&)> work,
-              std::function<void(bool cancelled)> done = {});
+              std::function<JobDone(const JobOutcome&)> done = {});
     Q_INVOKABLE void cancel(int id);
     void cancelAll();
     bool busy() const;
     /// Blocks until every job has finished (shutdown, self-test).
     void waitAll();
+    /// Test hook (self-test only): each job's work starts this many milliseconds late, so tests can change
+    /// state while a job is in flight. 0 in the product.
+    void setTestDelayMs(int ms) { testDelayMs_ = ms; }
+    /// Id of the most recently started job (tests).
+    int lastJobId() const { return nextId_ - 1; }
+    /// Final state of a finished job ("succeeded", "failed", "cancelled", "outdated"), empty while running.
+    QString finalState(int id) const;
 
   Q_SIGNALS:
     void busyChanged();
@@ -48,7 +96,9 @@ class JobRunner : public QObject {
     QThreadPool detect_, export_, io_;
     JobModel* model_;
     std::vector<std::shared_ptr<Job>> jobs_;
+    std::vector<std::pair<int, QString>> finished_; ///< id → final state (bounded, for tests and the UI)
     int nextId_ = 1;
+    int testDelayMs_ = 0;
     friend class JobModel;
 };
 
@@ -58,10 +108,19 @@ class JobModel : public QAbstractListModel {
     Q_PROPERTY(double overallProgress READ overallProgress NOTIFY progressChanged)
     Q_PROPERTY(QString summary READ summary NOTIFY progressChanged)
   public:
-    enum Roles { IdRole = Qt::UserRole + 1, TitleRole, ProgressRole, StageRole, StateRole, ElapsedRole };
+    enum Roles {
+        IdRole = Qt::UserRole + 1,
+        TitleRole,
+        ProgressRole,
+        StageRole,
+        StateRole,
+        ElapsedRole,
+        MessageRole
+    };
     struct Row {
         int id = 0;
-        QString title, stage, state; ///< state: queued / running / done / cancelled
+        QString title, stage, state; ///< queued / running / succeeded / failed / cancelled / outdated
+        QString message;             ///< failure message
         double progress = 0;
         QElapsedTimer timer;
         qint64 finishedMs = -1;
@@ -76,7 +135,8 @@ class JobModel : public QAbstractListModel {
     Q_INVOKABLE void clearFinished();
 
     void add(int id, const QString& title);
-    void update(int id, double progress, const QString& stage, const QString& state);
+    void update(int id, double progress, const QString& stage, const QString& state,
+                const QString& message = {});
 
   Q_SIGNALS:
     void countChanged();

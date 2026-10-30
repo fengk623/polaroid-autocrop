@@ -34,6 +34,7 @@ class SelfTest : public QObject {
     /// passes; not reproduced → the run fails so the check is turned into a normal one with the fix.
     void known(const QString& ticket, const QString& name, bool reproduced, const QString& detail = {});
     void runKnownIssues(const QString& exportDir);
+    void runTaskSafety(const QString& exportDir, const QString& projectPath);
     int scenarioMinIsWhite();
     QJsonArray known_;
     int scenarioRelink();

@@ -7,8 +7,15 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <thread>
 
 namespace fkapp {
+
+namespace {
+bool isActive(const QString& state) {
+    return state == QLatin1String("queued") || state == QLatin1String("running");
+}
+} // namespace
 
 struct JobRunner::Job {
     int id = 0;
@@ -32,12 +39,12 @@ JobRunner::~JobRunner() {
 }
 
 int JobRunner::start(Lane lane, const QString& title, std::function<void(JobContext&)> work,
-                     std::function<void(bool)> done) {
+                     std::function<JobDone(const JobOutcome&)> done) {
     auto job = std::make_shared<Job>();
     job->id = nextId_++;
     jobs_.push_back(job);
     const bool visible = lane != Lane::io;
-    if (visible) model_->add(job->id, title);
+    if (visible) model_->add(job->id, title); // starts as "queued"
     const int id = job->id;
     QPointer<JobRunner> self(this);
     job->ctx.progress = [self, job, visible](double f, const QString& stage) {
@@ -57,28 +64,53 @@ int JobRunner::start(Lane lane, const QString& title, std::function<void(JobCont
             Qt::QueuedConnection);
     };
     QThreadPool& pool = lane == Lane::detect ? detect_ : lane == Lane::exportJob ? export_ : io_;
-    pool.start(QRunnable::create([self, job, work = std::move(work), done = std::move(done), visible,
-                                  id]() mutable {
-        if (!job->ctx.cancel.cancelled()) work(job->ctx);
-        const bool cancelled = job->ctx.cancel.cancelled();
-        job->finished = true;
-        QMetaObject::invokeMethod(
-            self.data(),
-            [self, id, cancelled, visible, done = std::move(done)]() {
-                if (!self) return;
-                if (visible)
-                    self->model_->update(id, 1.0, QString(),
-                                         cancelled ? QStringLiteral("cancelled") : QStringLiteral("done"));
-                if (done) done(cancelled);
-                auto& v = self->jobs_;
-                v.erase(std::remove_if(v.begin(), v.end(), [id](const auto& j) { return j->id == id; }),
-                        v.end());
-                Q_EMIT self->busyChanged();
-            },
-            Qt::QueuedConnection);
-    }));
+    const int delay = testDelayMs_;
+    pool.start(QRunnable::create(
+        [self, job, work = std::move(work), done = std::move(done), visible, id, delay]() mutable {
+            if (visible)
+                QMetaObject::invokeMethod(
+                    self.data(),
+                    [self, id]() {
+                        if (self) self->model_->update(id, 0.0, QString(), QStringLiteral("running"));
+                    },
+                    Qt::QueuedConnection);
+            if (delay > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+            if (!job->ctx.cancel.cancelled()) work(job->ctx);
+            JobOutcome outcome;
+            outcome.cancelled = job->ctx.cancel.cancelled();
+            outcome.failed = !outcome.cancelled && job->ctx.failed();
+            outcome.message = job->ctx.failMessage();
+            job->finished = true;
+            QMetaObject::invokeMethod(
+                self.data(),
+                [self, id, outcome, visible, done = std::move(done)]() {
+                    if (!self) return;
+                    JobDone result;
+                    if (done) result = done(outcome);
+                    const bool failed = outcome.failed || result.apply == JobApply::failed;
+                    const QString state = outcome.cancelled                    ? QStringLiteral("cancelled")
+                                          : failed                             ? QStringLiteral("failed")
+                                          : result.apply == JobApply::outdated ? QStringLiteral("outdated")
+                                                                               : QStringLiteral("succeeded");
+                    const QString message = !outcome.message.isEmpty() ? outcome.message : result.message;
+                    if (visible) self->model_->update(id, 1.0, QString(), state, message);
+                    self->finished_.push_back({id, state});
+                    if (self->finished_.size() > 200) self->finished_.erase(self->finished_.begin());
+                    auto& v = self->jobs_;
+                    v.erase(std::remove_if(v.begin(), v.end(), [id](const auto& j) { return j->id == id; }),
+                            v.end());
+                    Q_EMIT self->busyChanged();
+                },
+                Qt::QueuedConnection);
+        }));
     Q_EMIT busyChanged();
     return id;
+}
+
+QString JobRunner::finalState(int id) const {
+    for (const auto& [fid, state] : finished_)
+        if (fid == id) return state;
+    return {};
 }
 
 void JobRunner::cancel(int id) {
@@ -125,14 +157,16 @@ QVariant JobModel::data(const QModelIndex& index, int role) const {
         return r.state;
     case ElapsedRole:
         return static_cast<double>(r.finishedMs >= 0 ? r.finishedMs : r.timer.elapsed()) / 1000.0;
+    case MessageRole:
+        return r.message;
     default:
         return {};
     }
 }
 
 QHash<int, QByteArray> JobModel::roleNames() const {
-    return {{IdRole, "jobId"},    {TitleRole, "title"}, {ProgressRole, "progress"},
-            {StageRole, "stage"}, {StateRole, "state"}, {ElapsedRole, "elapsed"}};
+    return {{IdRole, "jobId"},    {TitleRole, "title"},     {ProgressRole, "progress"}, {StageRole, "stage"},
+            {StateRole, "state"}, {ElapsedRole, "elapsed"}, {MessageRole, "message"}};
 }
 
 void JobModel::add(int id, const QString& title) {
@@ -140,14 +174,14 @@ void JobModel::add(int id, const QString& title) {
     Row r;
     r.id = id;
     r.title = title;
-    r.state = QStringLiteral("running");
+    r.state = QStringLiteral("queued");
     r.timer.start();
     rows_.insert(rows_.begin(), r);
     endInsertRows();
     // keep the list short: drop old finished rows
     while (rows_.size() > 30) {
         const int last = static_cast<int>(rows_.size()) - 1;
-        if (rows_.back().state == QLatin1String("running")) break;
+        if (isActive(rows_.back().state)) break;
         beginRemoveRows({}, last, last);
         rows_.pop_back();
         endRemoveRows();
@@ -156,14 +190,19 @@ void JobModel::add(int id, const QString& title) {
     Q_EMIT progressChanged();
 }
 
-void JobModel::update(int id, double progress, const QString& stage, const QString& state) {
+void JobModel::update(int id, double progress, const QString& stage, const QString& state,
+                      const QString& message) {
     const int i = indexOf(id);
     if (i < 0) return;
     Row& r = rows_[static_cast<size_t>(i)];
+    // a late progress report never reopens a finished job
+    if (!isActive(r.state)) return;
+    if (state == QLatin1String("running") && r.state == QLatin1String("queued")) r.timer.restart();
     r.progress = progress;
     if (!stage.isEmpty()) r.stage = stage;
     r.state = state;
-    if (state != QLatin1String("running") && r.finishedMs < 0) r.finishedMs = r.timer.elapsed();
+    if (!message.isEmpty()) r.message = message;
+    if (!isActive(state) && r.finishedMs < 0) r.finishedMs = r.timer.elapsed();
     Q_EMIT dataChanged(index(i), index(i));
     Q_EMIT progressChanged();
 }
@@ -172,7 +211,7 @@ double JobModel::overallProgress() const {
     double sum = 0;
     int n = 0;
     for (const auto& r : rows_)
-        if (r.state == QLatin1String("running")) {
+        if (isActive(r.state)) {
             sum += r.progress;
             ++n;
         }
@@ -183,7 +222,7 @@ QString JobModel::summary() const {
     int running = 0;
     QString title;
     for (const auto& r : rows_)
-        if (r.state == QLatin1String("running")) {
+        if (isActive(r.state)) {
             ++running;
             if (title.isEmpty()) title = r.title;
         }
@@ -194,7 +233,7 @@ QString JobModel::summary() const {
 
 void JobModel::clearFinished() {
     for (int i = static_cast<int>(rows_.size()) - 1; i >= 0; --i)
-        if (rows_[static_cast<size_t>(i)].state != QLatin1String("running")) {
+        if (!isActive(rows_[static_cast<size_t>(i)].state)) {
             beginRemoveRows({}, i, i);
             rows_.erase(rows_.begin() + i);
             endRemoveRows();
