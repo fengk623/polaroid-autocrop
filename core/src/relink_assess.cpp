@@ -258,8 +258,9 @@ ExportGeometry alignmentGeometry(const ScanRecord& s, const ItemRecord& it, Size
     if (graded.w <= 0 || graded.h <= 0) return straight;
     const ExportGeometry crop = computeExportGeometry(it.inner, it.outer.quad, GeometryMode::pixel_crop,
                                                       it.upright, std::nullopt, scan);
-    // an unresized export of either kind has exactly that size
-    if (sameSize(graded, crop.outSize) && !sameSize(graded, straight.outSize)) return crop;
+    // an unresized export of either kind has exactly that size; when both have it (an almost untilted print)
+    // the pixel crop — the default export, composited without resampling — is used
+    if (sameSize(graded, crop.outSize)) return crop;
     if (sameSize(graded, straight.outSize)) return straight;
     return aspectMismatch(graded, crop) + 1e-4 < aspectMismatch(graded, straight) ? crop : straight;
 }

@@ -54,7 +54,7 @@ alignment); every other print stays reachable through "Assign to …".
 When the chosen target has no export that matches (exported by another project, or the project was not saved) the
 user may explicitly **establish a new alignment**: the graded image is placed on the print's *current* Inner.
 - Shape: an unresized export has exactly the size of a pixel crop or of the straightened image area (either
-  orientation) — that shape is used; otherwise the shape whose aspect ratio is closer; when both fit within the
+  orientation) — that shape is used (the pixel crop, the default export, when both have that size); otherwise the shape whose aspect ratio is closer; when both fit within the
   scaling tolerance (0.5 %, the tolerance of every scaled graded file in compositing) the picture decides
   (`alignmentGeometry` with the preview).
 - Allowed only within that tolerance (after a 90° turn if needed); otherwise refused ("crop or resize it to the

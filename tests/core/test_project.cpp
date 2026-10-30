@@ -714,6 +714,13 @@ TEST(RelinkV2, NewAlignmentFollowsTheGradedAspectRatio) {
     EXPECT_EQ(alignmentGeometry(s, it, {straight.outSize.h, straight.outSize.w}).mode,
               GeometryMode::straightened);
     EXPECT_EQ(alignmentGeometry(s, it).mode, GeometryMode::straightened);
+    // untilted print: both shapes have the same size → the pixel crop (default export, no resampling)
+    ItemRecord flat = it;
+    flat.inner = Shape::fromQuad(rectQuad(20, 30, 140, 200));
+    flat.outer.quad = rectQuad(10, 12, 150, 220);
+    const auto fc =
+        computeExportGeometry(flat.inner, flat.outer.quad, GeometryMode::pixel_crop, 0, std::nullopt, scan);
+    EXPECT_EQ(alignmentGeometry(s, flat, fc.outSize).mode, GeometryMode::pixel_crop);
 }
 
 TEST(RelinkV2, AResizedGradedFileOfASquarePrintIsPlacedByItsPicture) {
