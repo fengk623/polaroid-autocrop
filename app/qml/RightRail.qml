@@ -347,7 +347,8 @@ Rectangle {
                                     Layout.fillWidth: true
                                     elide: Text.ElideMiddle
                                     text: modelData.relinkedPath ? qsTr("Graded: %1 (by %2)").arg(modelData.relinkedPath).arg(modelData.matchedBy)
-                                                                 : qsTr("Exported: %1").arg(modelData.path)
+                                          : modelData.path ? qsTr("Exported: %1").arg(modelData.path)
+                                          : qsTr("Aligned manually (no export in this project)")
                                     font.pixelSize: Theme.fontCaption
                                     color: modelData.relinkedPath ? Theme.textSecondary : Theme.textTertiary
                                 }
@@ -361,7 +362,11 @@ Rectangle {
                             color: Theme.textTertiary
                             text: rail.it.relinkCheck ? qsTr("Content check %1 %").arg(Math.round((rail.it.relinkCheck.score || 0) * 100)) : ""
                         }
-                        FkButton { text: qsTr("Relink graded files…"); iconName: "relink"; onClicked: cmd.relink() }
+                        RowLayout {
+                            spacing: 6
+                            FkButton { text: qsTr("Relink to this print…"); iconName: "relink"; onClicked: cmd.relink(rail.it.id) }
+                            FkButton { text: qsTr("Relink graded files…"); onClicked: cmd.relink() }
+                        }
                     }
                     Section {
                         title: qsTr("Composite")

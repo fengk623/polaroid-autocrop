@@ -7,6 +7,8 @@
 #include "fk/detection.hpp"
 #include "fk/export.hpp"
 #include "fk/geometry.hpp"
+#include "fk/metadata.hpp"
+#include "fk/relink.hpp"
 
 #include <filesystem>
 #include <optional>
@@ -120,6 +122,9 @@ struct Sidecar {
     std::string fileName, fileSha256;
     Signature signature{};
     std::string software, exportedAt;
+    /// "export" for an export; "manual_alignment" for a graded file placed on a print that has no export of
+    /// its own (RFC-0006 §New alignment) — not an export, so no export date or export-file hash is faked.
+    std::string origin = "export";
 };
 
 struct Project {
@@ -191,6 +196,73 @@ struct RelinkCheck {
         actionsNeeded; ///< "scale", "rotate", "accept_lower_depth", "choose_icc", "confirm_content"
 };
 RelinkCheck checkEdited(const Sidecar& sc, const ImageBuffer& edited, const ImageInfo& editedInfo);
+
+// ---- relink v2: target first, evidence model (RFC-0006 §Relink v2) ----------------------------------
+enum class EvidenceKind : int {
+    file_hash = 0,
+    embedded_ids = 1,
+    file_name = 2,
+    content = 3,
+    user_target = 4
+};
+const char* evidenceKindName(EvidenceKind k);
+struct Evidence {
+    EvidenceKind kind = EvidenceKind::content;
+    bool supports = true; ///< false = contradicts this option
+    std::string detail;
+};
+/// One print × export version a graded file could belong to. `editVersionId` empty = new alignment.
+struct RelinkOption {
+    std::string scanId, itemId, editVersionId;
+    bool newAlignment = false;
+    bool hashMatch = false;
+    bool contentChecked = false, contentPass = false;
+    double contentScore = 0;      ///< best correlation over the 4 rotations
+    int contentRotate = 0;        ///< 90° clockwise turns of the record that matched best
+    bool conflict = false;        ///< some evidence supports and some contradicts this option
+    bool contradicted = false;    ///< some evidence contradicts this option
+    bool versionEvidence = false; ///< embedded IDs or the file name name this export version
+    double score = 0;
+    std::vector<Evidence> evidence;
+};
+enum class RelinkDecision : int { unique = 0, ambiguous = 1, none = 2 };
+const char* relinkDecisionName(RelinkDecision d);
+struct RelinkAssessment {
+    RelinkDecision decision = RelinkDecision::none;
+    std::vector<RelinkOption> options; ///< best first; for `unique` the first is the answer
+};
+/// What can be known about a graded file without the project.
+struct RelinkInput {
+    std::filesystem::path file;
+    std::string sha256;
+    XmpIds ids;
+    bool hasIds = false;
+    Signature signature{};
+    SizeI size{};
+};
+RelinkInput describeGradedFile(const std::filesystem::path& file, const ImageBuffer& pixels);
+/// Weighs all evidence (never "first hit wins"). With `targetItemId` only that print is considered and, if it
+/// has no export record, a new-alignment option is offered (its content is compared with `targetSignature`,
+/// the print's current image area, when given).
+RelinkAssessment assessRelink(const RelinkInput& in, const Project& p, const std::string& targetItemId = {},
+                              const Signature* targetSignature = nullptr);
+/// Geometry of a new alignment for a graded image of size `graded`: the print's current Inner, straightened
+/// or as a pixel crop — whichever aspect ratio is closer to the graded image's (either orientation) — upright
+/// applied. An unresized export (same size) decides first.
+ExportGeometry alignmentGeometry(const ScanRecord& s, const ItemRecord& it, SizeI graded = {});
+/// As above; when both shapes fit a resized graded file, the one whose picture (sampled from `preview`,
+/// `downscale` times smaller than the scan) matches `gradedSignature` better.
+ExportGeometry alignmentGeometry(const ScanRecord& s, const ItemRecord& it, SizeI graded,
+                                 const ImageBuffer& preview, double downscale,
+                                 const Signature& gradedSignature);
+/// Record for a new alignment with geometry `g` (from alignmentGeometry) and `areaSignature`
+/// (signatureOfExport of it); origin "manual_alignment", file = the graded file, no export date.
+Sidecar alignmentRecord(const Project& p, const ScanRecord& s, const ItemRecord& it, const ExportGeometry& g,
+                        const Signature& areaSignature, const std::string& gradedFileName,
+                        const std::string& gradedSha256);
+/// Signature of what an export with geometry `g` contains, sampled from `img`: the scan, or a preview of it
+/// `downscale` times smaller.
+Signature signatureOfExport(const ImageBuffer& img, const ExportGeometry& g, double downscale = 1.0);
 
 // ---- templates --------------------------------------------------------------------------------------
 Status saveTemplate(const Template& t, const std::filesystem::path& path);

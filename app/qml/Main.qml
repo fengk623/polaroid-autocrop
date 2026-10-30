@@ -41,7 +41,8 @@ ApplicationWindow {
         function chooseExportFolder() { folderDialog.purpose = "export"; folderDialog.open() }
         function exportImageAreas(ids) { exportDialog.openFor(ids === undefined ? App.selectedItemIds : ids, false) }
         function exportFullPrints(ids) { exportDialog.openFor(ids === undefined ? App.selectedItemIds : ids, true) }
-        function relink() { relinkFileDialog.open() }
+        // target-first relink: with a print id only that print is considered (UX-07)
+        function relink(target) { relinkFileDialog.target = target || ""; relinkFileDialog.open() }
         function exportFinal(ids) { finalDialog.openFor(ids === undefined ? App.selectedItemIds : ids) }
         function detectAgain(scanId, tmpl) {
             if (App.currentScan.itemCount > 0) { pendingDetect = { scan: scanId, tmpl: tmpl || "", all: false }; redetectConfirm.open() }
@@ -159,20 +160,11 @@ ApplicationWindow {
         }
     }
 
-    // window-wide drop: TIFFs import as scans, projects open, other images offer relink
+    // window-wide drop: projects open; graded files (our IDs, an export name, or not a TIFF) relink; other TIFFs
+    // import as scans (classification in App.dropFiles)
     DropArea {
         anchors.fill: parent
-        onDropped: (drop) => {
-            const scans = [], graded = []
-            for (const u of drop.urls) {
-                const s = u.toString().toLowerCase()
-                if (s.endsWith(".fkproj")) { App.openProject(u); return }
-                if ((s.endsWith(".tif") || s.endsWith(".tiff")) && s.indexOf("_edit_v") < 0) scans.push(u)
-                else graded.push(u)
-            }
-            if (scans.length) App.importScans(scans)
-            if (graded.length) App.relinkFiles(graded)
-        }
+        onDropped: (drop) => App.dropFiles(drop.urls)
     }
 
     // ---------------------------------------------------------------- dialogs
@@ -185,10 +177,11 @@ ApplicationWindow {
     }
     FileDialog {
         id: relinkFileDialog
-        title: qsTr("Choose graded files")
-        fileMode: FileDialog.OpenFiles
+        property string target: ""
+        title: target.length ? qsTr("Choose the graded file for this print") : qsTr("Choose graded files")
+        fileMode: target.length ? FileDialog.OpenFile : FileDialog.OpenFiles
         nameFilters: [qsTr("Images (*.tif *.tiff *.png *.jpg *.jpeg)")]
-        onAccepted: App.relinkFiles(selectedFiles)
+        onAccepted: App.relinkFiles(target.length ? [selectedFile] : selectedFiles, target)
     }
     FileDialog {
         id: projectOpenDialog
@@ -253,6 +246,7 @@ ApplicationWindow {
         target: App
         function onNotification(text, kind) { toasts.push(text, kind) }
         function onRelinkResults(rows) { relinkDialog.show(rows) }
+        function onRelinkRowUpdated(row) { relinkDialog.updateRow(row) }
         function onExportFinished(folder, written, failed) {
             toasts.push(failed > 0 ? qsTr("%1 written, %2 failed.").arg(written).arg(failed) : qsTr("%n file(s) written.", "", written),
                         failed > 0 ? "warning" : "info", function() { App.revealInFileManager(folder) },

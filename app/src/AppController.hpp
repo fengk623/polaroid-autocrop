@@ -118,8 +118,17 @@ class AppController : public QObject {
     Q_INVOKABLE QVariantMap prepareExport(const QStringList& itemIds);
     Q_INVOKABLE void exportImageAreas(const QStringList& itemIds);
     Q_INVOKABLE void exportFullPrints(const QStringList& itemIds);
-    Q_INVOKABLE void relinkFiles(const QVariantList& urls);
+    /// Assesses graded files by weighing all evidence (RFC-0006 §Relink v2). With `targetItemId` only that
+    /// print is considered and, if none of its exports matches, a new alignment is offered. `update`
+    /// re-assesses rows already shown (result: relinkRowUpdated instead of relinkResults).
+    Q_INVOKABLE void relinkFiles(const QVariantList& urls, const QString& targetItemId = QString(),
+                                 bool update = false);
     Q_INVOKABLE void applyRelink(const QVariantList& rows);
+    /// Every print of the project, for choosing a relink target: {id, label, scanName}.
+    Q_INVOKABLE QVariantList relinkTargets() const;
+    /// Window drop: projects open, scans import, graded files (our metadata, an export name, or not a TIFF)
+    /// relink.
+    Q_INVOKABLE void dropFiles(const QVariantList& urls);
     Q_INVOKABLE QVariantMap prepareFinal(const QStringList& itemIds);
     Q_INVOKABLE void exportFinal(const QStringList& itemIds, const QVariantMap& confirmations);
     Q_INVOKABLE void requestCompositePreview(const QString& itemId);
@@ -175,6 +184,7 @@ class AppController : public QObject {
     void compositePreviewReady(const QString& itemId);
     void notification(const QString& text, const QString& kind);
     void relinkResults(const QVariantList& rows);
+    void relinkRowUpdated(const QVariantMap& row);
     void exportFinished(const QString& folder, int written, int failed);
     void confirmationNeeded(const QString& title, const QString& text);
 
@@ -246,6 +256,8 @@ class AppController : public QObject {
     std::map<std::string, quint64> previewGen_; ///< item → item generation its cached composite preview shows
     std::map<std::string, int> previewJob_;     ///< item → in-flight composite preview job (coalescing)
     std::map<std::string, QVariantMap> relinkChecks_; ///< itemId → last content/geometry check
+    /// New-alignment records offered by the last assessments, applied only when the user confirms them.
+    std::map<QString, fk::Sidecar> pendingAlignments_;
     JobRunner* jobs_;
     ScanListModel* scans_;
     ItemListModel* items_;

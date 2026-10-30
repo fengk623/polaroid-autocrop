@@ -28,7 +28,7 @@ Rectangle {
         }
         ToolBtn {
             iconName: "relink"; tip: qsTr("Relink Graded Files…"); shortcutText: cmd.mod + "⌥I"
-            enabled: App.counts.exported > 0
+            enabled: App.counts.prints > 0
             onClicked: cmd.relink()
         }
         Item { width: Theme.clusterGap - Theme.gap }

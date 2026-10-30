@@ -8,6 +8,8 @@
 #include <tiffio.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 
@@ -172,9 +174,8 @@ struct RelinkFixture {
     std::filesystem::path editPath;
 };
 
-std::unique_ptr<RelinkFixture> exportedEdit() {
+std::unique_ptr<RelinkFixture> exportedEditOf(const ImageBuffer& img) {
     auto f = std::make_unique<RelinkFixture>();
-    const ImageBuffer img = fk::test::makePatternImage(320, 240, 3, 16, 7);
     fk::test::TestTiffOptions o;
     o.dpi = 600;
     fk::test::writeTestTiff(f->dir / "roll1.tif", img, o);
@@ -203,6 +204,10 @@ std::unique_ptr<RelinkFixture> exportedEdit() {
     const Sidecar sc = makeSidecar(f->p, s, it, ev, *rep);
     EXPECT_TRUE(saveSidecar(sc, pathFromUtf8(ev.sidecar)).ok());
     return f;
+}
+
+std::unique_ptr<RelinkFixture> exportedEdit() {
+    return exportedEditOf(fk::test::makePatternImage(320, 240, 3, 16, 7));
 }
 
 /// Writes the same pixels as a PNG without any of our metadata.
@@ -399,4 +404,348 @@ TEST(ExportRecords, OlderProjectsImportTheirSidecarsOnOpen) {
     ASSERT_TRUE(again.ok());
     auto m = findMatch(f->editPath, *again);
     ASSERT_TRUE(m.sidecar.has_value());
+}
+
+// ---- relink v2: evidence model (RFC-0006 §Relink v2, UX-07, U004)
+// ----------------------------------------------
+
+/// Smooth picture (signatures of the same content correlate; different `seed`s do not).
+ImageBuffer makeSmoothImage(int64_t w, int64_t h, double seed) {
+    auto r = ImageBuffer::create(w, h, 3, 16);
+    EXPECT_TRUE(r.ok());
+    ImageBuffer b = std::move(r.value());
+    for (int64_t y = 0; y < h; ++y) {
+        auto* row = reinterpret_cast<uint16_t*>(b.row(y));
+        for (int64_t x = 0; x < w; ++x)
+            for (int c = 0; c < 3; ++c) {
+                const double v = 0.5 + 0.2 * std::sin(x * 0.047 * seed + c) +
+                                 0.15 * std::cos(y * 0.031 * (seed + 1)) +
+                                 0.1 * std::sin((x - y) * 0.023 * seed + 2.0 * seed);
+                row[x * 3 + c] = static_cast<uint16_t>(std::clamp(v, 0.0, 1.0) * 65535.0);
+            }
+    }
+    return b;
+}
+
+/// One print exported once, the record only in the project (no sidecar file).
+std::unique_ptr<RelinkFixture> smoothExport() {
+    auto f = exportedEditOf(makeSmoothImage(320, 240, 1.0));
+    ItemRecord& it = f->p.scans[0].items[0];
+    EditVersion& ev = it.edits.back();
+    f->p.exportRecords.push_back(makeSidecar(f->p, f->p.scans[0], it, ev, f->rep));
+    std::filesystem::remove(pathFromUtf8(ev.sidecar));
+    ev.sidecar.clear();
+    return f;
+}
+
+/// The exported pixels saved under `name` as a PNG without any of our metadata.
+std::filesystem::path plainCopy(RelinkFixture& f, const std::string& name) {
+    auto pixels = readImageFile(f.editPath);
+    EXPECT_TRUE(pixels.ok());
+    std::filesystem::create_directories(f.dir / "graded");
+    const auto out = f.dir / "graded" / name;
+    writePlainPng(*pixels, out);
+    return out;
+}
+
+RelinkInput describe(const std::filesystem::path& file) {
+    auto pixels = readImageFile(file);
+    EXPECT_TRUE(pixels.ok());
+    return describeGradedFile(file, *pixels);
+}
+
+bool hasEvidence(const RelinkOption& o, EvidenceKind k, bool supports) {
+    return std::any_of(o.evidence.begin(), o.evidence.end(),
+                       [&](const Evidence& e) { return e.kind == k && e.supports == supports; });
+}
+
+TEST(RelinkV2, UnchangedExportIsDecidedByItsHash) {
+    auto f = smoothExport();
+    const RelinkInput in = describe(f->editPath);
+    EXPECT_TRUE(in.hasIds);
+    const auto a = assessRelink(in, f->p);
+    EXPECT_EQ(a.decision, RelinkDecision::unique);
+    ASSERT_FALSE(a.options.empty());
+    EXPECT_TRUE(a.options[0].hashMatch);
+    EXPECT_EQ(a.options[0].itemId, f->p.scans[0].items[0].itemId);
+    EXPECT_TRUE(hasEvidence(a.options[0], EvidenceKind::file_hash, true));
+    EXPECT_TRUE(hasEvidence(a.options[0], EvidenceKind::embedded_ids, true));
+    EXPECT_TRUE(a.options[0].contentPass);
+}
+
+TEST(RelinkV2, RenamedFileWithoutMetadataNeedsTheTarget) {
+    // UX-07 (test doc fig. 15): a graded file renamed by the editor, no XMP, no sidecar
+    auto f = smoothExport();
+    const RelinkInput in = describe(plainCopy(*f, "final look.png"));
+    EXPECT_FALSE(in.hasIds);
+    const auto a = assessRelink(in, f->p);
+    // the picture matches, but similarity alone never decides: shown as a candidate, not pre-selected
+    EXPECT_EQ(a.decision, RelinkDecision::ambiguous);
+    ASSERT_EQ(a.options.size(), 1u);
+    EXPECT_TRUE(a.options[0].contentPass);
+    EXPECT_FALSE(a.options[0].hashMatch);
+    // target first: the user picks the print, the content confirms it
+    const auto t = assessRelink(in, f->p, f->p.scans[0].items[0].itemId);
+    EXPECT_EQ(t.decision, RelinkDecision::unique);
+    ASSERT_FALSE(t.options.empty());
+    EXPECT_FALSE(t.options[0].newAlignment);
+    EXPECT_EQ(t.options[0].editVersionId, f->p.exportRecords[0].editVersionId);
+    EXPECT_TRUE(hasEvidence(t.options[0], EvidenceKind::user_target, true));
+}
+
+TEST(RelinkV2, EditorSuffixUnderscoreNumberIsStripped) {
+    // UX-07 (test doc fig. 14): "<name>_1" written by an editor
+    const auto e = parseEditFileName("roll1_P01_EDIT_v001_1");
+    ASSERT_TRUE(e.has_value());
+    EXPECT_EQ(e->scanStem, "roll1");
+    EXPECT_EQ(e->itemIndex, 1);
+    EXPECT_EQ(e->version, 1);
+    auto f = smoothExport();
+    const auto a = assessRelink(describe(plainCopy(*f, "roll1_P01_EDIT_v001_1.png")), f->p);
+    EXPECT_EQ(a.decision, RelinkDecision::unique);
+    ASSERT_FALSE(a.options.empty());
+    EXPECT_TRUE(hasEvidence(a.options[0], EvidenceKind::file_name, true));
+    EXPECT_TRUE(a.options[0].contentPass);
+}
+
+TEST(RelinkV2, EmbeddedIdsAndContentThatDisagreeAreShownAsAConflict) {
+    auto f = smoothExport();
+    RelinkInput in = describe(plainCopy(*f, "x.png"));
+    // the file claims to be print 2, but its picture is print 1's export
+    in.hasIds = true;
+    in.ids.itemId = f->p.scans[0].items[1].itemId;
+    const auto a = assessRelink(in, f->p);
+    EXPECT_EQ(a.decision, RelinkDecision::ambiguous);
+    ASSERT_FALSE(a.options.empty());
+    EXPECT_TRUE(a.options[0].conflict);
+    EXPECT_TRUE(hasEvidence(a.options[0], EvidenceKind::embedded_ids, false));
+    EXPECT_TRUE(hasEvidence(a.options[0], EvidenceKind::content, true));
+}
+
+TEST(RelinkV2, TheExportVersionIsChosenByTheEmbeddedIds) {
+    auto f = smoothExport();
+    // a second export of the same print with the same geometry
+    Sidecar v2 = f->p.exportRecords[0];
+    v2.editVersionId = newUuid();
+    v2.version = 2;
+    v2.fileSha256 = std::string(64, 'a');
+    f->p.exportRecords.push_back(v2);
+    RelinkInput in = describe(plainCopy(*f, "x.png"));
+    in.hasIds = true;
+    in.ids.itemId = v2.itemId;
+    in.ids.editVersionId = v2.editVersionId;
+    const auto a = assessRelink(in, f->p);
+    EXPECT_EQ(a.decision, RelinkDecision::unique);
+    ASSERT_EQ(a.options.size(), 2u);
+    EXPECT_EQ(a.options[0].editVersionId, v2.editVersionId);
+    // without the version id both exports fit equally: the user picks
+    in.ids.editVersionId.clear();
+    EXPECT_EQ(assessRelink(in, f->p).decision, RelinkDecision::ambiguous);
+}
+
+TEST(RelinkV2, TwoPrintsWithTheSamePictureAreAmbiguousUntilTheTargetIsChosen) {
+    auto f = smoothExport();
+    Sidecar other = f->p.exportRecords[0];
+    other.itemId = f->p.scans[0].items[1].itemId;
+    other.editVersionId = newUuid();
+    other.fileSha256 = std::string(64, 'b');
+    f->p.exportRecords.push_back(other);
+    const RelinkInput in = describe(plainCopy(*f, "x.png"));
+    const auto a = assessRelink(in, f->p);
+    EXPECT_EQ(a.decision, RelinkDecision::ambiguous);
+    EXPECT_EQ(a.options.size(), 2u);
+    const auto t = assessRelink(in, f->p, other.itemId);
+    EXPECT_EQ(t.decision, RelinkDecision::unique);
+    ASSERT_EQ(t.options.size(), 1u);
+    EXPECT_EQ(t.options[0].itemId, other.itemId);
+}
+
+TEST(RelinkV2, AnUnrelatedPictureIsNoMatch) {
+    auto f = smoothExport();
+    const auto file = f->dir / "graded" / "unrelated.png";
+    std::filesystem::create_directories(file.parent_path());
+    const ImageBuffer other = makeSmoothImage(f->rep.size.w, f->rep.size.h, 3.7);
+    writePlainPng(other, file);
+    const RelinkInput in = describe(file);
+    const auto a = assessRelink(in, f->p);
+    EXPECT_EQ(a.decision, RelinkDecision::none);
+    ASSERT_EQ(a.options.size(), 1u);
+    EXPECT_FALSE(a.options[0].contentPass);
+    // with a target the user decides; a new alignment is offered because no export of that print matches
+    const auto t = assessRelink(in, f->p, f->p.scans[0].items[0].itemId);
+    EXPECT_EQ(t.decision, RelinkDecision::ambiguous);
+    EXPECT_TRUE(std::any_of(t.options.begin(), t.options.end(),
+                            [](const RelinkOption& o) { return o.newAlignment; }));
+}
+
+TEST(RelinkV2, NewAlignmentForAPrintThatThisProjectNeverExported) {
+    // UX-07: exported by another project (or the project was not saved) — the user aligns the file explicitly
+    auto f = smoothExport();
+    f->p.exportRecords.clear();
+    const RelinkInput in = describe(plainCopy(*f, "from another project.png"));
+    EXPECT_EQ(assessRelink(in, f->p).decision, RelinkDecision::none);
+
+    ScanRecord& s = f->p.scans[0];
+    ItemRecord& it = s.items[0];
+    it.upright = 0; // as exported by the fixture
+    auto scan = readImageFile(pathFromUtf8(s.path));
+    ASSERT_TRUE(scan.ok());
+    const ExportGeometry g = alignmentGeometry(s, it, in.size);
+    const Signature area = signatureOfExport(*scan, g);
+    ASSERT_TRUE(area.valid);
+    const auto t = assessRelink(in, f->p, it.itemId, &area);
+    EXPECT_EQ(t.decision, RelinkDecision::unique);
+    ASSERT_EQ(t.options.size(), 1u);
+    EXPECT_TRUE(t.options[0].newAlignment);
+    EXPECT_TRUE(t.options[0].contentPass) << t.options[0].contentScore;
+
+    const Sidecar rec = alignmentRecord(f->p, s, it, g, area, "from another project.png", in.sha256);
+    EXPECT_EQ(rec.origin, "manual_alignment");
+    EXPECT_TRUE(rec.exportedAt.empty()) << "a manual alignment is not an export";
+    EXPECT_EQ(rec.itemId, it.itemId);
+    EXPECT_EQ(rec.version, 2); // the print already has export version 1
+    EXPECT_EQ(rec.fileSha256, in.sha256);
+    EXPECT_EQ(rec.exportSize, in.size);
+    auto again = readImageFile(plainCopy(*f, "again.png"));
+    ASSERT_TRUE(again.ok());
+    const RelinkCheck same = checkEdited(rec, *again, {});
+    EXPECT_TRUE(same.sizeMatches);
+    EXPECT_TRUE(same.signaturePass);
+    EXPECT_EQ(same.suggestedRotate, 0);
+    {
+        // the user has turned the print upright since: the alignment is turned, the content check finds the
+        // turn
+        ItemRecord turned = it;
+        turned.upright = 1;
+        const ExportGeometry tg = alignmentGeometry(s, turned, in.size);
+        const Sidecar tr =
+            alignmentRecord(f->p, s, turned, tg, signatureOfExport(*scan, tg), "x.png", in.sha256);
+        EXPECT_EQ(tr.exportSize, (SizeI{in.size.h, in.size.w}));
+        const RelinkCheck c = checkEdited(tr, *again, {});
+        EXPECT_TRUE(c.signaturePass);
+        EXPECT_NE(c.suggestedRotate, 0);
+    }
+    f->p.exportRecords.push_back(rec);
+    const auto file = f->dir / "aligned.fkproj";
+    ASSERT_TRUE(saveProject(f->p, file).ok());
+    EXPECT_NE(slurp(file).find("manual_alignment"), std::string::npos);
+    auto back = loadProject(file);
+    ASSERT_TRUE(back.ok());
+    ASSERT_EQ(back->exportRecords.size(), 1u);
+    EXPECT_EQ(back->exportRecords[0].origin, "manual_alignment");
+    // relinking the same file again is now decided by its hash
+    EXPECT_EQ(assessRelink(in, *back).decision, RelinkDecision::unique);
+}
+
+TEST(RelinkV2, ExportRecordsDoNotWriteAnOriginKey) {
+    auto f = smoothExport();
+    const auto file = f->dir / "p.fkproj";
+    ASSERT_TRUE(saveProject(f->p, file).ok());
+    EXPECT_EQ(slurp(file).find("\"origin\""), std::string::npos) << "files stay readable as before";
+    auto back = loadProject(file);
+    ASSERT_TRUE(back.ok());
+    EXPECT_EQ(back->exportRecords[0].origin, "export");
+}
+
+TEST(RelinkV2, AreaSignatureMatchesTheExportIncludingItsOrientation) {
+    // the new-alignment content check samples the scan (or its preview) the way an export would
+    TempDir t;
+    const ImageBuffer img = makeSmoothImage(320, 240, 1.0);
+    fk::test::writeTestTiff(t / "s.tif", img, {});
+    Project p = sampleProject(t / "s.tif");
+    ScanRecord& s = p.scans[0];
+    ItemRecord& it = s.items[0];
+    it.upright = 1;
+    auto src = openTiff(t / "s.tif");
+    ASSERT_TRUE(src.ok());
+    ExportRequest r;
+    r.region = it.inner;
+    r.frame = it.outer.quad;
+    r.mode = GeometryMode::straightened;
+    r.upright = 1;
+    r.output = t / "e.tif";
+    r.write.format = FileFormat::tiff;
+    auto rep = exportRegion(**src, r, {}, {});
+    ASSERT_TRUE(rep.ok());
+    const ExportGeometry g = alignmentGeometry(s, it);
+    EXPECT_EQ(g.outSize, rep->size);
+    const Signature full = signatureOfExport(img, g);
+    EXPECT_GT(compareSignatures(full, rep->signature), 0.95);
+    // from a preview 4× smaller
+    auto small = ImageBuffer::create(80, 60, 3, 16);
+    ASSERT_TRUE(small.ok());
+    for (int64_t y = 0; y < 60; ++y)
+        for (int64_t x = 0; x < 80; ++x)
+            for (int c = 0; c < 3; ++c) {
+                const uint16_t v = img.sample16(x * 4 + 2, y * 4 + 2, c);
+                std::memcpy(small->row(y) + (x * 3 + c) * 2, &v, 2);
+            }
+    const Signature preview = signatureOfExport(*small, g, 4.0);
+    EXPECT_GT(compareSignatures(preview, rep->signature), kSignatureMatchThreshold);
+    // orientation is part of it: the upside-down picture does not match without turning it
+    EXPECT_LT(compareSignatures(rotateSignature(full, 2), rep->signature), kSignatureMatchThreshold);
+}
+
+TEST(RelinkV2, NewAlignmentFollowsTheGradedAspectRatio) {
+    // a print tilted by a few degrees: a pixel-crop export is larger than the straightened image area
+    TempDir t;
+    Project p = sampleProject(t / "s.tif");
+    ScanRecord& s = p.scans[0];
+    ItemRecord& it = s.items[0];
+    const Mat3 rot = Mat3::translate(80, 115) * Mat3::rotate(0.05) * Mat3::translate(-80, -115);
+    Quad q = it.inner.quad, o = it.outer.quad;
+    for (auto& v : q.p)
+        v = rot.apply(v);
+    for (auto& v : o.p)
+        v = rot.apply(v);
+    it.inner = Shape::fromQuad(q);
+    it.outer.quad = o;
+    it.upright = 0;
+    const SizeI scan{s.info.width, s.info.height};
+    const auto crop = computeExportGeometry(it.inner, o, GeometryMode::pixel_crop, 0, std::nullopt, scan);
+    const auto straight =
+        computeExportGeometry(it.inner, o, GeometryMode::straightened, 0, std::nullopt, scan);
+    ASSERT_NE(crop.outSize, straight.outSize);
+    EXPECT_EQ(alignmentGeometry(s, it, crop.outSize).mode, GeometryMode::pixel_crop);
+    EXPECT_EQ(alignmentGeometry(s, it, straight.outSize).mode, GeometryMode::straightened);
+    // a smaller graded file (resized in the editor) of the straightened shape, and the same turned by 90°
+    EXPECT_EQ(alignmentGeometry(s, it, {straight.outSize.w / 2, straight.outSize.h / 2}).mode,
+              GeometryMode::straightened);
+    EXPECT_EQ(alignmentGeometry(s, it, {straight.outSize.h, straight.outSize.w}).mode,
+              GeometryMode::straightened);
+    EXPECT_EQ(alignmentGeometry(s, it).mode, GeometryMode::straightened);
+}
+
+TEST(RelinkV2, AResizedGradedFileOfASquarePrintIsPlacedByItsPicture) {
+    // square image area tilted by 3°: crop and straightened shapes are both square; size alone cannot tell
+    TempDir t;
+    const ImageBuffer img = makeSmoothImage(320, 240, 1.0);
+    fk::test::writeTestTiff(t / "s.tif", img, {});
+    Project p = sampleProject(t / "s.tif");
+    ScanRecord& s = p.scans[0];
+    ItemRecord& it = s.items[0];
+    const Mat3 rot = Mat3::translate(100, 120) * Mat3::rotate(0.05) * Mat3::translate(-100, -120);
+    Quad q = rectQuad(40, 40, 160, 160), o = rectQuad(30, 30, 170, 200);
+    for (auto& v : q.p)
+        v = rot.apply(v);
+    for (auto& v : o.p)
+        v = rot.apply(v);
+    it.inner = Shape::fromQuad(q);
+    it.outer.quad = o;
+    it.upright = 0;
+    auto src = openTiff(t / "s.tif");
+    ASSERT_TRUE(src.ok());
+    for (GeometryMode mode : {GeometryMode::pixel_crop, GeometryMode::straightened}) {
+        ExportRequest r;
+        r.region = it.inner;
+        r.frame = o;
+        r.mode = mode;
+        r.output = t / (std::string(geometryModeName(mode)) + ".tif");
+        r.write.format = FileFormat::tiff;
+        auto rep = exportRegion(**src, r, {}, {});
+        ASSERT_TRUE(rep.ok()) << rep.error().message;
+        const SizeI resized{rep->size.w / 2, rep->size.h / 2};
+        const ExportGeometry g = alignmentGeometry(s, it, resized, img, 1.0, rep->signature);
+        EXPECT_EQ(g.mode, mode) << geometryModeName(mode);
+    }
 }

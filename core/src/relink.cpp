@@ -181,7 +181,7 @@ std::optional<EditFileName> parseEditFileName(const std::string& stem) {
 }
 
 std::vector<std::string> sidecarStemCandidates(const std::string& stem) {
-    static const std::regex suffix(R"re((-Edit(-\d+)?|_edit| copy( \d+)?| ?\(\d+\)|-\d+)$)re",
+    static const std::regex suffix(R"re((-Edit(-\d+)?|_edit| copy( \d+)?| ?\(\d+\)|-\d+|_\d+)$)re",
                                    std::regex::icase);
     std::vector<std::string> out{stem};
     std::string cur = stem;

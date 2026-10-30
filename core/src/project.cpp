@@ -715,6 +715,7 @@ json sidecarJson(const Sidecar& s) {
     j["signature"] = encodeSignature(s.signature);
     j["software"] = s.software;
     j["exportedAt"] = s.exportedAt;
+    if (s.origin != "export") j["origin"] = s.origin; // absent = export (files of earlier versions)
     return j;
 }
 
@@ -766,6 +767,7 @@ Result<Sidecar> sidecarFromJson(const json& j) {
         }
         s.software = j.value("software", "");
         s.exportedAt = j.value("exportedAt", "");
+        s.origin = j.value("origin", "export");
         return s;
     } catch (const std::exception& e) {
         return makeError(Errc::parse_error, "The sidecar file is damaged", e.what());

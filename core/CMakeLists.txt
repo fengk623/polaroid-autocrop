@@ -25,6 +25,7 @@ set(FK_CORE_SOURCES
   src/detection/refine.cpp
   src/pixel_ops.cpp
   src/relink.cpp
+  src/relink_assess.cpp
   src/output_stage.cpp
   src/export.cpp
   src/composite.cpp
