@@ -61,6 +61,11 @@ int main(int argc, char* argv[]) {
     parser.addOption(selfTestOpt);
     parser.addOption(scanOpt);
     parser.addOption(liveOpt);
+    QCommandLineOption scenarioOpt(
+        QStringLiteral("scenario"),
+        QStringLiteral("With --self-test: reproduce a reported flow (relink, count, upright)."),
+        QStringLiteral("name"));
+    parser.addOption(scenarioOpt);
     parser.addPositionalArgument(QStringLiteral("files"),
                                  QStringLiteral("Scans (.tif) or a project (.fkproj) to open."));
     parser.process(app);
@@ -91,7 +96,7 @@ int main(int argc, char* argv[]) {
 
     if (parser.isSet(selfTestOpt)) {
         fkapp::SelfTest t(&controller, window, parser.value(selfTestOpt), parser.value(scanOpt));
-        const int rc = t.run();
+        const int rc = parser.isSet(scenarioOpt) ? t.runScenario(parser.value(scenarioOpt)) : t.run();
         std::fprintf(stderr, "self-test %s\n", rc == 0 ? "passed" : "FAILED");
         return rc;
     }

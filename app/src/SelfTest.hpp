@@ -21,11 +21,19 @@ class SelfTest : public QObject {
              QObject* parent = nullptr);
     /// Runs synchronously (spinning the event loop); returns the process exit code.
     int run();
+    /// `--scenario <name>`: reproduces reported user flows and records what actually happens (observations,
+    /// not assertions) in <dir>/scenario-<name>.json plus snapshots. Names: "relink", "count", "upright".
+    int runScenario(const QString& name);
 
   private:
     void check(const QString& name, bool ok, const QString& detail = {});
     void snapshot(const QString& name);
     QObject* findCanvas() const;
+    void observe(const QString& name, const QJsonObject& data);
+    int scenarioRelink();
+    int scenarioCount();
+    int scenarioUpright();
+    QJsonArray observations_;
 
     AppController* app_;
     QQuickWindow* window_;
