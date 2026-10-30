@@ -20,6 +20,7 @@ BEGIN
       VALUE "OriginalFilename", "FrameKeeper.exe"
       VALUE "ProductName", "FrameKeeper"
       VALUE "ProductVersion", "@FK_VERSION@"
+      VALUE "Comments", "commit @FK_GIT_SHA@, build @FK_BUILD_ID@"
     END
   END
   BLOCK "VarFileInfo"

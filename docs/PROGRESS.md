@@ -3,14 +3,17 @@
 Read this first after any interruption. Newest entry on top.
 
 ## Current state
-- Version 0.5.0 (owner's decision 2026-10-30: the first public build is 0.5.0, not 0.1.0). Branch
-  `release/v0.5.0` → PR → main; then release.yml → draft v0.5.0 → published as a GitHub pre-release.
-- PR #1 (phase-2-core) merged into main as 379c87d on 2026-10-28; all CI and packaging checks green.
-- Last full test run: 2026-10-28, CI green on Linux / macOS arm64 / Windows x64 (core 136 tests incl. `eval_corpus`,
-  app self-test, packaged-app smoke tests); app self-test also passes on the owner's real scans.
-- Blockers: none. Host Qt 6.8.3 (Quick, Controls, offscreen) built at work/qt-host for UI tests.
+- v1.0 work runs unit by unit (docs/v1/PLAN.md, docs/v1/UNITS.md); the per-step log is docs/v1/WORKLOG.md.
+- Baseline: v0.5.0 = merge of PR #2 (`ce93e05`). Current unit: U001 (`unit/U001-foundation`, v0.6.0-alpha.1).
+- Last full test run: 2026-10-30, Linux local (core 135 + 3 known-issue WILL_FAIL, app self-test with 7 known issues
+  reproduced); CI three platforms green on PR #2.
+- Blockers: owner's 679 MB scan not transferable; owner's installed package version unconfirmed (docs/v1/BASELINE.md).
 
 ## Log
+### 2026-10-30 — v1.0 Stage A / U001
+- Requirements (26 items) received, plan reviewed (12 changes) and re-issued as docs/v1/PLAN.md; unit-based
+  authorisation. Reproductions on real scans, known-issue tests, build provenance, release pipeline for
+  pre-releases. Details in docs/v1/WORKLOG.md.
 ### 2026-10-30 — version 0.5.0
 - First public build renumbered 0.1.0 → 0.5.0 at the owner's request (VERSION, release notes, CHANGELOG, PRD §7).
   The unpublished 0.1.0 draft release is superseded.

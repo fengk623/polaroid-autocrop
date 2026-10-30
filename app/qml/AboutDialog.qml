@@ -10,6 +10,16 @@ FkDialog {
         spacing: 8
         Image { source: "qrc:/qt/qml/FrameKeeper/resources/icon.png"; sourceSize.width: 64; sourceSize.height: 64; Layout.alignment: Qt.AlignHCenter }
         Text { Layout.alignment: Qt.AlignHCenter; text: "FrameKeeper " + App.version; font.pixelSize: Theme.fontDialogTitle; font.weight: Font.DemiBold; color: Theme.textPrimary }
+        // build provenance (FK-014): the exact source of this binary; selectable so it can be copied into reports
+        TextEdit {
+            Layout.alignment: Qt.AlignHCenter
+            readOnly: true
+            selectByMouse: true
+            font.pixelSize: Theme.fontCaption
+            color: Theme.textSecondary
+            horizontalAlignment: Text.AlignHCenter
+            text: qsTr("Commit %1").arg(App.buildCommit) + "\n" + qsTr("Build %1").arg(App.buildId)
+        }
         Text {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap

@@ -42,6 +42,8 @@ class AppController : public QObject {
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY currentChanged)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY currentChanged)
     Q_PROPERTY(QString version READ version CONSTANT)
+    Q_PROPERTY(QString buildCommit READ buildCommit CONSTANT)
+    Q_PROPERTY(QString buildId READ buildId CONSTANT)
     Q_PROPERTY(QString platform READ platform CONSTANT)
 
   public:
@@ -68,6 +70,8 @@ class AppController : public QObject {
     bool canUndo() const;
     bool canRedo() const;
     QString version() const;
+    QString buildCommit() const;
+    QString buildId() const;
     QString platform() const;
 
     // ---- project ----

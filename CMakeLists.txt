@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 include(cmake/ProductInfo.cmake)
-project(FrameKeeper VERSION ${FK_VERSION} LANGUAGES C CXX)
+project(FrameKeeper VERSION ${FK_VERSION_NUMERIC} LANGUAGES C CXX)
 
 option(FK_BUILD_APP "Build the Qt Quick desktop app" ON)
 option(FK_BUILD_TOOLS "Build fkcli and fkfixture" ON)

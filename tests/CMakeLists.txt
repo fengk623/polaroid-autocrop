@@ -28,6 +28,17 @@ fk_add_gtest(test_composite composite core/test_composite.cpp)
 fk_add_gtest(test_relink relink core/test_relink.cpp)
 fk_add_gtest(test_project project core/test_project.cpp)
 
+# Known issues (Stage A): each test fails on the current code and is registered with WILL_FAIL, so a fix makes it
+# fail loudly and the fixing unit moves it into the regular suite (docs/v1/TRACEABILITY.md).
+add_executable(test_known_issues core/test_known_issues.cpp)
+target_link_libraries(test_known_issues PRIVATE fk::core fk_test_support GTest::gtest GTest::gtest_main)
+fk_set_warnings(test_known_issues)
+foreach(_ki FK004_RemoveIdentityDropsCreatorFromSourceXmp FK007_ReplacedScanAtSamePathIsNotTrusted
+            FK008_DamagedProjectOffersItsBackup)
+  add_test(NAME KnownIssue.${_ki} COMMAND test_known_issues --gtest_filter=KnownIssue.${_ki})
+  set_tests_properties(KnownIssue.${_ki} PROPERTIES WILL_FAIL TRUE LABELS known-issue)
+endforeach()
+
 # Detection evaluation on a generated corpus (TEST-PLAN §4, RFC-0016). Needs the tools.
 if(FK_BUILD_TOOLS)
   add_test(NAME eval_corpus
