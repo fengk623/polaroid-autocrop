@@ -3,6 +3,12 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.6.0-alpha.7 — U007: source identity (FK-007)
+- Scans are hashed whole at import and verified (streamed, off the UI thread) before every preview, detection and
+  output; a replaced or edited scan is refused with the reason and can be relocated by content; outputs made while a
+  file changed are discarded; a graded file saved over is used only if size, picture and profile are unchanged.
+  Notes: docs/release-notes/v0.6.0-alpha.7.md.
+
 ## 0.6.0-alpha.6 — U006: graded files without a usable colour profile (FK-003)
 - A missing or unreadable profile is never guessed: the export's profile (identified by hash), the scan's, sRGB,
   Adobe RGB or a profile file is chosen and confirmed when relinking, stored with the project (`iccProfiles`) and

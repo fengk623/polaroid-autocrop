@@ -103,7 +103,7 @@ Result<std::string> readTextFile(const std::filesystem::path& path) {
     return s;
 }
 
-Result<Fingerprint> fingerprintFile(const std::filesystem::path& p, bool full) {
+Result<Fingerprint> fingerprintFile(const std::filesystem::path& p, bool full, const CancelToken* cancel) {
     std::error_code ec;
     Fingerprint fp;
     fp.size = std::filesystem::file_size(p, ec);
@@ -145,11 +145,47 @@ Result<Fingerprint> fingerprintFile(const std::filesystem::path& p, bool full) {
     std::fclose(f);
     fp.quickSha256 = h.finishHex();
     if (full) {
-        auto fh = sha256File(p);
+        auto fh = sha256File(p, cancel);
         if (!fh) return fh.error();
         fp.fullSha256 = *fh;
     }
     return fp;
+}
+
+FileStamp fileStamp(const std::filesystem::path& p) {
+    FileStamp st;
+    std::error_code ec;
+    st.size = std::filesystem::file_size(p, ec);
+    if (ec) return {};
+    const auto t = std::filesystem::last_write_time(p, ec);
+    if (ec) return {};
+    st.exists = true;
+    st.mtimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
+    return st;
+}
+
+IdentityCheck verifyFileIdentity(const std::filesystem::path& p, const Fingerprint& expected,
+                                 const CancelToken* cancel) {
+    IdentityCheck r;
+    std::error_code ec;
+    if (!std::filesystem::exists(p, ec)) return {Identity::missing, "missing", false};
+    const uint64_t size = std::filesystem::file_size(p, ec);
+    if (ec) return {Identity::missing, "missing", false};
+    if (expected.size != 0 && size != expected.size) return {Identity::changed, "size", false};
+    auto quick = fingerprintFile(p, false);
+    if (!quick) return {Identity::missing, "missing", false};
+    if (!expected.quickSha256.empty() && quick->quickSha256 != expected.quickSha256)
+        return {Identity::changed, "quick", false};
+    if (!expected.fullSha256.empty()) {
+        auto full = sha256File(p, cancel);
+        if (!full) {
+            if (cancel && cancel->cancelled()) return {Identity::same, "cancelled", false};
+            return {Identity::missing, "missing", false};
+        }
+        r.fullChecked = true;
+        if (*full != expected.fullSha256) return {Identity::changed, "full", true};
+    }
+    return r;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -258,7 +294,7 @@ json itemJson(const ItemRecord& it) {
                      {"sha256", e.relinkedSha256},
                      {"matchedBy", e.matchedBy},
                      {"at", e.relinkedAt}};
-            if (const RelinkTransform& t = e.relinkTransform; t.set)
+            if (const RelinkTransform& t = e.relinkTransform; t.set) {
                 r["transform"] = {{"rotate", t.rotate},
                                   {"rotateSource", t.rotateSource},
                                   {"scale", t.scale},
@@ -267,6 +303,8 @@ json itemJson(const ItemRecord& it) {
                                   {"gradedSize", json::array({t.gradedSize.w, t.gradedSize.h})},
                                   {"iccSource", t.iccSource},
                                   {"iccSha256", t.iccSha256}};
+                if (t.gradedIccRecorded) r["transform"]["gradedIccSha256"] = t.gradedIccSha256;
+            }
         }
         edits.push_back({{"editVersionId", e.editVersionId},
                          {"version", e.version},
@@ -351,6 +389,8 @@ ItemRecord itemFrom(const json& j) {
                 x.contentScore = t.value("contentScore", 0.0);
                 x.iccSource = t.value("iccSource", "");
                 x.iccSha256 = t.value("iccSha256", "");
+                x.gradedIccRecorded = t.contains("gradedIccSha256");
+                x.gradedIccSha256 = t.value("gradedIccSha256", "");
                 if (t.contains("gradedSize") && t["gradedSize"].is_array() && t["gradedSize"].size() == 2)
                     x.gradedSize = {t["gradedSize"][0].get<int64_t>(), t["gradedSize"][1].get<int64_t>()};
             }
@@ -608,6 +648,13 @@ void resolveScanPaths(Project& p, const std::filesystem::path& projectDir) {
         std::error_code ec;
         if (std::filesystem::exists(pathFromUtf8(s.path), ec)) {
             s.missing = false;
+            // cheap here (no reading): a different size is a different file; content is verified by
+            // verifyScans
+            const uint64_t size = std::filesystem::file_size(pathFromUtf8(s.path), ec);
+            if (!ec && s.fingerprint.size != 0 && size != s.fingerprint.size) {
+                s.changed = true;
+                s.changeReason = "size";
+            }
             continue;
         }
         if (!s.relPath.empty()) {
@@ -622,12 +669,25 @@ void resolveScanPaths(Project& p, const std::filesystem::path& projectDir) {
     }
 }
 
+int verifyScans(Project& p, const CancelToken* cancel) {
+    int n = 0;
+    for (auto& s : p.scans) {
+        if (s.missing || (cancel && cancel->cancelled())) continue;
+        const IdentityCheck c = verifyFileIdentity(pathFromUtf8(s.path), s.fingerprint, cancel);
+        s.changed = c.state == Identity::changed;
+        s.changeReason = s.changed ? c.reason : std::string();
+        if (c.state == Identity::missing) s.missing = true;
+        if (s.changed) ++n;
+    }
+    return n;
+}
+
 int relocateScans(Project& p, const std::filesystem::path& projectDir, const std::filesystem::path& folder) {
     resolveScanPaths(p, projectDir);
     int found = 0;
     std::error_code ec;
     for (auto& s : p.scans) {
-        if (!s.missing) continue;
+        if (!s.missing && !s.changed) continue; // FK-007: a replaced file is looked for like a missing one
         const auto name = pathFromUtf8(s.path).filename();
         std::filesystem::path hit;
         const auto direct = folder / name;
@@ -650,6 +710,8 @@ int relocateScans(Project& p, const std::filesystem::path& projectDir, const std
         if (!hit.empty()) {
             s.path = pathToUtf8(hit);
             s.missing = false;
+            s.changed = false;
+            s.changeReason.clear();
             ++found;
         }
     }

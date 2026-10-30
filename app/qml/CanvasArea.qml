@@ -149,7 +149,7 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
             }
             RowLayout {
-                visible: App.currentScan.state === "missing" || App.currentScan.state === "error"
+                visible: App.currentScan.state === "missing" || App.currentScan.state === "error" || App.currentScan.state === "changed"
                 Layout.alignment: Qt.AlignHCenter
                 FkButton { text: qsTr("Relocate…"); onClicked: cmd.relocate() }
                 FkButton { text: qsTr("Remove from project"); onClicked: App.removeScan(App.currentScanId) }

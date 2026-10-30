@@ -32,7 +32,33 @@ struct Fingerprint {
         return a.size == b.size && a.quickSha256 == b.quickSha256;
     }
 };
-Result<Fingerprint> fingerprintFile(const std::filesystem::path& p, bool full = false);
+/// `full` also streams the whole file (fullSha256); `cancel` stops that stream.
+Result<Fingerprint> fingerprintFile(const std::filesystem::path& p, bool full = false,
+                                    const CancelToken* cancel = nullptr);
+
+// ---- source identity (FK-007, RFC-0009 §Source identity)
+// ----------------------------------------------------------
+/// Size and modification time with the file system's resolution: taken before and after reading a file, a
+/// difference means it changed while it was read (the result is discarded).
+struct FileStamp {
+    bool exists = false;
+    uint64_t size = 0;
+    int64_t mtimeNs = 0;
+    friend bool operator==(const FileStamp&, const FileStamp&) = default;
+};
+FileStamp fileStamp(const std::filesystem::path& p);
+enum class Identity : int { same = 0, missing = 1, changed = 2 };
+struct IdentityCheck {
+    Identity state = Identity::same;
+    /// "missing", "size" (size differs), "quick" (start or end of the file differs), "full" (SHA-256 of the
+    /// whole file differs), "cancelled" — machine codes; the app words them.
+    std::string reason;
+    bool fullChecked = false; ///< the whole file was compared (the fingerprint has a full SHA-256)
+};
+/// Compares a file with the fingerprint taken when it was imported: size, first and last MiB, then the whole
+/// file when the fingerprint has its SHA-256. Streams; run it off the UI thread.
+IdentityCheck verifyFileIdentity(const std::filesystem::path& p, const Fingerprint& expected,
+                                 const CancelToken* cancel = nullptr);
 
 enum class BoundarySource : int { automatic = 0, templated = 1, manual = 2 };
 const char* boundarySourceName(BoundarySource s);
@@ -52,6 +78,10 @@ struct RelinkTransform {
     /// own embedded profile, or none needed), "export", "scan", "srgb", "adobe_rgb", "file". The profile's
     /// bytes are kept in Project::iccProfiles under `iccSha256`.
     std::string iccSource, iccSha256;
+    /// FK-007: SHA-256 of the graded file's embedded profile when it was relinked ("" = none); compared only
+    /// when recorded (relinks before 0.6.0-alpha.7 did not record it)
+    std::string gradedIccSha256;
+    bool gradedIccRecorded = false;
 };
 
 struct EditVersion {
@@ -112,6 +142,9 @@ struct ScanRecord {
     std::vector<std::string> warnings;
     std::vector<ItemRecord> items;
     bool missing = false; ///< runtime only
+    /// runtime only: a file is at the path but it is not the imported scan (FK-007); never read as the scan
+    bool changed = false;
+    std::string changeReason; ///< IdentityCheck::reason
 };
 
 struct ProjectSettings {
@@ -175,6 +208,9 @@ Status saveProject(const Project& p, const std::filesystem::path& path);
 std::string projectToJson(const Project& p);
 Result<Project> projectFromJson(const std::string& json, OpenMode* mode = nullptr);
 
+/// Streams every present scan against its fingerprint (verifyFileIdentity) and marks `changed` ones; returns
+/// how many. Run it off the UI thread (FK-007).
+int verifyScans(Project& p, const CancelToken* cancel = nullptr);
 /// Finds missing scans in `folder` by file name, then by quick fingerprint. Returns how many were relocated.
 int relocateScans(Project& p, const std::filesystem::path& projectDir, const std::filesystem::path& folder);
 /// Resolves `relPath` against the project folder when `path` is missing.
@@ -247,6 +283,18 @@ std::vector<IccChoice> iccChoicesFor(const Sidecar& rec, const std::vector<uint8
 Result<std::vector<uint8_t>> gradedProfile(const ImageInfo& graded, const RelinkTransform& t,
                                            const Sidecar& rec, const std::vector<uint8_t>& scanIcc,
                                            const IccStore& stored);
+
+/// FK-007: a relinked graded file whose bytes differ from the relink (graded again and saved over, or
+/// replaced) is checked against what was confirmed: same size, the picture still matches at the confirmed
+/// turn, the same embedded profile. samePicture = a normal re-grade, used as before; otherwise `reason`
+/// ("size", "picture", "profile").
+struct GradedRecheck {
+    bool samePicture = false;
+    std::string reason;
+    double score = 0;
+};
+GradedRecheck recheckGraded(const Sidecar& rec, const RelinkTransform& t, const ImageBuffer& pixels,
+                            const ImageInfo& info);
 
 inline constexpr double kOrientationMargin = 0.15;
 /// Checks a graded file against an export record. Actions: "rotate", "choose_rotation", "scale",

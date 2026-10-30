@@ -16,15 +16,6 @@
 using namespace fk;
 using fk::test::TempDir;
 
-namespace {
-void writeBytes(const std::filesystem::path& p, size_t n, uint8_t seed) {
-    std::vector<char> b(n);
-    for (size_t i = 0; i < n; ++i)
-        b[i] = static_cast<char>((i * 131u + seed) & 0xff);
-    std::ofstream(p, std::ios::binary).write(b.data(), static_cast<std::streamsize>(b.size()));
-}
-} // namespace
-
 // FK-004: "remove identity" must not carry the creator out through our XMP packet.
 TEST(KnownIssue, FK004_RemoveIdentityDropsCreatorFromSourceXmp) {
     MetadataSet m;
@@ -34,25 +25,6 @@ TEST(KnownIssue, FK004_RemoveIdentityDropsCreatorFromSourceXmp) {
     const MetadataSet filtered = applyPrivacy(m, PrivacyPreset::remove_identity);
     const std::string xmp = buildXmp(XmpIds{}, &filtered);
     EXPECT_EQ(xmp.find("Ann Example"), std::string::npos) << xmp;
-}
-
-// FK-007: a scan replaced at the same path (same size, different content) must not be trusted as the
-// original.
-TEST(KnownIssue, FK007_ReplacedScanAtSamePathIsNotTrusted) {
-    TempDir t;
-    const auto scan = t / "scan.tif";
-    writeBytes(scan, 3u << 20, 1);
-    auto fp = fingerprintFile(scan);
-    ASSERT_TRUE(fp);
-    Project p = newProject("t");
-    ScanRecord s;
-    s.scanId = newUuid();
-    s.path = pathToUtf8(scan);
-    s.fingerprint = *fp;
-    p.scans.push_back(s);
-    writeBytes(scan, 3u << 20, 2); // replaced: same name and size, other content
-    resolveScanPaths(p, t.path());
-    EXPECT_TRUE(p.scans[0].missing) << "a different file at the recorded path was accepted as the scan";
 }
 
 // FK-008: a damaged project whose backup is intact must say so (explicit recovery), not only "damaged".

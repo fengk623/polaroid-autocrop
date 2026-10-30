@@ -142,13 +142,13 @@ Rectangle {
                                     Text {
                                         Layout.fillWidth: true
                                         font.pixelSize: Theme.fontCaption
-                                        color: row.state === "error" || row.state === "missing" ? Theme.error
+                                        color: row.state === "error" || row.state === "missing" || row.state === "changed" ? Theme.error
                                                : (row.current ? Theme.textSecondary : Theme.textTertiary)
                                         elide: Text.ElideRight
                                         text: row.state === "detecting" ? qsTr("Detecting…")
                                               : row.state === "loading" ? qsTr("Opening…")
                                               : row.state === "missing" ? qsTr("Missing — Relocate…")
-                                              : row.state === "error" ? row.error
+                                              : row.state === "error" || row.state === "changed" ? row.error
                                               : row.sizeText + " · " + row.depthText + " · "
                                                 + qsTr("%n print(s)", "", row.itemCount)
                                                 + (row.needReview > 0 ? " · " + qsTr("%1 to review").arg(row.needReview) : "")

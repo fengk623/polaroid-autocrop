@@ -226,3 +226,21 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   sRGB clips: 0.024 [failed] — test changed to in-gamut colours, which is what the claim is about); frame unchanged.
   Core suite 163/163. Self-test (fixture, sRGB scan, export converted to Adobe RGB, profile dropped): 4 FK-003 checks
   pass, final vs full print mean difference 0.00000; all other checks pass.
+
+### 17:50–18:50 — PR #8 merged, U007
+- Owner merged PR #8 (U006).
+- U007 (branch `unit/U007-source-identity`), FK-007. Root cause: `resolveScanPaths` trusted any file at the recorded
+  path; output jobs never checked the scan; a relinked graded file was read without comparing its hash. Core:
+  `fingerprintFile(path, full, cancel)`, `FileStamp`/`fileStamp`, `verifyFileIdentity` (size → first/last MiB →
+  whole file), `verifyScans`, runtime `ScanRecord::changed/changeReason` (size compared on load without reading),
+  `relocateScans` also for changed scans, `recheckGraded` (size, picture at the confirmed turn, embedded profile —
+  recorded from now on, `gradedIccRecorded`). App: detection job hashes the whole file at import and verifies an
+  already detected scan first; preview job verifies (and adds the whole-file hash to older projects); `ScanGuard` in
+  the image-area, full-print and final jobs verifies before reading and compares stamps after (output removed when
+  the file changed meanwhile); graded file hashed + stamped in final and preview, re-graded files used with the new
+  hash recorded and a notice, others refused with the reason; "changed" state in the scan list, canvas, Relocate.
+- Known issue `KnownIssue.FK007_ReplacedScanAtSamePathIsNotTrusted` moved into `SourceIdentity.*` (WILL_FAIL list
+  updated). First version of the self-test refusal checks would also have passed if the export had failed for another
+  reason (a tampered LZW file may not decode) — the checks now also require the user-visible reason [tightened].
+- Tests: core `SourceIdentity.*` ×5 pass; core suite 167/167. Self-test (fixture, on a copy of the scan): all pass incl.
+  6 FK-007 checks; the original scan file is never modified.
