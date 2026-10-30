@@ -30,6 +30,12 @@ class SelfTest : public QObject {
     void snapshot(const QString& name);
     QObject* findCanvas() const;
     void observe(const QString& name, const QJsonObject& data);
+    /// Known issue (expected to reproduce until fixed, like ctest WILL_FAIL): reproduced → recorded, run
+    /// passes; not reproduced → the run fails so the check is turned into a normal one with the fix.
+    void known(const QString& ticket, const QString& name, bool reproduced, const QString& detail = {});
+    void runKnownIssues(const QString& exportDir);
+    int scenarioMinIsWhite();
+    QJsonArray known_;
     int scenarioRelink();
     int scenarioCount();
     int scenarioUpright();

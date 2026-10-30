@@ -65,3 +65,47 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   Ask only for requirement conflicts, removal/downgrade, incompatible data changes, destructive operations, new
   permissions/costs, unconfirmed major product decisions. No bypassing of repository protection or approvals.
 - Plan: v0.5.0 (PR #2) is the frozen baseline; units start at v0.6.0-alpha.1.
+
+### 14:46 — v0.5.0 baseline notes (PR #2)
+- Req: D1 (review), FK-014
+- Change: docs/release-notes/v0.5.0.md lists the issues found in the owner's testing (EN + ZH). Commit 492de9e on
+  `release/v0.5.0`, pushed. PR #2 checks on 492de9e: all success (CI core/app ×3 platforms, release packaging ×2).
+- Result: done.
+
+### 14:50 — Merge PR #2 → v0.5.0 frozen baseline
+- Merged PR #2 via the GitHub API (owner's unit authorisation): merge commit `ce93e057a0e60485075d41bbac912b59919f48db`.
+- Release workflow dispatched on main (run 41119771659, old release.yml: creates a draft, published afterwards as a
+  pre-release). Result: pending at the time of writing.
+
+### 14:50–15:05 — U001 implementation (branch `unit/U001-foundation`, based on 492de9e, to be rebased on ce93e05)
+- Req: UX-12, FK-013, FK-014 (+ evidence for all)
+- Build provenance: VERSION accepts SemVer pre-release (`0.6.0-alpha.1`); CMake splits numeric/pre-release, embeds
+  `FK_GIT_SHA` (git rev-parse, `-dirty` when local changes) and `FK_BUILD_ID` (CI run.attempt or "local") into
+  `fk/product_info.hpp`; `fk::buildCommit()/buildId()/buildInfoLine()`; About dialog (selectable text), `--version`,
+  self-test reports, Info.plist (FKVersion/FKCommit/FKBuild), Windows VERSIONINFO comment. CMake re-runs when VERSION
+  changes. Files: cmake/ProductInfo.cmake, CMakeLists.txt, core/include/fk/{product_info.hpp.in,version.hpp},
+  core/src/version.cpp, app/CMakeLists.txt, app/packaging/{macos/Info.plist.in,windows/app.rc.in},
+  app/src/{AppController,main,SelfTest}.*, app/qml/AboutDialog.qml, zh_CN (+2 strings).
+- Release pipeline: release.yml builds PR test packages from the PR head SHA, passes FK_GIT_SHA/FK_BUILD_ID, writes
+  BUILDINFO.txt into DMG/app/stage (tools/release/buildinfo.sh), checks the packaged app's self-test report against
+  VERSION and the source SHA (tools/release/check-report.py), uploads per-platform SHA256SUMS; publish job (manual
+  run with publish) creates tag v<VERSION> + release (pre-release when VERSION has a suffix), refuses existing
+  tags/releases, appends commit/build/compare link/SHA-256 to the notes, downloads the published files and verifies
+  checksums and the tag commit. The tag-push trigger was removed (single release path).
+  - Mistake on the way: a first scripted edit matched the indented `publish:` input instead of the job and
+    truncated release.yml; restored from git and re-applied with an exact anchor (verified: 269 lines, jobs
+    macos/windows/publish).
+- Known-issue tests: tests/core/test_known_issues.cpp (FK-004, FK-007, FK-008), registered one ctest each with
+  WILL_FAIL, label `known-issue`. Verified each fails for the stated reason (`bin/test_known_issues`: FK004 XMP still
+  contains dc:creator; FK007 replaced file accepted; FK008 error text has no ".bak"). App self-test `known()` checks
+  (status reproduced / NOT_REPRODUCED → run fails): UX-01 stale warning; UX-07 renamed/no XMP, `_1` suffix, new
+  session; FK-010 16→8-bit claims bit-identical; FK-002 180° graded file composited unrotated (content check
+  suggested 180°, final ≠ unrotated print, "row 75 differs"); scenario `miniswhite`: FK-011 preview mean 15.8 vs
+  full 239.2 on an fkfixture MinIsWhite 16-bit scan. Local run (Linux, synthetic scan): self-test passed, all 7
+  app known issues "reproduced". CI app job runs the miniswhite scenario too.
+- Observation (source, to handle in U004): the window drop handler imports any dropped TIFF whose name lacks
+  `_edit_v` as a new scan, so a renamed graded TIFF dropped on the window becomes a scan instead of a relink.
+- Docs: docs/v1/{PLAN,UNITS,TRACEABILITY,BASELINE,FEATURE-FREEZE,PROCESS-CHECKLIST,FORMAT-MATRIX,REAL-SCAN-GT,
+  USER-GUIDE.zh-CN}.md; docs/release-notes/v0.6.0-alpha.1.md. docs/reference-audit.md row ids renamed FK-nnn → SL-nnn
+  (374 occurrences) so they cannot be confused with the requirement tickets FK-001…FK-014.
+- Checks: check-docs, check-repo, check-licenses, check-no-network, check-i18n (480 strings), check-format: ok.

@@ -206,6 +206,12 @@ void AppController::cancelJob(int id) {
 QString AppController::version() const {
     return QString::fromStdString(fk::productVersion());
 }
+QString AppController::buildCommit() const {
+    return QString::fromStdString(fk::buildCommit());
+}
+QString AppController::buildId() const {
+    return QString::fromStdString(fk::buildId());
+}
 
 QString AppController::platform() const {
 #if defined(Q_OS_MACOS)

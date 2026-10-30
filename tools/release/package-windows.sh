@@ -19,6 +19,8 @@ CRT=$(cygpath -u "${VCToolsRedistDir:?run inside the MSVC environment}")x64/Micr
 cp "$CRT"/msvcp140*.dll "$CRT"/vcruntime140*.dll "$CRT"/concrt140.dll "$STAGE/" 2>/dev/null || cp "$CRT"/*.dll "$STAGE/"
 cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-LICENSES.md" "$STAGE/"
 cp "$ROOT/docs/INSTALL.md" "$STAGE/README.md"
+"$ROOT/tools/release/buildinfo.sh" "$STAGE/BUILDINFO.txt" "Windows x64"
+cp "$STAGE/BUILDINFO.txt" "$OUT/BUILDINFO-windows.txt"
 (cd "$OUT/stage" && 7z a -tzip -mx=9 "../FrameKeeper-$VER-Windows-x64-portable.zip" FrameKeeper > /dev/null)
 ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
 if [ ! -x "$ISCC" ]; then choco install innosetup -y --no-progress > /dev/null; fi

@@ -8,6 +8,15 @@ std::string productVersion() {
 std::string productNameAndVersion() {
     return std::string(product::kName) + " " + product::kVersion;
 }
+std::string buildCommit() {
+    return product::kGitSha;
+}
+std::string buildId() {
+    return product::kBuildId;
+}
+std::string buildInfoLine() {
+    return productNameAndVersion() + " (commit " + buildCommit() + ", build " + buildId() + ")";
+}
 int apiVersion() {
     return FK_API_VERSION_MAJOR * 1000 + FK_API_VERSION_MINOR;
 }

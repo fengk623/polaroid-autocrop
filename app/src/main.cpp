@@ -42,7 +42,10 @@ int main(int argc, char* argv[]) {
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("FrameKeeper"));
     QGuiApplication::setOrganizationName(QStringLiteral("FrameKeeper"));
-    QGuiApplication::setApplicationVersion(QString::fromStdString(fk::productVersion()));
+    QGuiApplication::setApplicationVersion(
+        QString::fromStdString(fk::productVersion()) + QStringLiteral(" (commit ") +
+        QString::fromStdString(fk::buildCommit()) + QStringLiteral(", build ") +
+        QString::fromStdString(fk::buildId()) + QStringLiteral(")"));
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/qt/qml/FrameKeeper/resources/icon.png")));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
