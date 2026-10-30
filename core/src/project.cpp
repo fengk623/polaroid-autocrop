@@ -1,6 +1,7 @@
 // Projects, sidecars, templates (RFC-0009, docs/project-format.md).
 #include "fk/project.hpp"
 
+#include "fk/color.hpp"
 #include "fk/hash.hpp"
 #include "fk/product_info.hpp"
 #include "fk/util.hpp"
@@ -263,7 +264,9 @@ json itemJson(const ItemRecord& it) {
                                   {"scale", t.scale},
                                   {"lowerDepth", t.lowerDepth},
                                   {"contentScore", t.contentScore},
-                                  {"gradedSize", json::array({t.gradedSize.w, t.gradedSize.h})}};
+                                  {"gradedSize", json::array({t.gradedSize.w, t.gradedSize.h})},
+                                  {"iccSource", t.iccSource},
+                                  {"iccSha256", t.iccSha256}};
         }
         edits.push_back({{"editVersionId", e.editVersionId},
                          {"version", e.version},
@@ -346,6 +349,8 @@ ItemRecord itemFrom(const json& j) {
                 x.scale = t.value("scale", false);
                 x.lowerDepth = t.value("lowerDepth", false);
                 x.contentScore = t.value("contentScore", 0.0);
+                x.iccSource = t.value("iccSource", "");
+                x.iccSha256 = t.value("iccSha256", "");
                 if (t.contains("gradedSize") && t["gradedSize"].is_array() && t["gradedSize"].size() == 2)
                     x.gradedSize = {t["gradedSize"][0].get<int64_t>(), t["gradedSize"][1].get<int64_t>()};
             }
@@ -436,8 +441,9 @@ int schemaVersion(const std::string& schema, const std::string& prefix) {
     }
 }
 
-const std::vector<std::string> kKnownProjectKeys = {
-    "schema", "projectId", "name", "createdAt", "modifiedAt", "app", "settings", "scans", "exportRecords"};
+const std::vector<std::string> kKnownProjectKeys = {"schema",        "projectId",  "name",     "createdAt",
+                                                    "modifiedAt",    "app",        "settings", "scans",
+                                                    "exportRecords", "iccProfiles"};
 
 } // namespace
 
@@ -480,6 +486,15 @@ std::string projectToJson(const Project& p) {
             }
         }
         j["exportRecords"] = std::move(recs);
+    }
+    // FK-003: profiles chosen to interpret graded files (a new top-level key; earlier versions keep it
+    // verbatim)
+    if (!p.iccProfiles.empty()) {
+        json profiles = json::array();
+        for (const auto& [sha, bytes] : p.iccProfiles)
+            profiles.push_back(
+                {{"sha256", sha}, {"description", iccDescription(bytes)}, {"data", base64Encode(bytes)}});
+        j["iccProfiles"] = std::move(profiles);
     }
     if (!p.unknownJson.empty()) {
         try {
@@ -529,6 +544,13 @@ Result<Project> projectFromJson(const std::string& text, OpenMode* mode) {
                 p.exportRecords.push_back(std::move(*rec));
             else
                 p.unparsedExportRecords.push_back(r.dump()); // kept verbatim (e.g. a newer record schema)
+        }
+        for (const auto& e : j.value("iccProfiles", json::array())) {
+            if (!e.is_object()) continue;
+            auto bytes = base64Decode(e.value("data", ""));
+            // kept only when the bytes are what the key says (a damaged entry is dropped, never guessed)
+            if (bytes && !bytes->empty() && sha256Hex(bytes->data(), bytes->size()) == e.value("sha256", ""))
+                p.iccProfiles[e.value("sha256", "")] = std::move(*bytes);
         }
         json extra = json::object();
         for (auto it = j.begin(); it != j.end(); ++it)
@@ -897,6 +919,7 @@ RelinkCheck checkEdited(const Sidecar& sc, const ImageBuffer& edited, const Imag
     r.aspectMatches = g.aspectMatches;
     r.depthLower = edited.bits() < sc.bits;
     r.iccMissing = info.icc.empty() && !sc.iccSha256.empty();
+    r.iccInvalid = !info.icc.empty() && !Profile::fromIcc(info.icc).ok();
     r.iccDiffers = !info.icc.empty() && sha256Hex(info.icc.data(), info.icc.size()) != sc.iccSha256;
     // turns whose size fits: same orientation {0,2}, swapped {1,3}, both for a square image area
     auto fits = [&](SizeI t) {
@@ -933,7 +956,7 @@ RelinkCheck checkEdited(const Sidecar& sc, const ImageBuffer& edited, const Imag
         if (!(e == target)) r.actionsNeeded.push_back("scale");
     }
     if (r.depthLower) r.actionsNeeded.push_back("accept_lower_depth");
-    if (r.iccMissing) r.actionsNeeded.push_back("choose_icc");
+    if (r.iccMissing || r.iccInvalid) r.actionsNeeded.push_back("choose_icc");
     if (!r.signaturePass) r.actionsNeeded.push_back("confirm_content");
     return r;
 }

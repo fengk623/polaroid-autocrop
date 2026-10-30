@@ -1,5 +1,7 @@
 #include "fk/util.hpp"
 
+#include <cstring>
+
 #include <array>
 #include <cstdio>
 #include <mutex>
@@ -53,6 +55,45 @@ std::string randomToken(size_t n) {
     for (auto& c : s)
         c = chars[rng()() % 36];
     return s;
+}
+
+namespace {
+constexpr const char* kBase64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+}
+
+std::string base64Encode(const std::vector<uint8_t>& bytes) {
+    std::string out;
+    out.reserve(bytes.size() * 4 / 3 + 4);
+    for (size_t i = 0; i < bytes.size(); i += 3) {
+        const uint32_t n = (uint32_t(bytes[i]) << 16) |
+                           (i + 1 < bytes.size() ? uint32_t(bytes[i + 1]) << 8 : 0) |
+                           (i + 2 < bytes.size() ? uint32_t(bytes[i + 2]) : 0);
+        out += kBase64[(n >> 18) & 63];
+        out += kBase64[(n >> 12) & 63];
+        out += i + 1 < bytes.size() ? kBase64[(n >> 6) & 63] : '=';
+        out += i + 2 < bytes.size() ? kBase64[n & 63] : '=';
+    }
+    return out;
+}
+
+std::optional<std::vector<uint8_t>> base64Decode(const std::string& text) {
+    std::vector<uint8_t> out;
+    out.reserve(text.size() * 3 / 4);
+    uint32_t buf = 0;
+    int bits = 0;
+    for (char c : text) {
+        if (c == '=') break;
+        if (c == '\n' || c == '\r') continue;
+        const char* p = c ? std::strchr(kBase64, c) : nullptr;
+        if (!p) return std::nullopt;
+        buf = (buf << 6) | static_cast<uint32_t>(p - kBase64);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<uint8_t>(buf >> bits));
+        }
+    }
+    return out;
 }
 
 } // namespace fk

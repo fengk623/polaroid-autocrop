@@ -1,12 +1,15 @@
 // RFC-0007 / RFC-0008 / PRD F07–F08: compositing into the real scanned frame, synthetic frames.
 #include <gtest/gtest.h>
 
+#include "fk/color.hpp"
 #include "fk/composite.hpp"
 #include "fk/hash.hpp"
+#include "fk/project.hpp"
 #include "support/test_support.hpp"
 
 #include <tiffio.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <numbers>
@@ -365,4 +368,165 @@ TEST(SyntheticFrame, SampleFrameColorIsTheBandMedian) {
     EXPECT_EQ((*c)[0], 60000);
     EXPECT_EQ((*c)[1], 50000);
     EXPECT_EQ((*c)[2], 40000);
+}
+
+// ---- FK-003: graded files without a usable colour profile (RFC-0012 §Graded files without a usable profile)
+// -------
+
+namespace {
+double meanAbsDiffInside(const ImageBuffer& a, const ImageBuffer& b, RectI r) {
+    double sum = 0;
+    int64_t n = 0;
+    for (int64_t y = r.y; y < r.bottom(); ++y)
+        for (int64_t x = r.x; x < r.right(); ++x)
+            for (int c = 0; c < 3; ++c) {
+                sum += std::abs(static_cast<double>(sample16(a, x, y, c)) - sample16(b, x, y, c));
+                ++n;
+            }
+    return n ? sum / n / 65535.0 : 1.0;
+}
+} // namespace
+
+TEST(GradedProfile, AnUntaggedGradedFileIsInterpretedAsConfirmed) {
+    // Adobe RGB scan → sRGB export → the editor drops the profile → relinked
+    TempDir dir;
+    // muted colours: inside the sRGB gamut, so Adobe RGB → sRGB → Adobe RGB is reversible up to rounding
+    ImageBuffer scan = std::move(ImageBuffer::create(320, 240, 3, 16).value());
+    for (int64_t y = 0; y < 240; ++y)
+        for (int64_t x = 0; x < 320; ++x) {
+            const double base = 0.35 + 0.3 * std::sin(x * 0.03) * std::cos(y * 0.02);
+            const uint16_t v[3] = {static_cast<uint16_t>((base + 0.04 * std::sin(y * 0.05)) * 65535),
+                                   static_cast<uint16_t>(base * 65535),
+                                   static_cast<uint16_t>((base - 0.04 * std::cos(x * 0.04)) * 65535)};
+            std::memcpy(scan.row(y) + x * 6, v, 6);
+        }
+    fk::test::TestTiffOptions o;
+    o.icc = Profile::adobeRGB1998().icc();
+    o.dpi = 600;
+    fk::test::writeTestTiff(dir / "scan.tif", scan, o);
+    auto src = openTiff(dir / "scan.tif");
+    ASSERT_TRUE(src.ok());
+    const std::vector<uint8_t> scanIcc = (*src)->info().icc;
+    ASSERT_FALSE(scanIcc.empty());
+    const Shape outer = Shape::fromQuad(rectQuad(10, 10, 300, 230));
+    const Shape inner = Shape::fromQuad(rectQuad(40, 30, 260, 200));
+    ExportRequest r = exportReq(inner, outer.quad, dir / "edit.tif");
+    r.color.kind = ColorPolicy::convert;
+    r.color.icc = Profile::sRGB().icc();
+    auto edit = exportRegion(**src, r, {}, {});
+    ASSERT_TRUE(edit.ok()) << edit.error().message;
+    ImageInfo ei;
+    auto edited = readImageFile(edit->output, &ei);
+    ASSERT_TRUE(edited.ok());
+    ei.icc.clear(); // what the editor wrote: no profile
+
+    Sidecar rec;
+    rec.iccSha256 = edit->iccSha256;
+    rec.iccDescription = edit->iccDescription;
+    rec.exportSize = edit->size;
+    rec.bits = 16;
+    Project p;
+    // the choices: the export's own profile identified by its hash (sRGB), then scan / built-ins without
+    // duplicates
+    const auto choices = iccChoicesFor(rec, scanIcc, p.iccProfiles);
+    ASSERT_GE(choices.size(), 2u);
+    EXPECT_EQ(choices[0].id, "export");
+    EXPECT_EQ(choices[0].sha256, Profile::sRGB().sha256());
+    EXPECT_EQ(
+        std::count_if(choices.begin(), choices.end(), [](const IccChoice& c) { return c.id == "srgb"; }), 0)
+        << "sRGB is already listed as the export profile";
+
+    // never guessed: a new relink without a confirmed interpretation is refused
+    RelinkTransform t;
+    t.set = true;
+    auto refused = gradedProfile(ei, t, rec, scanIcc, p.iccProfiles);
+    ASSERT_FALSE(refused.ok());
+    EXPECT_EQ(refused.error().code, Errc::needs_confirmation);
+    // confirmed "export": stored with the project, resolved by hash
+    t.iccSource = "export";
+    t.iccSha256 = choices[0].sha256;
+    p.iccProfiles[t.iccSha256] = choices[0].icc;
+    auto icc = gradedProfile(ei, t, rec, scanIcc, p.iccProfiles);
+    ASSERT_TRUE(icc.ok()) << icc.error().message;
+    EXPECT_EQ(*icc, Profile::sRGB().icc());
+
+    auto composite = [&](const std::vector<uint8_t>& editedIcc, const char* name) {
+        CompositeRequest c = compositeReq(outer, inner, *edit, *edited, dir / name);
+        c.editedIcc = editedIcc;
+        auto rep = compositeItem(**src, c, {}, {});
+        EXPECT_TRUE(rep.ok()) << (rep.ok() ? "" : rep.error().message);
+        auto out = readImageFile(dir / name);
+        EXPECT_TRUE(out.ok());
+        return std::move(out.value());
+    };
+    auto direct = exportRegion(**src, exportReq(outer, outer.quad, dir / "direct.tif"), {}, {});
+    ASSERT_TRUE(direct.ok());
+    auto print = readImageFile(dir / "direct.tif");
+    ASSERT_TRUE(print.ok());
+    const RectI innerOut{30, 20, 220, 170}; // inner rect relative to the outer crop
+    const ImageBuffer right = composite(*icc, "right.tif");
+    const ImageBuffer wrong =
+        composite({}, "wrong.tif"); // the old behaviour: assumed to be in the scan's space
+    const double eRight = meanAbsDiffInside(right, *print, innerOut);
+    const double eWrong = meanAbsDiffInside(wrong, *print, innerOut);
+    RecordProperty("fk003_mean_abs_error_confirmed", std::to_string(eRight));
+    RecordProperty("fk003_mean_abs_error_assumed_scan", std::to_string(eWrong));
+    EXPECT_LT(eRight, 0.001) << "sRGB → Adobe RGB once restores the scan's colours";
+    EXPECT_GT(eWrong, 0.005) << "assuming the scan's space shifts the colours";
+    // the frame stays the scan's own pixels in both
+    const RectI top{0, 0, right.width(), 20};
+    EXPECT_EQ(meanAbsDiffInside(right, *print, top), 0.0);
+    EXPECT_EQ(meanAbsDiffInside(wrong, *print, top), 0.0);
+}
+
+TEST(GradedProfile, UnreadableOrUnknownProfilesAreNotGuessed) {
+    Sidecar rec;
+    rec.iccSha256 = std::string(64, 'c'); // an export profile this project cannot identify
+    rec.exportSize = {10, 10};
+    Project p;
+    const std::vector<uint8_t> scanIcc = Profile::adobeRGB1998().icc();
+    const auto choices = iccChoicesFor(rec, scanIcc, p.iccProfiles);
+    EXPECT_TRUE(
+        std::none_of(choices.begin(), choices.end(), [](const IccChoice& c) { return c.id == "export"; }));
+    EXPECT_EQ(choices.front().id, "scan");
+    // an earlier version's relink without a profile: refused instead of assuming anything
+    ImageInfo noIcc;
+    EXPECT_FALSE(gradedProfile(noIcc, RelinkTransform{}, rec, scanIcc, p.iccProfiles).ok());
+    // an unreadable embedded profile
+    ImageInfo bad;
+    bad.icc = {1, 2, 3, 4, 5, 6, 7, 8};
+    auto r = gradedProfile(bad, RelinkTransform{}, rec, scanIcc, p.iccProfiles);
+    ASSERT_FALSE(r.ok());
+    EXPECT_EQ(r.error().code, Errc::needs_confirmation);
+    auto img = ImageBuffer::create(10, 10, 3, 16);
+    ASSERT_TRUE(img.ok());
+    const RelinkCheck chk = checkEdited(rec, *img, bad);
+    EXPECT_TRUE(chk.iccInvalid);
+    EXPECT_NE(std::find(chk.actionsNeeded.begin(), chk.actionsNeeded.end(), "choose_icc"),
+              chk.actionsNeeded.end());
+    // an untagged export needs nothing: its pixels are in the scan's space
+    Sidecar untagged = rec;
+    untagged.iccSha256.clear();
+    auto none = gradedProfile(noIcc, RelinkTransform{}, untagged, scanIcc, p.iccProfiles);
+    ASSERT_TRUE(none.ok());
+    EXPECT_TRUE(none->empty());
+    // a chosen profile whose bytes are gone is an error, not a fallback
+    RelinkTransform t;
+    t.set = true;
+    t.iccSource = "file";
+    t.iccSha256 = std::string(64, 'd');
+    EXPECT_FALSE(gradedProfile(noIcc, t, rec, scanIcc, p.iccProfiles).ok());
+}
+
+TEST(GradedProfile, ChosenProfilesAreSavedWithTheProject) {
+    TempDir dir;
+    Project p = newProject("icc");
+    const auto bytes = Profile::adobeRGB1998().icc();
+    p.iccProfiles[Profile::adobeRGB1998().sha256()] = bytes;
+    ASSERT_TRUE(saveProject(p, dir / "p.fkproj").ok());
+    auto back = loadProject(dir / "p.fkproj");
+    ASSERT_TRUE(back.ok());
+    ASSERT_EQ(back->iccProfiles.size(), 1u);
+    EXPECT_EQ(back->iccProfiles.begin()->second, bytes);
+    EXPECT_TRUE(back->unknownJson.empty()) << "iccProfiles is a known key";
 }

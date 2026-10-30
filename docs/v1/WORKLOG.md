@@ -208,3 +208,21 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   5 checks (turn found + confirmation required, stored, final bit-exact with the full print, kept after
   save/reopen, still bit-exact). Real scans: polaroid_92 47 PASS / UX-01 known / FK-010 n/a; img20260702_0005 all
   pass, UX-01 and FK-010 n/a. Relink scenario R7 (turned 180°) snapshot checked.
+
+### 17:05–17:50 — PR #6/#7 merged, U006
+- Owner merged PR #6 (U004) and PR #7 (U005).
+- U006 (branch `unit/U006-missing-icc`), FK-003. Root cause: `req.editedIcc = ei.icc` — a graded file without a
+  profile was composited as if in the scan's colour space; an unreadable profile failed only at output. Core:
+  `checkEdited` sets `iccInvalid`; `iccChoicesFor` (export profile only by SHA-256 among scan/built-ins/stored,
+  then scan, sRGB, Adobe RGB, deduplicated); `gradedProfile` (confirmed → stored bytes; usable embedded; untagged
+  export → none; earlier-version relink → identified export profile; else error); project top-level `iccProfiles`
+  (base64, SHA-256 verified on load); `base64Encode/Decode` in util. App: relink rows carry the choices (export
+  profile pre-selected only for a missing, identified profile), `loadIccProfile` for .icc/.icm files,
+  `applyRelink` refuses an unconfirmed profile and stores the choice + bytes; composite preview and final output
+  use `gradedProfile`. Dialog "No colour profile; read the colours as" + "Profile file…". tools/check-i18n.py now
+  joins adjacent literals in core `makeError` messages too (a split message was reported half).
+- Tests: core `GradedProfile.*` ×3 — Adobe RGB scan → sRGB export → profile dropped: confirmed interpretation mean
+  error 0.0000 vs 0.0096 when assumed to be the scan's space (first draft of the test used saturated colours that
+  sRGB clips: 0.024 [failed] — test changed to in-gamut colours, which is what the claim is about); frame unchanged.
+  Core suite 163/163. Self-test (fixture, sRGB scan, export converted to Adobe RGB, profile dropped): 4 FK-003 checks
+  pass, final vs full print mean difference 0.00000; all other checks pass.
