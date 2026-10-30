@@ -13,6 +13,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 TABLE = ROOT / "app" / "i18n" / "zh_CN.json"
 STR = r'"((?:[^"\\]|\\.)*)"'
+# adjacent C++ string literals ("a" "b") are one string to tr(): capture the whole run
+STRS = r'((?:"(?:[^"\\]|\\.)*"\s*)+)'
+LIT = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def join_literals(run: str) -> str:
+    return "".join(LIT.findall(run))
 
 
 def unescape(s: str) -> str:
@@ -25,7 +32,7 @@ def collect() -> list[str]:
         found += re.findall(r"qsTr\(\s*" + STR, f.read_text(encoding="utf-8"))
     for f in sorted((ROOT / "app" / "src").glob("*.cpp")):
         text = f.read_text(encoding="utf-8")
-        found += re.findall(r"(?<![A-Za-z_])tr\(\s*" + STR, text)
+        found += [join_literals(r) for r in re.findall(r"(?<![A-Za-z_])tr\(\s*" + STRS, text)]
     for f in sorted((ROOT / "core" / "src").rglob("*.cpp")):
         text = f.read_text(encoding="utf-8")
         found += re.findall(r"makeError\(\s*Errc::\w+,\s*" + STR, text)

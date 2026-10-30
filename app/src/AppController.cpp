@@ -164,6 +164,13 @@ QVariantMap AppController::settings() const {
 void AppController::setSetting(const QString& key, const QVariant& value) {
     if (settings_.value(key) == value) return;
     settings_[key] = value;
+    // composite inputs (RFC-0010 §Task safety): previews computed with the old mask are outdated
+    if (key == QLatin1String("maskMode") || key == QLatin1String("featherPx") ||
+        key == QLatin1String("preserveEdgePx")) {
+        ++compositeGen_;
+        compositePreviews_.clear();
+        previewGen_.clear();
+    }
     qs_->setValue(QStringLiteral("app/") + key, value);
     // project-level settings travel with the project (docs/project-format.md)
     auto& ps = project_.settings;
@@ -282,6 +289,9 @@ QString AppController::projectName() const {
 
 void AppController::newProject() {
     jobs_->cancelAll();
+    ++projectGen_; // results of jobs started for the previous project are outdated from here on
+    previewGen_.clear();
+    previewJob_.clear();
     project_ = fk::newProject(toStd(tr("Untitled")));
     project_.settings.expectedCount = settings_.value("expectedCount").toInt();
     project_.settings.safetyMarginPx = settings_.value("safetyMargin").toDouble();
@@ -372,6 +382,47 @@ bool AppController::saveProjectAs(const QVariant& url) {
     return saveProject();
 }
 
+AppController::JobSnapshot AppController::snapshotFor(const std::string& scanId,
+                                                      const std::string& itemId) const {
+    JobSnapshot s;
+    s.project = projectGen_;
+    s.scanId = scanId;
+    s.itemId = itemId;
+    if (auto f = scanGen_.find(scanId); f != scanGen_.end()) s.scan = f->second;
+    if (auto f = itemGen_.find(itemId); f != itemGen_.end()) s.item = f->second;
+    s.composite = compositeGen_;
+    return s;
+}
+
+bool AppController::sameScan(const JobSnapshot& s) const {
+    if (!sameProject(s) || !findScan(s.scanId)) return false;
+    auto f = scanGen_.find(s.scanId);
+    return (f == scanGen_.end() ? 0 : f->second) == s.scan;
+}
+
+bool AppController::sameItem(const JobSnapshot& s) const {
+    if (!sameProject(s) || !item(s.itemId)) return false;
+    auto f = itemGen_.find(s.itemId);
+    return (f == itemGen_.end() ? 0 : f->second) == s.item;
+}
+
+void AppController::invalidateItem(const std::string& itemId) {
+    ++itemGen_[itemId];
+    if (const fk::ScanRecord* s = scanOf(itemId)) ++scanGen_[s->scanId];
+    compositePreviews_.erase(itemId);
+    previewGen_.erase(itemId);
+}
+
+quint64 AppController::itemGeneration(const std::string& itemId) const {
+    auto f = itemGen_.find(itemId);
+    return f == itemGen_.end() ? 0 : f->second;
+}
+
+quint64 AppController::compositePreviewGeneration(const std::string& itemId) const {
+    auto f = previewGen_.find(itemId);
+    return f == previewGen_.end() ? 0 : f->second;
+}
+
 void AppController::touch(bool structural) {
     dirty_ = true;
     if (structural)
@@ -438,6 +489,10 @@ void AppController::importFolder(const QVariant& url) {
 void AppController::removeScan(const QString& scanId) {
     const std::string id = toStd(scanId);
     auto& v = project_.scans;
+    if (const fk::ScanRecord* gone = findScan(id))
+        for (const auto& it : gone->items)
+            invalidateItem(it.itemId);
+    ++scanGen_[id];
     v.erase(std::remove_if(v.begin(), v.end(), [&](const fk::ScanRecord& s) { return s.scanId == id; }),
             v.end());
     rt_.erase(id);
@@ -494,6 +549,7 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
     const int expected = s->expectedCount;
     const double safety = settings_.value("safetyMargin").toDouble();
     auto res = std::make_shared<DetectResult>();
+    const JobSnapshot snap = snapshotFor(scanId, {});
     const QString title = tr("Detecting prints — %1").arg(QFileInfo(toQ(path)).fileName());
     jobs_->start(
         Lane::detect, title,
@@ -531,15 +587,15 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
             res->proxyScale = proxy->scale;
             res->ok = true;
         },
-        [this, res, scanId](bool cancelled) {
+        [this, res, scanId, snap](const JobOutcome& o) -> JobDone {
             fk::ScanRecord* s = findScan(scanId);
-            if (!s) return;
+            if (!s || !sameProject(snap)) return JobApply::outdated; // scan removed or project replaced
             ScanRuntime& r = rt_[scanId];
-            if (cancelled) {
+            if (o.cancelled) {
                 r.state = s->items.empty() ? QStringLiteral("error") : QStringLiteral("ready");
                 r.error = tr("Cancelled");
                 rebuildModels();
-                return;
+                return JobApply::applied;
             }
             if (!res->ok) {
                 r.state = QStringLiteral("error");
@@ -547,7 +603,17 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
                 notify(tr("%1: %2").arg(QFileInfo(toQ(s->path)).fileName(), res->error),
                        QStringLiteral("error"));
                 rebuildModels();
-                return;
+                return {JobApply::failed, res->error};
+            }
+            if (!sameScan(snap)) {
+                // the prints of this scan were edited while detection ran: never replace newer edits
+                r.state = QStringLiteral("ready");
+                rebuildModels();
+                notify(tr("%1: detection finished, but the prints were edited meanwhile. The result was not "
+                          "applied; detect again to replace them.")
+                           .arg(QFileInfo(toQ(s->path)).fileName()),
+                       QStringLiteral("warning"));
+                return JobApply::outdated;
             }
             s->info = res->info;
             s->info.icc.clear();
@@ -560,7 +626,10 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
             // replacing items drops their history (the user confirmed re-detection in the UI)
             for (const auto& it : s->items)
                 undo_.erase(it.itemId);
+            for (const auto& it : s->items)
+                invalidateItem(it.itemId);
             s->items.clear();
+            ++scanGen_[scanId];
             int idx = 1;
             for (const auto& d : res->det.items) {
                 fk::ItemRecord it = fk::itemFromDetection(d, idx++);
@@ -589,6 +658,7 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
                                .arg(s->items.size())
                                .arg(s->expectedCount),
                            QStringLiteral("warning"));
+            return JobApply::applied;
         });
 }
 
@@ -600,6 +670,7 @@ void AppController::loadPreview(const std::string& scanId) {
     r.state = QStringLiteral("loading");
     const std::string path = s->path;
     auto res = std::make_shared<DetectResult>();
+    const JobSnapshot snap = snapshotFor(scanId, {});
     jobs_->start(
         Lane::detect, tr("Opening %1").arg(QFileInfo(toQ(path)).fileName()),
         [res, path](JobContext& ctx) {
@@ -620,14 +691,19 @@ void AppController::loadPreview(const std::string& scanId) {
             res->proxyScale = proxy->scale;
             res->ok = true;
         },
-        [this, res, scanId](bool) {
-            if (!findScan(scanId)) return;
+        [this, res, scanId, snap](const JobOutcome& o) -> JobDone {
+            if (!findScan(scanId) || !sameProject(snap)) return JobApply::outdated;
             ScanRuntime& r = rt_[scanId];
+            if (o.cancelled) {
+                r.state = QStringLiteral("pending");
+                rebuildModels();
+                return JobApply::applied;
+            }
             if (!res->ok) {
                 r.state = QStringLiteral("error");
                 r.error = res->error;
                 rebuildModels();
-                return;
+                return {JobApply::failed, res->error};
             }
             r.display = res->display;
             r.proxyScale = res->proxyScale;
@@ -646,6 +722,7 @@ void AppController::loadPreview(const std::string& scanId) {
             }
             rebuildModels();
             Q_EMIT scanImageChanged(toQ(scanId));
+            return JobApply::applied;
         });
 }
 
@@ -801,7 +878,7 @@ void AppController::undo() {
     u.redo.push_back(snap(*it));
     restore(*it, u.undo.back());
     u.undo.pop_back();
-    compositePreviews_.erase(curItem_);
+    invalidateItem(curItem_);
     refreshItemThumbs(curScan_);
     touch(false);
     Q_EMIT geometryChanged(toQ(curItem_));
@@ -814,7 +891,7 @@ void AppController::redo() {
     u.undo.push_back(snap(*it));
     restore(*it, u.redo.back());
     u.redo.pop_back();
-    compositePreviews_.erase(curItem_);
+    invalidateItem(curItem_);
     refreshItemThumbs(curScan_);
     touch(false);
     Q_EMIT geometryChanged(toQ(curItem_));
@@ -840,7 +917,7 @@ void AppController::commitShape(const std::string& itemId, bool outer, const fk:
         it->inner = s;
         it->innerSource = fk::BoundarySource::manual;
     }
-    compositePreviews_.erase(itemId);
+    invalidateItem(itemId);
     if (scan) refreshItemThumbs(scan->scanId);
     touch(false);
     Q_EMIT geometryChanged(toQ(itemId));
@@ -895,7 +972,7 @@ void AppController::resetToDetected(const QString& itemId) {
     it->outer = d->second.first;
     it->inner = d->second.second;
     it->outerSource = it->innerSource = fk::BoundarySource::automatic;
-    compositePreviews_.erase(it->itemId);
+    invalidateItem(it->itemId);
     if (scan) refreshItemThumbs(scan->scanId);
     touch(false);
     Q_EMIT geometryChanged(itemId);
@@ -912,6 +989,7 @@ void AppController::snapOuter(const QString& itemId) {
     const std::string path = s->path, id = it->itemId;
     const double dpi = s->dpiUsed > 0 ? s->dpiUsed : 600;
     auto out = std::make_shared<std::optional<fk::DetectedItem>>();
+    const JobSnapshot snap = snapshotFor(s->scanId, id);
     jobs_->start(
         Lane::io, tr("Snapping edges"),
         [seed, path, dpi, out](JobContext& ctx) {
@@ -920,12 +998,15 @@ void AppController::snapOuter(const QString& itemId) {
             auto r = fk::snapToEdges(**src, seed, dpi, ctx.cancel);
             if (r) *out = *r;
         },
-        [this, out, id](bool) {
+        [this, out, id, snap](const JobOutcome& o) -> JobDone {
+            if (o.cancelled) return JobApply::applied;
+            if (!sameItem(snap)) return JobApply::outdated; // the outline was edited meanwhile: keep the edit
             if (!*out) {
                 notify(tr("No clear paper edge near the current outline."), QStringLiteral("warning"));
-                return;
+                return {JobApply::failed, tr("No clear paper edge near the current outline.")};
             }
             commitShape(id, true, (*out)->outer);
+            return JobApply::applied;
         });
 }
 
@@ -934,6 +1015,7 @@ void AppController::rotateUpright(const QString& itemId, int delta) {
     if (!it) return;
     pushUndo(*it);
     it->upright = ((it->upright + delta) % 4 + 4) % 4;
+    invalidateItem(it->itemId);
     touch(false);
 }
 
@@ -1260,9 +1342,11 @@ void AppController::requestDetail(QRectF r, int outW, int outH, quint64 generati
             }
             *result = std::move(img);
         },
-        [this, result, srcHolder, r, generation, done, scanId](bool cancelled) {
+        [this, result, srcHolder, r, generation, done, scanId](const JobOutcome& o) -> JobDone {
             if (auto f = rt_.find(scanId); f != rt_.end() && !f->second.source) f->second.source = *srcHolder;
-            if (!cancelled && !result->isNull()) done(*result, r, generation);
+            if (!o.cancelled && !result->isNull())
+                done(*result, r, generation); // the canvas checks its generation
+            return JobApply::applied;
         });
 }
 
@@ -1281,7 +1365,10 @@ void AppController::requestCompositePreview(const QString& itemId) {
     const QVariantMap st = settings_;
     auto out = std::make_shared<QImage>();
     auto err = std::make_shared<QString>();
-    jobs_->start(
+    const JobSnapshot snap = snapshotFor(s->scanId, id);
+    // coalesce: a newer request supersedes the one still in flight for this print
+    if (auto f = previewJob_.find(id); f != previewJob_.end()) jobs_->cancel(f->second);
+    previewJob_[id] = jobs_->start(
         Lane::exportJob, tr("Composite preview %1").arg(toQ(it->label)),
         [=](JobContext& ctx) {
             auto src = fk::openTiff(fk::pathFromUtf8(scanPath));
@@ -1340,15 +1427,22 @@ void AppController::requestCompositePreview(const QString& itemId) {
                                 reinterpret_cast<uint32_t*>(img.scanLine(static_cast<int>(y))));
             *out = std::move(img);
         },
-        [this, out, err, id](bool) {
+        [this, out, err, id, snap](const JobOutcome& o) -> JobDone {
+            if (auto f = previewJob_.find(id); f != previewJob_.end() && sameProject(snap))
+                previewJob_.erase(f);
+            if (o.cancelled) return JobApply::applied;
+            // the boundary, orientation, relinked file or mask changed while this ran: drop the result
+            if (!sameComposite(snap)) return JobApply::outdated;
             if (!err->isEmpty()) {
                 notify(tr("Composite preview failed: %1").arg(*err), QStringLiteral("error"));
-                return;
+                return {JobApply::failed, *err};
             }
-            if (out->isNull()) return;
+            if (out->isNull()) return {JobApply::failed, tr("Composite preview failed")};
             compositePreviews_[id] = *out;
+            previewGen_[id] = snap.item;
             Q_EMIT compositePreviewReady(toQ(id));
             Q_EMIT currentChanged();
+            return JobApply::applied;
         });
 }
 
@@ -1454,6 +1548,7 @@ void AppController::exportImageAreas(const QStringList& itemIds) {
     const fk::Project projCopy = project_;
     auto outcomes = std::make_shared<std::vector<ExportOutcome>>();
     const std::string dir = toStd(folder);
+    const JobSnapshot snap = snapshotFor({}, {});
     jobs_->start(
         Lane::exportJob, tr("Exporting %n image area(s)", nullptr, static_cast<int>(work.size())),
         [work, projCopy, outcomes, dir](JobContext& ctx) {
@@ -1510,24 +1605,35 @@ void AppController::exportImageAreas(const QStringList& itemIds) {
                 outcomes->push_back(o);
             }
         },
-        [this, outcomes, folder](bool cancelled) {
+        [this, outcomes, folder, snap](const JobOutcome& jo) -> JobDone {
             int ok = 0, failed = 0;
+            const bool sameProj = sameProject(snap);
             for (const auto& o : *outcomes) {
                 if (!o.ok) {
                     ++failed;
-                    if (const fk::ItemRecord* it = item(o.itemId))
+                    if (const fk::ItemRecord* it = sameProj ? item(o.itemId) : nullptr)
                         notify(tr("%1: %2").arg(toQ(it->label), o.error), QStringLiteral("error"));
                     continue;
                 }
-                if (fk::ItemRecord* it = findItemMut(o.itemId)) {
+                // export records describe the geometry that was exported, so they stay valid after later
+                // edits; they are never written into a project opened after the export started
+                if (fk::ItemRecord* it = sameProj ? findItemMut(o.itemId) : nullptr) {
                     it->edits.push_back(o.ev);
                     ++ok;
                 }
             }
-            if (cancelled)
+            if (jo.cancelled)
                 notify(tr("Export cancelled; finished files were kept."), QStringLiteral("warning"));
+            if (!sameProj) {
+                notify(
+                    tr("An export of the previous project finished; its files were kept but not recorded."),
+                    QStringLiteral("warning"));
+                return JobApply::outdated;
+            }
             if (ok) touch(false);
             Q_EMIT exportFinished(folder, ok, failed);
+            if (failed) return {JobApply::failed, tr("%1 of %2 exports failed").arg(failed).arg(ok + failed)};
+            return JobApply::applied;
         });
 }
 
@@ -1546,6 +1652,7 @@ void AppController::exportFullPrints(const QStringList& itemIds) {
     auto outcomes = std::make_shared<std::vector<ExportOutcome>>();
     const std::string dir = toStd(folder);
     const std::string projectId = project_.projectId;
+    const JobSnapshot snap = snapshotFor({}, {});
     jobs_->start(
         Lane::exportJob, tr("Exporting %n full print(s)", nullptr, static_cast<int>(work.size())),
         [work, outcomes, dir, projectId](JobContext& ctx) {
@@ -1580,7 +1687,7 @@ void AppController::exportFullPrints(const QStringList& itemIds) {
                 outcomes->push_back(o);
             }
         },
-        [this, outcomes, folder](bool) {
+        [this, outcomes, folder, snap](const JobOutcome&) -> JobDone {
             int ok = 0, failed = 0;
             for (const auto& o : *outcomes) {
                 if (o.ok)
@@ -1590,7 +1697,10 @@ void AppController::exportFullPrints(const QStringList& itemIds) {
                     notify(o.error, QStringLiteral("error"));
                 }
             }
+            if (!sameProject(snap)) return JobApply::outdated; // files kept; nothing to record
             Q_EMIT exportFinished(folder, ok, failed);
+            if (failed) return {JobApply::failed, tr("%1 of %2 exports failed").arg(failed).arg(ok + failed)};
+            return JobApply::applied;
         });
 }
 
@@ -1603,6 +1713,7 @@ void AppController::relinkFiles(const QVariantList& urls) {
     if (files.empty()) return;
     const fk::Project projCopy = project_;
     auto rows = std::make_shared<QVariantList>();
+    const JobSnapshot snap = snapshotFor({}, {});
     jobs_->start(
         Lane::exportJob, tr("Checking %n graded file(s)", nullptr, static_cast<int>(files.size())),
         [files, projCopy, rows](JobContext& ctx) {
@@ -1658,7 +1769,12 @@ void AppController::relinkFiles(const QVariantList& urls) {
                 rows->push_back(row);
             }
         },
-        [this, rows](bool) { Q_EMIT relinkResults(*rows); });
+        [this, rows, snap](const JobOutcome& o) -> JobDone {
+            if (o.cancelled) return JobApply::applied;
+            if (!sameProject(snap)) return JobApply::outdated; // rows refer to the previous project's prints
+            Q_EMIT relinkResults(*rows);
+            return JobApply::applied;
+        });
 }
 
 void AppController::applyRelink(const QVariantList& rows) {
@@ -1676,7 +1792,7 @@ void AppController::applyRelink(const QVariantList& rows) {
         ev->matchedBy = toStd(r.value("source").toString());
         ev->relinkedAt = fk::isoDateTimeNowUtc();
         relinkChecks_[it->itemId] = r;
-        compositePreviews_.erase(it->itemId);
+        invalidateItem(it->itemId);
         ++n;
     }
     if (n) {
@@ -1744,6 +1860,7 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
     const bool allowDepth = confirmations.value("accept_lower_depth").toBool();
     const std::string dir = toStd(folder), projectId = project_.projectId;
     auto outcomes = std::make_shared<std::vector<ExportOutcome>>();
+    const JobSnapshot snap = snapshotFor({}, {});
     jobs_->start(
         Lane::exportJob, tr("Final export of %n print(s)", nullptr, static_cast<int>(work.size())),
         [work, st, allowScale, allowDepth, dir, projectId, outcomes](JobContext& ctx) {
@@ -1893,23 +2010,27 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                 outcomes->push_back(o);
             }
         },
-        [this, outcomes, folder](bool) {
+        [this, outcomes, folder, snap](const JobOutcome&) -> JobDone {
             int ok = 0, failed = 0;
+            const bool sameProj = sameProject(snap);
             for (const auto& o : *outcomes) {
                 if (!o.ok) {
                     ++failed;
                     notify(o.error, QStringLiteral("error"));
                     continue;
                 }
-                if (fk::ItemRecord* it = findItemMut(o.itemId)) {
+                if (fk::ItemRecord* it = sameProj ? findItemMut(o.itemId) : nullptr) {
                     it->finalExport = o.fullPath;
                     it->composite.lastOutput = o.fullPath;
                     it->composite.lastOutputAt = fk::isoDateTimeNowUtc();
                     ++ok;
                 }
             }
+            if (!sameProj) return JobApply::outdated; // files kept; not recorded in a newer project
             if (ok) touch(false);
             Q_EMIT exportFinished(folder, ok, failed);
+            if (failed) return {JobApply::failed, tr("%1 of %2 exports failed").arg(failed).arg(ok + failed)};
+            return JobApply::applied;
         });
 }
 

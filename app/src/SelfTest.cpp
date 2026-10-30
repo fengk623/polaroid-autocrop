@@ -2,6 +2,7 @@
 
 #include "AppController.hpp"
 #include "Display.hpp"
+#include "Jobs.hpp"
 #include "util.hpp"
 
 #include "fk/image_io.hpp"
@@ -141,6 +142,97 @@ void SelfTest::known(const QString& ticket, const QString& name, bool reproduced
     if (!reproduced) allOk_ = false;
     qInfo().noquote() << (reproduced ? "KNOWN" : "FAIL(known issue no longer reproduces)") << ticket << name
                       << detail;
+}
+
+void SelfTest::runTaskSafety(const QString& exportDir, const QString& projectPath) {
+    // RFC-0010 §Task safety (FK-006, U002): a result computed from state that changed meanwhile is never
+    // applied; every job ends as succeeded, failed, cancelled or outdated; cancelled exports leave no temp
+    // files.
+    JobRunner* jobs = app_->jobRunner();
+    const std::string item = app_->currentItemId().toStdString();
+    const QString scanId = app_->currentScanId();
+    const QVariantMap mask{{"maskMode", app_->settings().value("maskMode")},
+                           {"featherPx", app_->settings().value("featherPx")}};
+
+    // TS1: the mask changes while a composite preview is computed → the preview is discarded
+    {
+        jobs->setTestDelayMs(500);
+        app_->requestCompositePreview(QString::fromStdString(item));
+        const int id = jobs->lastJobId();
+        app_->setSetting(QStringLiteral("maskMode"), QStringLiteral("feather"));
+        app_->setSetting(QStringLiteral("featherPx"), 3.0);
+        app_->waitIdle(120000);
+        jobs->setTestDelayMs(0);
+        const QString state = jobs->finalState(id);
+        check(QStringLiteral("TS1 preview computed before a mask change is not applied"),
+              state == QLatin1String("outdated") && app_->compositePreview(item).isNull(),
+              QStringLiteral("job %1, preview stored %2")
+                  .arg(state)
+                  .arg(!app_->compositePreview(item).isNull()));
+        app_->requestCompositePreview(QString::fromStdString(item));
+        app_->waitIdle(120000);
+        check(QStringLiteral("TS1 a fresh preview matches the current print"),
+              !app_->compositePreview(item).isNull() &&
+                  app_->compositePreviewGeneration(item) == app_->itemGeneration(item),
+              QStringLiteral("preview gen %1, item gen %2")
+                  .arg(app_->compositePreviewGeneration(item))
+                  .arg(app_->itemGeneration(item)));
+        app_->setSetting(QStringLiteral("maskMode"), mask.value("maskMode"));
+        app_->setSetting(QStringLiteral("featherPx"), mask.value("featherPx"));
+    }
+
+    // TS2: the user edits a print while the scan is detected again → the detection result is not applied
+    {
+        const QVariantMap before = app_->currentItem();
+        jobs->setTestDelayMs(500);
+        app_->detectScan(scanId, QString());
+        const int id = jobs->lastJobId();
+        const QVariantList pts = before.value("outer").toMap().value("points").toList();
+        const double x0 = pts.isEmpty() ? 0 : pts.first().toList().value(0).toDouble();
+        const double y0 = pts.isEmpty() ? 0 : pts.first().toList().value(1).toDouble();
+        app_->setOuterNumeric(QString::fromStdString(item), 0, x0 + 3, y0);
+        app_->waitIdle(300000);
+        jobs->setTestDelayMs(0);
+        const QVariantList after = app_->currentItem().value("outer").toMap().value("points").toList();
+        const double x1 = after.isEmpty() ? -1 : after.first().toList().value(0).toDouble();
+        check(QStringLiteral("TS2 detection finishing after an edit keeps the edit"),
+              jobs->finalState(id) == QLatin1String("outdated") && std::abs(x1 - (x0 + 3)) < 1e-6 &&
+                  app_->currentItemId().toStdString() == item,
+              QStringLiteral("job %1, corner x %2 (edited to %3)")
+                  .arg(jobs->finalState(id))
+                  .arg(x1)
+                  .arg(x0 + 3));
+        app_->undo();
+    }
+
+    // TS3: the project is replaced while an export runs → cancelled, no temporary files, nothing recorded
+    {
+        jobs->setTestDelayMs(300);
+        app_->exportImageAreas({});
+        const int id = jobs->lastJobId();
+        check(QStringLiteral("TS3 open project"), app_->openProject(projectPath));
+        app_->waitIdle(300000);
+        jobs->setTestDelayMs(0);
+        const QStringList temps = filesMatching(exportDir, QStringLiteral("*.fk-tmp-*"));
+        check(QStringLiteral("TS3 export interrupted by opening a project: cancelled, no temp files"),
+              jobs->finalState(id) == QLatin1String("cancelled") && temps.isEmpty(),
+              QStringLiteral("job %1, temp files %2").arg(jobs->finalState(id)).arg(temps.size()));
+    }
+
+    // TS4: a job that fails is shown as failed, not done
+    {
+        const QString bad = QDir(dir_).filePath(QStringLiteral("not-a-tiff.tif"));
+        QFile f(bad);
+        if (f.open(QIODevice::WriteOnly)) f.write(QByteArray(4096, 'x'));
+        f.close();
+        app_->importScans({bad});
+        const int id = jobs->lastJobId();
+        app_->waitIdle(120000);
+        check(QStringLiteral("TS4 a failing job ends as failed"),
+              jobs->finalState(id) == QLatin1String("failed"), jobs->finalState(id));
+        app_->openProject(projectPath); // back to the saved state for the following checks
+        app_->waitIdle(120000);
+    }
 }
 
 void SelfTest::runKnownIssues(const QString& exportDir) {
@@ -582,6 +674,7 @@ int SelfTest::run() {
     check(QStringLiteral("project keeps prints"), app_->counts().value("prints").toInt() == items);
     snapshot(QStringLiteral("07-reopened"));
 
+    runTaskSafety(exportDir, proj);
     runKnownIssues(exportDir);
 
     QJsonObject report{{"product", "FrameKeeper"},
