@@ -26,13 +26,15 @@ All files: UTF-8 JSON, LF, 2-space indent, keys in lower camelCase. Unknown keys
                  "relinked": {"path": "…", "sha256": "hex", "matchedBy": "file_hash+embedded_ids+content",
                               "at": "ISO-8601",
                               "transform": {"rotate": 2, "rotateSource": "content", "scale": false,
-                                            "lowerDepth": false, "contentScore": 0.97, "gradedSize": [w, h]}}}],
+                                            "lowerDepth": false, "contentScore": 0.97, "gradedSize": [w, h],
+                                            "iccSource": "export", "iccSha256": "hex"}}}],
       "composite": {"maskMode": "hard_edge", "featherPx": 0, "preserveEdgePx": 0, "strokes": [],
                     "lastOutput": null},
       "history": {"undo": [], "redo": []}
     }]
   }],
-  "exportRecords": [{"schema": "fk.sidecar/1", "editVersionId": "uuid", "…": "same fields as §4"}]
+  "exportRecords": [{"schema": "fk.sidecar/1", "editVersionId": "uuid", "…": "same fields as §4"}],
+  "iccProfiles": [{"sha256": "hex", "description": "Adobe RGB (1998)…", "data": "base64 of the ICC bytes"}]
 }
 ```
 `exportRecords` (since 0.6.0-alpha.3, UX-07): one record per export, with exactly the fields of a sidecar (§4):
@@ -49,6 +51,9 @@ none/content/user, `scale` (resampling to the export size confirmed), `lowerDept
 Preview and output use it as stored. Absent (relinks of earlier versions; earlier versions drop it on save): the
 turn is taken from the picture only when unambiguous. `matchedBy` lists the supporting evidence since 0.6.0-alpha.4
 (older values: `xmp`, `sidecar`, `file_name`).
+`iccProfiles` and `transform.iccSource`/`iccSha256` (since 0.6.0-alpha.6, FK-003): how the colours of a graded
+file without a usable embedded profile are read (export/scan/srgb/adobe_rgb/file), confirmed by the user; the
+profile bytes are stored once per SHA-256 (verified on load) so the choice survives a missing profile file or scan.
 Manual alignments (since 0.6.0-alpha.4, RFC-0006 §New alignment): a record with `"origin": "manual_alignment"`
 places a graded file on a print that has no export in this project. It has no `exportedAt`; `file` is the graded
 file; its geometry is the print's current Inner (pixel crop or straightened); `version` is the print's next version

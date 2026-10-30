@@ -83,6 +83,17 @@ bool samePixels(const QString& a, const QString& b, QString& why) {
         }
     return true;
 }
+/// Mean absolute difference of two images of the same layout, 0…1 (−1 if they cannot be compared).
+double meanDifference(const QString& a, const QString& b) {
+    auto ia = fk::readImageFile(toPath(a)), ib = fk::readImageFile(toPath(b));
+    if (!ia || !ib || ia->size() != ib->size() || ia->channels() != ib->channels()) return -1;
+    double sum = 0;
+    for (int64_t y = 0; y < ia->height(); ++y)
+        for (int64_t x = 0; x < ia->width(); ++x)
+            for (int c = 0; c < ia->channels(); ++c)
+                sum += std::abs(static_cast<double>(ia->sample16(x, y, c)) - ib->sample16(x, y, c));
+    return sum / (static_cast<double>(ia->width()) * ia->height() * ia->channels() * 65535.0);
+}
 QStringList filesMatching(const QString& dir, const QString& pattern) {
     QStringList out;
     QDirIterator it(dir, {pattern}, QDir::Files);
@@ -92,7 +103,7 @@ QStringList filesMatching(const QString& dir, const QString& pattern) {
     return out;
 }
 /// Writes `src` again without any metadata (no XMP, no sidecar): what an external editor typically produces.
-bool rewriteWithoutMetadata(const QString& src, const QString& dst, fk::FileFormat fmt) {
+bool rewriteWithoutMetadata(const QString& src, const QString& dst, fk::FileFormat fmt, bool keepIcc = true) {
     fk::ImageInfo info;
     auto img = fk::readImageFile(toPath(src), &info);
     if (!img) return false;
@@ -100,7 +111,7 @@ bool rewriteWithoutMetadata(const QString& src, const QString& dst, fk::FileForm
     opt.format = fmt;
     opt.bits = fmt == fk::FileFormat::jpeg ? 8 : img->bits();
     if (fmt == fk::FileFormat::jpeg && img->bits() != 8) return false;
-    opt.icc = info.icc;
+    if (keepIcc) opt.icc = info.icc;
     opt.jpegQuality = 92;
     QFile::remove(dst);
     auto sink = fk::createSink(toPath(dst), opt);
@@ -417,6 +428,78 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
         QString why2;
         check(QStringLiteral("reopened project: final output still bit-exact"), finalEqualsFullPrint(why2),
               why2);
+    }
+
+    // FK-003 (U006): the export was converted to Adobe RGB, the editor dropped the profile. The export's
+    // profile is offered (identified by its hash), the user confirms it, the choice is stored with the
+    // project and the output converts once — colours as in the scan.
+    {
+        const QVariant policy = app_->settings().value("colorPolicy");
+        app_->setSetting(QStringLiteral("colorPolicy"), QStringLiteral("convert_adobe"));
+        const QStringList before = filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif"));
+        app_->exportImageAreas({itemId});
+        app_->waitIdle(300000);
+        app_->setSetting(QStringLiteral("colorPolicy"), policy);
+        QStringList made = filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif"));
+        for (const auto& b : before)
+            made.removeAll(b);
+        const QString dir = QDir(kiDir).filePath(QStringLiteral("fk003"));
+        QDir().mkpath(dir);
+        const QString g =
+            made.size() == 1 ? QDir(dir).filePath(QFileInfo(made.first()).fileName()) : QString();
+        const bool written =
+            !g.isEmpty() && rewriteWithoutMetadata(made.first(), g, fk::FileFormat::tiff, /*keepIcc=*/false);
+        const QVariantList rows = relinkRows(g);
+        QVariantMap row = rows.isEmpty() ? QVariantMap() : rows.first().toMap();
+        const QVariantList choices = row.value("iccChoices").toList();
+        const QString first =
+            choices.isEmpty() ? QString() : choices.first().toMap().value("label").toString();
+        check(QStringLiteral(
+                  "graded file without a profile: the export's profile is offered, confirmation required"),
+              written && row.value("decision").toString() == QLatin1String("unique") &&
+                  row.value("actions").toStringList().contains(QStringLiteral("choose_icc")) &&
+                  row.value("iccChoice").toString() == QLatin1String("export") &&
+                  first.contains(QLatin1String("Adobe")) && !row.value("accept").toBool(),
+              QStringLiteral("exports %1, decision %2, choice %3, first %4, accept %5")
+                  .arg(made.size())
+                  .arg(row.value("decision").toString(), row.value("iccChoice").toString(), first)
+                  .arg(row.value("accept").toBool()));
+        // without a choice the file is not relinked
+        QVariantMap unchosen = row;
+        unchosen["iccSha256"] = QString();
+        unchosen["accept"] = true;
+        const int relinkedBefore = app_->counts().value("relinked").toInt();
+        app_->applyRelink({unchosen});
+        auto relinkedTo = [&]() -> const fk::EditVersion* {
+            const fk::ItemRecord* it = app_->item(itemId.toStdString());
+            if (!it) return nullptr;
+            for (const auto& e : it->edits)
+                if (QString::fromStdString(e.relinkedPath) == g) return &e;
+            return nullptr;
+        };
+        check(QStringLiteral("graded file without a profile is not relinked before the choice"),
+              relinkedTo() == nullptr,
+              QString::number(app_->counts().value("relinked").toInt() - relinkedBefore));
+        row["accept"] = true; // the user confirms the offered profile
+        app_->applyRelink({row});
+        const fk::EditVersion* ev = relinkedTo();
+        check(QStringLiteral("chosen profile stored with the relink and the project"),
+              ev && ev->relinkTransform.iccSource == "export" &&
+                  app_->project().iccProfiles.count(ev->relinkTransform.iccSha256) == 1,
+              ev ? QString::fromStdString(ev->relinkTransform.iccSource) : QStringLiteral("not relinked"));
+        const QStringList beforeFinal = filesMatching(exportDir, QStringLiteral("*_FINAL_v*.tif"));
+        app_->setSetting(QStringLiteral("finalMode"), QStringLiteral("real"));
+        app_->exportFinal({itemId}, {});
+        app_->waitIdle(300000);
+        QStringList finals = filesMatching(exportDir, QStringLiteral("*_FINAL_v*.tif"));
+        for (const auto& b : beforeFinal)
+            finals.removeAll(b);
+        const QString stem = QFileInfo(f).completeBaseName().section(QStringLiteral("_EDIT_"), 0, 0);
+        const QStringList fulls = filesMatching(exportDir, stem + QStringLiteral("_FULL_v001.tif"));
+        const double diff =
+            finals.size() == 1 && fulls.size() == 1 ? meanDifference(finals.first(), fulls.first()) : -1;
+        check(QStringLiteral("output converts the chosen profile once: colours as in the scan"),
+              diff >= 0 && diff < 0.002, QStringLiteral("mean difference %1").arg(diff, 0, 'f', 5));
     }
 
     // UX-07 (U004, was a known issue): after a restart without saving, the export has no record in the new

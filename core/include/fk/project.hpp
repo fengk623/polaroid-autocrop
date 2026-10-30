@@ -12,6 +12,7 @@
 
 #include <array>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -47,6 +48,10 @@ struct RelinkTransform {
     bool lowerDepth = false;  ///< lower bit depth accepted
     double contentScore = 0;  ///< picture correlation at `rotate`
     SizeI gradedSize{};       ///< graded file size when confirmed (a different size later = the file changed)
+    /// FK-003: how the colours of a graded file without a usable embedded profile are interpreted — "" (its
+    /// own embedded profile, or none needed), "export", "scan", "srgb", "adobe_rgb", "file". The profile's
+    /// bytes are kept in Project::iccProfiles under `iccSha256`.
+    std::string iccSource, iccSha256;
 };
 
 struct EditVersion {
@@ -153,6 +158,9 @@ struct Project {
     /// not depend on a `.fk.json` beside the graded file. Keyed by Sidecar::editVersionId.
     std::vector<Sidecar> exportRecords;
     std::vector<std::string> unparsedExportRecords; ///< records this version cannot read, kept verbatim
+    /// ICC profiles chosen to interpret graded files (FK-003), by SHA-256 of their bytes; saved with the
+    /// project so the choice resolves after reopening, even when the profile file or the scan is gone.
+    std::map<std::string, std::vector<uint8_t>> iccProfiles;
     std::string unknownJson; ///< unknown top-level keys preserved verbatim (forward compatibility)
 };
 
@@ -215,9 +223,31 @@ struct RelinkCheck {
     /// kOrientationMargin. Otherwise (symmetric, square or low-texture pictures) the user chooses
     /// ("choose_rotation").
     bool rotationReliable = false;
+    bool iccInvalid = false; ///< embedded profile present but unreadable: never guessed silently (FK-003)
     std::vector<std::string>
         actionsNeeded; ///< "scale", "rotate", "accept_lower_depth", "choose_icc", "confirm_content"
 };
+// ---- graded-file colour profile (FK-003, RFC-0012 §Graded files without a usable profile)
+// -----------------------
+struct IccChoice {
+    std::string id; ///< "export", "scan", "srgb", "adobe_rgb", "file"
+    std::string description, sha256;
+    std::vector<uint8_t> icc;
+};
+/// What a graded file without a usable embedded profile can be interpreted as: the export's own profile (when
+/// it can be identified among the scan's profile, the built-ins and the project's stored profiles — never
+/// guessed), the scan's profile, sRGB, Adobe RGB (1998). Duplicates by content are listed once, under the
+/// first id.
+using IccStore = std::map<std::string, std::vector<uint8_t>>; ///< SHA-256 → bytes (Project::iccProfiles)
+std::vector<IccChoice> iccChoicesFor(const Sidecar& rec, const std::vector<uint8_t>& scanIcc,
+                                     const IccStore& stored);
+/// The profile the graded pixels are in (empty = the scan's own colour space): the confirmed interpretation
+/// when one was chosen, else the usable embedded profile, else — for an untagged export — none; for relinks
+/// of earlier versions the export's own profile when it can be identified. Errors instead of guessing.
+Result<std::vector<uint8_t>> gradedProfile(const ImageInfo& graded, const RelinkTransform& t,
+                                           const Sidecar& rec, const std::vector<uint8_t>& scanIcc,
+                                           const IccStore& stored);
+
 inline constexpr double kOrientationMargin = 0.15;
 /// Checks a graded file against an export record. Actions: "rotate", "choose_rotation", "scale",
 /// "manual_alignment", "accept_lower_depth", "choose_icc", "confirm_content".

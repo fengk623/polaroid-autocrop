@@ -5,6 +5,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import FrameKeeper.Core
 
 FkDialog {
@@ -27,7 +28,8 @@ FkDialog {
     }
     readonly property var choiceKeys: ["itemId", "editVersionId", "label", "scanName", "source", "actions", "score", "signaturePass",
                                        "sizeMatches", "rotate", "depthLower", "ok", "newAlignment", "alignmentKey", "conflict", "alignmentMode",
-                                       "rotationReliable", "rotateSource", "allowedRotations", "rotationScores", "gradedW", "gradedH"]
+                                       "rotationReliable", "rotateSource", "allowedRotations", "rotationScores", "gradedW", "gradedH",
+                                       "iccChoices", "iccChoice", "iccSha256", "iccInvalid"]
     function choose(index, value) {
         const next = rows.slice()
         const r = Object.assign({}, next[index])
@@ -61,6 +63,34 @@ FkDialog {
             if (model[i].value === value) return i
         return 0
     }
+    // FK-003: a graded file without a usable profile — how its colours are read is chosen, never guessed
+    function needsIcc(r) { return (r.actions || []).indexOf("choose_icc") >= 0 && !r.iccSha256 }
+    function setIcc(index, id, sha256, extra) {
+        const next = rows.slice()
+        const r = Object.assign({}, next[index])
+        if (extra) r.iccChoices = (r.iccChoices || []).filter(c => c.sha256 !== extra.sha256).concat([extra])
+        r.iccChoice = id
+        r.iccSha256 = sha256
+        r.accept = r.ok === true && !needsOrientation(r)
+        next[index] = r
+        rows = next
+    }
+    function iccModel(r) {
+        const m = needsIcc(r) ? [{ text: qsTr("Choose how to read the colours…"), value: "" }] : []
+        for (const c of (r.iccChoices || [])) m.push({ text: c.label, value: c.id + "|" + c.sha256 })
+        return m
+    }
+    property int iccRow: -1
+    FileDialog {
+        id: iccFileDialog
+        title: qsTr("Choose an ICC profile")
+        nameFilters: [qsTr("ICC profiles (*.icc *.icm)")]
+        onAccepted: {
+            const p = App.loadIccProfile(selectedFile)
+            if (p.ok) d.setIcc(d.iccRow, p.id, p.sha256, { id: p.id, label: p.label, sha256: p.sha256 })
+            else App.notify(p.error, "warning")
+        }
+    }
     function needsOrientation(r) { return (r.actions || []).indexOf("choose_rotation") >= 0 && r.rotateSource !== "user" }
     function orientationModel(r) {
         const m = needsOrientation(r) ? [{ text: qsTr("Choose the orientation…"), value: -1 }] : []
@@ -72,9 +102,10 @@ FkDialog {
     }
     function actionText(a) {
         return ({ "rotate": qsTr("rotate back"), "scale": qsTr("scale to the exported size"), "accept_lower_depth": qsTr("accept lower bit depth"),
-                  "choose_icc": qsTr("no colour profile: assume the exported one"), "confirm_content": qsTr("content differs — confirm it is this print"),
+                  "confirm_content": qsTr("content differs — confirm it is this print"),
                   "manual_alignment": qsTr("different aspect ratio: cannot be placed"),
-                  "choose_rotation": qsTr("orientation unclear: choose it") })[a] || a
+                  "choose_rotation": qsTr("orientation unclear: choose it"),
+                  "choose_icc": qsTr("no usable colour profile: choose how to read the colours") })[a] || a
     }
     function decisionText(r) {
         if (r.decision === "unique") return r.newAlignment ? qsTr("new alignment") : qsTr("matched")
@@ -123,6 +154,7 @@ FkDialog {
                         spacing: 6
                         FkCheck {
                             enabled: rowItem.opt !== null && rowItem.modelData.ok === true && !d.needsOrientation(rowItem.modelData)
+                                     && !d.needsIcc(rowItem.modelData)
                             checked: rowItem.modelData.accept === true
                             onToggled: d.rows[rowItem.index].accept = checked
                         }
@@ -161,6 +193,25 @@ FkDialog {
                             currentIndex: d.indexIn(model, d.needsOrientation(rowItem.modelData) ? -1 : rowItem.modelData.rotate)
                             onPicked: (v) => { if (v !== -1) d.setRotation(rowItem.index, v) }
                         }
+                    }
+                    RowLayout {
+                        // colours of a graded file without a usable profile (FK-003)
+                        visible: rowItem.opt !== null && (rowItem.modelData.actions || []).indexOf("choose_icc") >= 0
+                        spacing: 6
+                        Text {
+                            text: rowItem.modelData.iccInvalid ? qsTr("Its profile cannot be read; read the colours as")
+                                                               : qsTr("No colour profile; read the colours as")
+                            font.pixelSize: Theme.fontCaption
+                            color: Theme.textSecondary
+                        }
+                        FkCombo {
+                            Layout.preferredWidth: 280
+                            model: d.iccModel(rowItem.modelData)
+                            currentIndex: d.indexIn(model, d.needsIcc(rowItem.modelData) ? ""
+                                                    : rowItem.modelData.iccChoice + "|" + rowItem.modelData.iccSha256)
+                            onPicked: (v) => { if (v) d.setIcc(rowItem.index, v.split("|")[0], v.split("|")[1]) }
+                        }
+                        FkButton { text: qsTr("Profile file…"); onClicked: { d.iccRow = rowItem.index; iccFileDialog.open() } }
                     }
                     Text {
                         // not decided: what speaks for each candidate, so the choice is informed

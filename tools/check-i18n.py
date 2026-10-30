@@ -35,7 +35,7 @@ def collect() -> list[str]:
         found += [join_literals(r) for r in re.findall(r"(?<![A-Za-z_])tr\(\s*" + STRS, text)]
     for f in sorted((ROOT / "core" / "src").rglob("*.cpp")):
         text = f.read_text(encoding="utf-8")
-        found += re.findall(r"makeError\(\s*Errc::\w+,\s*" + STR, text)
+        found += [join_literals(r) for r in re.findall(r"makeError\(\s*Errc::\w+,\s*" + STRS, text)]
     out, seen = [], set()
     for s in found:
         s = unescape(s)

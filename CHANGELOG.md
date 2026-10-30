@@ -3,6 +3,11 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.6.0-alpha.6 — U006: graded files without a usable colour profile (FK-003)
+- A missing or unreadable profile is never guessed: the export's profile (identified by hash), the scan's, sRGB,
+  Adobe RGB or a profile file is chosen and confirmed when relinking, stored with the project (`iccProfiles`) and
+  converted once when compositing. Notes: docs/release-notes/v0.6.0-alpha.6.md.
+
 ## 0.6.0-alpha.5 — U005: confirmed relink transform (FK-002)
 - The turn a graded file was given in the editor is limited by its size, decided by the picture or chosen by the
   user, confirmed by ticking, stored with the relink and used as stored by preview and output (fixes 180° files

@@ -129,6 +129,9 @@ class AppController : public QObject {
     /// Window drop: projects open, scans import, graded files (our metadata, an export name, or not a TIFF)
     /// relink.
     Q_INVOKABLE void dropFiles(const QVariantList& urls);
+    /// Reads an ICC profile chosen to interpret a graded file (FK-003): {ok, id "file", label, sha256} or
+    /// {ok false, error}. Unreadable profiles are refused.
+    Q_INVOKABLE QVariantMap loadIccProfile(const QVariant& url);
     Q_INVOKABLE QVariantMap prepareFinal(const QStringList& itemIds);
     Q_INVOKABLE void exportFinal(const QStringList& itemIds, const QVariantMap& confirmations);
     Q_INVOKABLE void requestCompositePreview(const QString& itemId);
@@ -258,6 +261,9 @@ class AppController : public QObject {
     std::map<std::string, QVariantMap> relinkChecks_; ///< itemId → last content/geometry check
     /// New-alignment records offered by the last assessments, applied only when the user confirms them.
     std::map<QString, fk::Sidecar> pendingAlignments_;
+    /// Profiles offered for interpreting graded files (FK-003), by SHA-256; the chosen one moves into the
+    /// project.
+    std::map<std::string, std::vector<uint8_t>> knownIcc_;
     JobRunner* jobs_;
     ScanListModel* scans_;
     ItemListModel* items_;

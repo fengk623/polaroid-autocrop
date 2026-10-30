@@ -2,6 +2,7 @@
 
 #include "util.hpp"
 
+#include "fk/color.hpp"
 #include "fk/export.hpp"
 #include "fk/hash.hpp"
 #include "fk/image_io.hpp"
@@ -14,6 +15,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QDirIterator>
+#include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
@@ -1281,7 +1283,8 @@ QVariantMap AppController::currentItem() const {
                              {"rotate", e.relinkTransform.rotate * 90},
                              {"rotateSource", toQ(e.relinkTransform.rotateSource)},
                              {"scaled", e.relinkTransform.scale},
-                             {"contentScore", e.relinkTransform.contentScore}};
+                             {"contentScore", e.relinkTransform.contentScore},
+                             {"iccSource", toQ(e.relinkTransform.iccSource)}};
         relinked = relinked || !e.relinkedPath.empty();
     }
     m["edits"] = edits;
@@ -1402,6 +1405,7 @@ void AppController::requestCompositePreview(const QString& itemId) {
     const std::string scanPath = s->path, editPath = ev->relinkedPath, id = it->itemId;
     const fk::ItemRecord itemCopy = *it;
     const fk::EditVersion evCopy = *ev;
+    const fk::IccStore iccStore = project_.iccProfiles;
     const fk::Result<fk::Sidecar> record = fk::exportRecordFor(project_, *ev);
     const QVariantMap check = relinkChecks_.count(id) ? relinkChecks_.at(id) : QVariantMap();
     const QVariantMap st = settings_;
@@ -1437,7 +1441,12 @@ void AppController::requestCompositePreview(const QString& itemId) {
             req.editSize = sc->exportSize;
             req.editExact = !sc->geometry.resampled;
             req.edited = &*edited;
-            req.editedIcc = ei.icc;
+            auto prof = fk::gradedProfile(ei, evCopy.relinkTransform, *sc, (*src)->info().icc, iccStore);
+            if (!prof) {
+                *err = errText(prof.error());
+                return;
+            }
+            req.editedIcc = *prof;
             if (!relinkAdjust(evCopy, *sc, *edited, ei, true, true, req.adjust, *err)) return;
             req.mask.mode = st.value("maskMode").toString() == QLatin1String("feather")
                                 ? fk::MaskMode::feather
@@ -1794,7 +1803,11 @@ const QStringList kChoiceKeys = {"itemId",
                                  "allowedRotations",
                                  "rotationScores",
                                  "gradedW",
-                                 "gradedH"};
+                                 "gradedH",
+                                 "iccChoices",
+                                 "iccChoice",
+                                 "iccSha256",
+                                 "iccInvalid"};
 
 /// Copies the chosen option into the row's top-level fields (what applyRelink and the dialog read).
 void selectOption(QVariantMap& row, int choice, bool accept) {
@@ -1834,10 +1847,27 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
     }
     auto rows = std::make_shared<QVariantList>();
     auto aligned = std::make_shared<std::map<QString, fk::Sidecar>>();
+    auto profiles = std::make_shared<std::map<std::string, std::vector<uint8_t>>>();
     const JobSnapshot snap = snapshotFor({}, {});
     jobs_->start(
         Lane::exportJob, tr("Checking %n graded file(s)", nullptr, static_cast<int>(files.size())),
-        [files, projCopy, target, preview, proxyScale, rows, aligned](JobContext& ctx) {
+        [files, projCopy, target, preview, proxyScale, rows, aligned, profiles](JobContext& ctx) {
+            std::map<std::string, std::vector<uint8_t>> scanIccCache; // scan path → its embedded profile
+            auto scanIccOf = [&](const std::string& scanId) -> const std::vector<uint8_t>& {
+                static const std::vector<uint8_t> none;
+                for (const auto& s : projCopy.scans)
+                    if (s.scanId == scanId) {
+                        auto f = scanIccCache.find(s.path);
+                        if (f == scanIccCache.end()) {
+                            auto src = fk::openTiff(fk::pathFromUtf8(s.path));
+                            f = scanIccCache
+                                    .emplace(s.path, src ? (*src)->info().icc : std::vector<uint8_t>{})
+                                    .first;
+                        }
+                        return f->second;
+                    }
+                return none;
+            };
             const fk::ScanRecord* tScan = nullptr;
             const fk::ItemRecord* tItem = nullptr;
             for (const auto& s : projCopy.scans)
@@ -1980,6 +2010,32 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
                         om["gradedW"] = static_cast<qlonglong>(img->width());
                         om["gradedH"] = static_cast<qlonglong>(img->height());
                         om["depthLower"] = chk.depthLower;
+                        // FK-003: no usable embedded profile → the user confirms how to read the colours
+                        om["iccInvalid"] = chk.iccInvalid;
+                        if (chk.iccMissing || chk.iccInvalid) {
+                            QVariantList choices;
+                            QString def, defSha;
+                            for (const auto& c :
+                                 fk::iccChoicesFor(rec, scanIccOf(o.scanId), projCopy.iccProfiles)) {
+                                const QString d = toQ(c.description);
+                                const QString label = c.id == "export"
+                                                          ? tr("Profile of the export: %1").arg(d)
+                                                      : c.id == "scan" ? tr("Profile of the scan: %1").arg(d)
+                                                                       : d;
+                                choices << QVariantMap{
+                                    {"id", toQ(c.id)}, {"label", label}, {"sha256", toQ(c.sha256)}};
+                                (*profiles)[c.sha256] = c.icc;
+                                // pre-selected only for a missing profile whose export profile is identified;
+                                // an unreadable one is never guessed
+                                if (c.id == "export" && chk.iccMissing && !chk.iccInvalid) {
+                                    def = toQ(c.id);
+                                    defSha = toQ(c.sha256);
+                                }
+                            }
+                            om["iccChoices"] = choices;
+                            om["iccChoice"] = def;
+                            om["iccSha256"] = defSha;
+                        }
                         const bool placeable = !actions.contains(QStringLiteral("manual_alignment"));
                         om["ok"] = placeable;
                         if (!placeable)
@@ -1994,7 +2050,8 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
                         // pre-accepted only when nothing needs confirming: same size, no turn, clear picture
                         om["acceptDefault"] = a.decision == fk::RelinkDecision::unique && placeable &&
                                               !o.newAlignment && chk.signaturePass && chk.sizeMatches &&
-                                              chk.rotationReliable && chk.suggestedRotate == 0;
+                                              chk.rotationReliable && chk.suggestedRotate == 0 &&
+                                              !chk.iccMissing && !chk.iccInvalid;
                         options << om;
                     }
                 }
@@ -2027,9 +2084,11 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
                 rows->push_back(row);
             }
         },
-        [this, rows, aligned, snap, update](const JobOutcome& o) -> JobDone {
+        [this, rows, aligned, profiles, snap, update](const JobOutcome& o) -> JobDone {
             if (o.cancelled) return JobApply::applied;
             if (!sameProject(snap)) return JobApply::outdated; // rows refer to the previous project's prints
+            for (auto& [sha, bytes] : *profiles)
+                knownIcc_[sha] = bytes;
             for (auto& [k, rec] : *aligned)
                 pendingAlignments_[k] = rec;
             if (update)
@@ -2074,8 +2133,23 @@ void AppController::dropFiles(const QVariantList& urls) {
     if (!graded.isEmpty()) relinkFiles(graded);
 }
 
+QVariantMap AppController::loadIccProfile(const QVariant& url) {
+    QFile f(localPath(url));
+    if (!f.open(QIODevice::ReadOnly)) return {{"ok", false}, {"error", tr("Cannot read the file.")}};
+    const QByteArray data = f.readAll();
+    const std::vector<uint8_t> bytes(data.begin(), data.end());
+    auto prof = fk::Profile::fromIcc(bytes);
+    if (!prof)
+        return {{"ok", false}, {"error", tr("Not a usable ICC profile: %1").arg(errText(prof.error()))}};
+    knownIcc_[prof->sha256()] = bytes;
+    return {{"ok", true},
+            {"id", QStringLiteral("file")},
+            {"label", tr("Profile file: %1").arg(toQ(prof->description()))},
+            {"sha256", toQ(prof->sha256())}};
+}
+
 void AppController::applyRelink(const QVariantList& rows) {
-    int n = 0, changed = 0, unoriented = 0;
+    int n = 0, changed = 0, unoriented = 0, noProfile = 0;
     for (const QVariant& v : rows) {
         const QVariantMap r = v.toMap();
         if (!r.value("accept").toBool() || !r.value("ok").toBool()) continue;
@@ -2085,6 +2159,13 @@ void AppController::applyRelink(const QVariantList& rows) {
         if (actions.contains(QStringLiteral("choose_rotation")) &&
             r.value("rotateSource").toString() != QLatin1String("user")) {
             ++unoriented; // the picture cannot tell the turn: the user must choose it (FK-002)
+            continue;
+        }
+        const bool needsIcc = actions.contains(QStringLiteral("choose_icc"));
+        const std::string iccSha = toStd(r.value("iccSha256").toString());
+        const auto iccBytes = knownIcc_.find(iccSha);
+        if (needsIcc && (iccSha.empty() || iccBytes == knownIcc_.end())) {
+            ++noProfile; // no usable profile: how to read the colours must be confirmed (FK-003)
             continue;
         }
         fk::EditVersion* ev = nullptr;
@@ -2123,6 +2204,13 @@ void AppController::applyRelink(const QVariantList& rows) {
         const QVariantList scores = r.value("rotationScores").toList();
         t.contentScore = scores.size() == 4 ? scores[t.rotate].toDouble() : r.value("score").toDouble();
         t.gradedSize = {r.value("gradedW").toLongLong(), r.value("gradedH").toLongLong()};
+        t.iccSource.clear();
+        t.iccSha256.clear();
+        if (needsIcc) {
+            t.iccSource = toStd(r.value("iccChoice").toString());
+            t.iccSha256 = iccSha;
+            project_.iccProfiles[iccSha] = iccBytes->second;
+        }
         relinkChecks_[it->itemId] = r;
         invalidateItem(it->itemId);
         ++n;
@@ -2132,6 +2220,9 @@ void AppController::applyRelink(const QVariantList& rows) {
                QStringLiteral("warning"));
     if (unoriented)
         notify(tr("%n file(s) not relinked: choose the orientation first.", nullptr, unoriented),
+               QStringLiteral("warning"));
+    if (noProfile)
+        notify(tr("%n file(s) not relinked: choose how to read their colours first.", nullptr, noProfile),
                QStringLiteral("warning"));
     if (n) {
         touch(false);
@@ -2202,11 +2293,12 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
     const bool allowScale = confirmations.value("scale").toBool();
     const bool allowDepth = confirmations.value("accept_lower_depth").toBool();
     const std::string dir = toStd(folder), projectId = project_.projectId;
+    const fk::IccStore iccStore = project_.iccProfiles;
     auto outcomes = std::make_shared<std::vector<ExportOutcome>>();
     const JobSnapshot snap = snapshotFor({}, {});
     jobs_->start(
         Lane::exportJob, tr("Final export of %n print(s)", nullptr, static_cast<int>(work.size())),
-        [work, st, allowScale, allowDepth, dir, projectId, outcomes](JobContext& ctx) {
+        [work, st, allowScale, allowDepth, dir, projectId, outcomes, iccStore](JobContext& ctx) {
             const bool synthetic = st.value("finalMode").toString() == QLatin1String("synthetic");
             for (size_t i = 0; i < work.size(); ++i) {
                 if (ctx.cancel.cancelled()) return;
@@ -2248,7 +2340,13 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                     req.editSize = sc->exportSize;
                     req.editExact = !sc->geometry.resampled;
                     req.edited = &*edited;
-                    req.editedIcc = ei.icc;
+                    auto prof =
+                        fk::gradedProfile(ei, w.ev.relinkTransform, *sc, (*src)->info().icc, iccStore);
+                    if (!prof) {
+                        fail(errText(prof.error()));
+                        continue;
+                    }
+                    req.editedIcc = *prof;
                     QString why;
                     if (!relinkAdjust(w.ev, *sc, *edited, ei, allowScale, allowDepth, req.adjust, why)) {
                         fail(why);
