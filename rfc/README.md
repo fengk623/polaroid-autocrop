@@ -37,3 +37,4 @@
 | RFC-0014 | Cache | Accepted |
 | RFC-0015 | Diagnostics and memory accounting | Accepted |
 | RFC-0016 | Synthetic test fixtures and detection metrics | Accepted |
+| RFC-0017 | Save semantics, recovery snapshots and backups (FK-001, FK-008) | Accepted |
