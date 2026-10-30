@@ -3,13 +3,17 @@
 Read this first after any interruption. Newest entry on top.
 
 ## Current state
-- Phase: 3 (Qt app) + 6 (packaging) done; PR #1 phase-2-core → main; then release.yml → draft release v0.1.0
-- Branch: `phase-2-core`
+- Version 0.5.0 (owner's decision 2026-10-30: the first public build is 0.5.0, not 0.1.0). Branch
+  `release/v0.5.0` → PR → main; then release.yml → draft v0.5.0 → published as a GitHub pre-release.
+- PR #1 (phase-2-core) merged into main as 379c87d on 2026-10-28; all CI and packaging checks green.
 - Last full test run: 2026-10-28, CI green on Linux / macOS arm64 / Windows x64 (core 136 tests incl. `eval_corpus`,
-  app self-test); locally the app self-test also passes on the owner's real scans (4-up 800 DPI, single 1200 DPI)
+  app self-test, packaged-app smoke tests); app self-test also passes on the owner's real scans.
 - Blockers: none. Host Qt 6.8.3 (Quick, Controls, offscreen) built at work/qt-host for UI tests.
 
 ## Log
+### 2026-10-30 — version 0.5.0
+- First public build renumbered 0.1.0 → 0.5.0 at the owner's request (VERSION, release notes, CHANGELOG, PRD §7).
+  The unpublished 0.1.0 draft release is superseded.
 ### 2026-10-28 — CI green, real-scan app run
 - Real 6213 × 7482 scan opened at 10 % and was cut off: the canvas fitted before the proxy existed. Fixed;
   self-test now checks that the whole scan is visible at fit.
