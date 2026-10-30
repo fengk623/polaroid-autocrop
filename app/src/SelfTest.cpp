@@ -242,10 +242,10 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
     const QString kiDir = QDir(dir_).filePath(QStringLiteral("known-issues"));
     QDir(kiDir).removeRecursively();
     QDir().mkpath(kiDir);
-    auto relinkRows = [&](const QString& file) {
+    auto relinkRows = [&](const QString& file, const QString& target = QString()) {
         QVariantList rows;
         auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
-        app_->relinkFiles({file});
+        app_->relinkFiles({file}, target);
         app_->waitIdle(300000);
         disconnect(c);
         QMetaObject::invokeMethod(window_, "closeDialogs");
@@ -277,22 +277,49 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
     }
     const QString f = edits.first();
 
-    // UX-07: a renamed graded file without our metadata cannot be relinked, and no target can be chosen
+    // UX-07 (U004, was a known issue): a renamed graded file without our metadata is offered by its picture
+    // but not pre-selected; choosing its print relinks it. An editor's "_1" copy is matched by name and
+    // picture.
+    const QVariantList rowsF = relinkRows(f);
+    const QVariantMap rf = rowsF.isEmpty() ? QVariantMap() : rowsF.first().toMap();
+    const QString itemId = rf.value("itemId").toString();
+    const QString label = rf.value("label").toString();
+    check(QStringLiteral("unchanged export decided by its file hash"),
+          rf.value("decision").toString() == QLatin1String("unique") &&
+              rf.value("source").toString().contains(QLatin1String("file_hash")) &&
+              rf.value("accept").toBool(),
+          rf.value("decision").toString() + QLatin1Char(' ') + rf.value("source").toString());
     {
+        auto brief = [](const QVariantMap& r) {
+            return QStringLiteral("%1 %2 accept=%3 %4")
+                .arg(r.value("decision").toString(), r.value("source").toString())
+                .arg(r.value("accept").toBool())
+                .arg(r.value("message").toString());
+        };
         const QString r2 = QDir(kiDir).filePath(QStringLiteral("graded_in_editor.tif"));
         const bool written = rewriteWithoutMetadata(f, r2, fk::FileFormat::tiff);
         const QVariantList rows = relinkRows(r2);
-        const bool noMatch = written && rows.size() == 1 && !rows.first().toMap().value("matched").toBool();
-        known(QStringLiteral("UX-07"), QStringLiteral("renamed graded file without XMP or sidecar: no match"),
-              noMatch,
-              rows.isEmpty() ? QStringLiteral("no rows") : rows.first().toMap().value("message").toString());
+        const QVariantMap a = rows.isEmpty() ? QVariantMap() : rows.first().toMap();
+        const QVariantList opts = a.value("options").toList();
+        check(QStringLiteral("renamed file without metadata: offered by its picture, not pre-selected"),
+              written && a.value("decision").toString() == QLatin1String("ambiguous") && !opts.isEmpty() &&
+                  opts.first().toMap().value("itemId").toString() == itemId && !a.value("accept").toBool(),
+              brief(a));
+        const QVariantList rowsT = relinkRows(r2, itemId);
+        const QVariantMap t = rowsT.isEmpty() ? QVariantMap() : rowsT.first().toMap();
+        check(QStringLiteral("renamed file relinks once its print is chosen"),
+              t.value("decision").toString() == QLatin1String("unique") && t.value("accept").toBool() &&
+                  t.value("itemId").toString() == itemId && !t.value("newAlignment").toBool(),
+              brief(t));
         const QString r4 = QDir(kiDir).filePath(QFileInfo(f).completeBaseName() + QStringLiteral("_1.tif"));
         rewriteWithoutMetadata(f, r4, fk::FileFormat::tiff);
         const QVariantList rows4 = relinkRows(r4);
-        known(QStringLiteral("UX-07"), QStringLiteral("editor suffix _1 without XMP: no match"),
-              rows4.size() == 1 && !rows4.first().toMap().value("matched").toBool(),
-              rows4.isEmpty() ? QStringLiteral("no rows")
-                              : rows4.first().toMap().value("message").toString());
+        const QVariantMap c4 = rows4.isEmpty() ? QVariantMap() : rows4.first().toMap();
+        check(QStringLiteral("editor suffix _1 matched by name and picture"),
+              c4.value("decision").toString() == QLatin1String("unique") && c4.value("accept").toBool() &&
+                  c4.value("itemId").toString() == itemId &&
+                  c4.value("source").toString().contains(QLatin1String("file_name")),
+              brief(c4));
     }
 
     // FK-010: reducing 16-bit to 8-bit on export is still announced as bit-identical
@@ -353,17 +380,60 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
               QStringLiteral("180° same-size graded file composited without rotation"), reproduced, why);
     }
 
-    // UX-07: after a restart without saving, an unchanged export is matched by name but its geometry is lost
+    // UX-07 (U004, was a known issue): after a restart without saving, the export has no record in the new
+    // project; choosing its print offers a new alignment, which relinks and composites.
     {
         const QString scan = scan_;
         app_->newProject();
         app_->importScans({scan});
         app_->waitIdle(300000);
         const QVariantList rows = relinkRows(f);
-        const bool lost = rows.size() == 1 && rows.first().toMap().value("ok").toBool() == false;
-        known(QStringLiteral("UX-07"), QStringLiteral("new session: unchanged export cannot be relinked"),
-              lost,
-              rows.isEmpty() ? QStringLiteral("no rows") : rows.first().toMap().value("message").toString());
+        const QVariantMap n = rows.isEmpty() ? QVariantMap() : rows.first().toMap();
+        check(QStringLiteral("new session: no export record, the user chooses the print"),
+              n.value("decision").toString() == QLatin1String("none") && !n.value("accept").toBool(),
+              n.value("decision").toString() + QLatin1Char(' ') + n.value("message").toString());
+        QString target;
+        for (const auto& t : app_->relinkTargets())
+            if (t.toMap().value("label").toString() == label) target = t.toMap().value("id").toString();
+        const QVariantList rowsT = relinkRows(f, target);
+        QVariantMap row = rowsT.isEmpty() ? QVariantMap() : rowsT.first().toMap();
+        const bool offered = row.value("decision").toString() == QLatin1String("unique") &&
+                             row.value("newAlignment").toBool() && row.value("ok").toBool() &&
+                             !row.value("accept").toBool(); // a new alignment is never pre-accepted
+        QStringList ev;
+        for (const auto& o : row.value("options").toList())
+            for (const auto& e : o.toMap().value("evidence").toList())
+                ev << e.toMap().value("text").toString();
+        check(QStringLiteral("new session: new alignment offered for the chosen print"), offered,
+              QStringLiteral("target %1: %2 %3 ok=%4 %5 [%6]")
+                  .arg(target, row.value("decision").toString(), row.value("source").toString())
+                  .arg(row.value("ok").toBool())
+                  .arg(row.value("message").toString(), ev.join(QStringLiteral("; "))));
+        row["accept"] = true;
+        app_->applyRelink({row});
+        check(QStringLiteral("new session: new alignment relinked"),
+              app_->counts().value("relinked").toInt() == 1 && app_->exportRecordCount() == 1,
+              QStringLiteral("relinked %1, records %2")
+                  .arg(app_->counts().value("relinked").toInt())
+                  .arg(app_->exportRecordCount()));
+        const QStringList before = filesMatching(exportDir, QStringLiteral("*_FINAL_v*.tif"));
+        app_->setSetting(QStringLiteral("finalMode"), QStringLiteral("real"));
+        app_->exportFinal({target}, {{"scale", true}, {"rotate", true}});
+        app_->waitIdle(300000);
+        QStringList after = filesMatching(exportDir, QStringLiteral("*_FINAL_v*.tif"));
+        for (const auto& b : before)
+            after.removeAll(b);
+        check(QStringLiteral("new session: composite from the new alignment"), after.size() == 1,
+              QString::number(after.size()));
+        // the unchanged export placed by a new alignment of the same shape composites bit for bit
+        const QString stem = QFileInfo(f).completeBaseName().section(QStringLiteral("_EDIT_"), 0, 0);
+        const QStringList fulls = filesMatching(exportDir, stem + QStringLiteral("_FULL_v001.tif"));
+        QString why;
+        const bool exact =
+            after.size() == 1 && fulls.size() == 1 && samePixels(after.first(), fulls.first(), why);
+        check(QStringLiteral("new session: unchanged export through a new alignment is bit-exact"),
+              exact || row.value("alignmentMode").toString() != QLatin1String("pixel_crop"),
+              row.value("alignmentMode").toString() + QLatin1Char(' ') + why);
     }
 }
 
@@ -471,6 +541,8 @@ int SelfTest::scenarioRelink() {
         for (const auto& r : rows) {
             QVariantMap m = r.toMap();
             out.append(QJsonObject{{"fileName", m.value("fileName").toString()},
+                                   {"decision", m.value("decision").toString()},
+                                   {"options", static_cast<int>(m.value("options").toList().size())},
                                    {"matched", m.value("matched").toBool()},
                                    {"source", m.value("source").toString()},
                                    {"ok", m.value("ok").toBool()},
@@ -625,10 +697,12 @@ int SelfTest::run() {
     disconnect(c);
     int matched = 0;
     for (const auto& r : rows)
-        if (r.toMap().value("matched").toBool() &&
-            r.toMap().value("source").toString() == QLatin1String("xmp"))
+        if (r.toMap().value("decision").toString() == QLatin1String("unique") &&
+            r.toMap().value("source").toString().contains(QLatin1String("file_hash")) &&
+            r.toMap().value("source").toString().contains(QLatin1String("embedded_ids")) &&
+            r.toMap().value("accept").toBool())
             ++matched;
-    check(QStringLiteral("relink by XMP"), matched == edits.size(),
+    check(QStringLiteral("relink unchanged exports (file hash, embedded IDs)"), matched == edits.size(),
           QStringLiteral("%1/%2").arg(matched).arg(edits.size()));
     app_->applyRelink(rows);
     QMetaObject::invokeMethod(window_, "closeDialogs");

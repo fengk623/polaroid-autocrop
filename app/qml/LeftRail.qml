@@ -260,7 +260,7 @@ Rectangle {
                     title: qsTr("Batch")
                     note: qsTr("%1 prints · %2 excluded · %3 to review").arg(App.counts.prints).arg(App.counts.excluded).arg(App.counts.needReview)
                     FkButton { text: qsTr("Export all image areas…"); iconName: "export"; enabled: App.counts.prints > 0; onClicked: cmd.exportImageAreas([]) }
-                    FkButton { text: qsTr("Relink graded files…"); iconName: "relink"; enabled: App.counts.exported > 0; onClicked: cmd.relink() }
+                    FkButton { text: qsTr("Relink graded files…"); iconName: "relink"; enabled: App.counts.prints > 0; onClicked: cmd.relink() }
                     FkButton { text: qsTr("Export all finals…"); iconName: "frame"; enabled: App.counts.relinked > 0; onClicked: cmd.exportFinal([]) }
                     Text {
                         Layout.fillWidth: true

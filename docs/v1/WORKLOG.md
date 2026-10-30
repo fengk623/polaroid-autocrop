@@ -153,3 +153,36 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
 - Tests: core `ExportRecords.*` ×4 pass; full core suite 144/144 (incl. 3 known-issue WILL_FAIL); app self-test 33
   checks pass incl. 4 new U003 checks; 7 known issues still reproduced (UX-07 "new session" message changed to the
   missing-record text — still reproduced, unsaved project).
+
+### 15:45–16:20 — releases, PR #4/#5, process change, U004
+- v0.6.0-alpha.1: release run 41122756426 re-run succeeded; tag `v0.6.0-alpha.1` → `3c009f8`, pre-release with DMG,
+  Setup.exe, portable zip, SHA256SUMS, BUILDINFO ×2; publish job verified the SHA-256 sums. v0.5.0 draft was published
+  as a pre-release by the owner (tag → `ce93e05`).
+- PR #4 (U002) all checks green incl. test packages on head `484555e`. Merging it through the API was refused by this
+  session's permission check (PR #2/#3 had worked); not retried by other means (authorisation forbids bypassing access
+  limits) — asked the owner, who merged it → `7413e55`.
+- Release run 41128749850 (v0.6.0-alpha.2) dispatched, then **cancelled before publishing** after the owner's change
+  at 16:13: *no release per Unit; keep the other steps; package and release once all tasks are done.* No tag or
+  release was created for alpha.2. PLAN §4, UNITS, TRACEABILITY and the unit notes updated accordingly; VERSION keeps
+  increasing per Unit for traceable PR test packages.
+- U003 rebased onto `7413e55` (→ `cd2b1a3`), pushed, PR #5 opened; checks green so far (docs, core ×3, app ×3).
+- U004 (branch `unit/U004-relink-evidence`), UX-07 main part — relink v2 (RFC-0006 §Relink v2, rewritten to match):
+  - Core (`core/src/relink_assess.cpp`): `describeGradedFile`; `assessRelink` scores per print × export version
+    (hash +10, IDs ±3 (+1 version), name ±1 (+0.5 version), content +2…+4 / −2 below 0.50), marks conflicts, decides
+    unique / ambiguous / none (unique needs hash, IDs/name + content, or target + content; no uncontradicted
+    competitor); target restricts to that print and adds a new-alignment option when none of its exports matches;
+    `alignmentGeometry` (exact size → closer aspect → picture), `signatureOfExport` (box-filtered sampling of the
+    preview through the export geometry incl. upright), `alignmentRecord` (`origin: "manual_alignment"`, next version,
+    no export date). Sidecar JSON writes `origin` only for manual alignments. Editor suffix `_n` stripped.
+  - Design refinements, recorded in RFC/UNITS: aspect tolerance for a new alignment 0.5 % (the compositing scale
+    tolerance) instead of the draft's ±2 % — anything wider could only be placed by stretching; shape chosen by exact
+    size, then aspect, then picture (a first version always used the straightened shape and scored 74–75 % against a
+    pixel-crop export of a tilted print [failed] — found by the self-test, fixed).
+  - App: `relinkFiles(urls, target, update)`, `relinkTargets`, `dropFiles` (graded TIFFs by our IDs/export name go
+    to relink, other TIFFs import), `applyRelink` (new alignment adds the record + edit version; skipped if the print
+    changed since the check); dialog with candidates, evidence ✓/✗, "Assign to …" re-check; Return tab "Relink to
+    this print…"; relink commands enabled whenever prints exist. 31 zh strings.
+  - Tests: core `RelinkV2.*` ×12 pass; full core suite 157/157. App self-test (Linux, fkfixture scan): all pass; the 3
+    UX-07 known issues became regular checks (9 checks) incl. "new session: unchanged export through a new alignment
+    is bit-exact"; remaining known issues UX-01, FK-010, FK-002 (+FK-011 scenario) still reproduced. Relink scenario:
+    R1 unique (hash), R2 ambiguous with 1 candidate, R3/R4 unique (name + picture), R6/R6b none (choose the print).

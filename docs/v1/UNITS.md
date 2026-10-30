@@ -1,17 +1,18 @@
 # Unit 清单（持续维护）
 
 规则见 [PLAN.md §4](PLAN.md)。同一需求拆成多个 Unit 时，所有必要 Unit 验收完成才关闭原需求（见 [TRACEABILITY.md](TRACEABILITY.md)）。
-状态：未开始 · 进行中 · 待合并 · 已发布 · 已发布（有限制）· 阻塞。每个 Unit 的“实际结果”在 WORKLOG 与 Release 说明中逐条记录。
+状态：未开始 · 进行中 · 待合并 · 已合并 · 已发布 · 已发布（有限制）· 阻塞。
+**2026-10-30 所有者调整：不再逐 Unit 发布**，Unit 合并后即完成；全部任务完成后统一打包发布（PLAN §4）。每个 Unit 的“实际结果”在 WORKLOG 与 Release 说明中逐条记录。
 
 ## 总览
 
 | Unit | 版本 | 名称 | 主要工单 | 关联 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| — | v0.5.0 | 冻结基线（PR #2） | — | — | 进行中 |
-| U001 | v0.6.0-alpha.1 | 基线登记、可追溯构建、复现与已知问题测试 | UX-12 | FK-013, FK-014, 全部 | 进行中 |
-| U002 | v0.6.0-alpha.2 | 最小任务安全框架 | FK-006 | UX-07, UX-09, FK-005 | 进行中 |
-| U003 | v0.6.0-alpha.3 | 导出记录内置、侧车可选（同一 schema 内向后兼容） | UX-07 | FK-002, FK-003, FK-007, FK-008 | 进行中 |
-| U004 | v0.6.0-alpha.4 | 目标优先回导与证据模型 | UX-07 | FK-007 | 未开始 |
+| — | v0.5.0 | 冻结基线（PR #2） | — | — | 已发布（Pre-release，所有者发布） |
+| U001 | v0.6.0-alpha.1 | 基线登记、可追溯构建、复现与已知问题测试 | UX-12 | FK-013, FK-014, 全部 | 已发布 |
+| U002 | v0.6.0-alpha.2 | 最小任务安全框架 | FK-006 | UX-07, UX-09, FK-005 | 已合并（不单独发布） |
+| U003 | v0.6.0-alpha.3 | 导出记录内置、侧车可选（同一 schema 内向后兼容） | UX-07 | FK-002, FK-003, FK-007, FK-008 | 待合并（PR #5） |
+| U004 | v0.6.0-alpha.4 | 目标优先回导与证据模型 | UX-07 | FK-007 | 进行中 |
 | U005 | v0.6.0-alpha.5 | 回导变换：旋转/缩放/裁切分离并持久化 | FK-002 | UX-07 | 未开始 |
 | U006 | v0.6.0-alpha.6 | 缺失 ICC 的明确解释与持久化 | FK-003 | UX-07 | 未开始 |
 | U007 | v0.6.0-alpha.7 | 扫描件与调色图的身份校验 | FK-007 | UX-07 | 未开始 |
@@ -48,7 +49,7 @@
 - 不包含：任何缺陷修复；保存机制、图库、回导匹配、默认输出行为的实现。
 - 依赖：v0.5.0 基线（PR #2，含 macos-15 CI 修复）。
 - 验收：CI 全绿（已知问题检查均“reproduced”）；PR 测试包的应用报告版本 = `0.6.0-alpha.1`、提交 = PR head SHA；`--version` 与关于对话框显示提交与构建号；发布后 Tag 指向合并提交、发布文件通过 SHA256SUMS 校验；文档中的复现结论与 WORKLOG 一致。
-- 分支 `unit/U001-foundation` · PR 待建 · Tag/Release 待建。
+- 分支 `unit/U001-foundation` · PR #3（合并提交 `3c009f881254fd3494861e63f2a1a636640245fe`）· Tag `v0.6.0-alpha.1` · [Release](https://github.com/fengk623/polaroid-autocrop/releases/tag/v0.6.0-alpha.1)（发布运行 41122756426，macOS 打包首次因 hdiutil “Resource busy” 失败后重跑成功）。
 
 ### U002 最小任务安全框架
 - 工单：FK-006（第一部分）；关联 UX-07、UX-09、FK-005。
@@ -56,7 +57,7 @@
 - 不包含：字节预算与缓存淘汰（U017）。
 - 验收：慢任务期间改边界、重新回导、删除扫描件、切换/新建工程，旧结果不覆盖新状态（自检场景 + 单元测试）；失败任务显示失败；取消不留临时输出。
 - 实现：RFC-0010 §Task safety；app/src/Jobs.*（状态、失败、过期、测试延迟钩子）、AppController（JobSnapshot 代次、invalidateItem、九处完成回调）、LeftRail 任务列表。自检 TS1–TS4；变异测试证明 TS1/TS2 能发现修复前的问题。
-- 分支 `unit/U002-task-safety` · PR #4 · Tag/Release 待建。
+- 分支 `unit/U002-task-safety` · PR #4（所有者合并，合并提交 `7413e55c81cefe184c3e9dd14a05ca8c8401c08c`）· 发布运行 41128749850 已取消（所有者调整：不逐 Unit 发布）；不建 Tag/Release。
 
 ### U003 导出记录内置、侧车可选
 - 工单：UX-07（第一部分）；关联 FK-002、FK-003、FK-007、FK-008。
@@ -65,12 +66,16 @@
 - 不包含：回导匹配逻辑（U004）；未保存工程退出后的记录恢复（U008）。
 - 验收：导出后无侧车也能从工程取回完整导出记录；保存重开后按 XMP/文件名回导成功；可选侧车仍能写出；旧工程侧车被导入；无法解析的记录原样保留。
 - 实现与测试：core/src/project.cpp（exportRecords、findExportRecord、exportRecordFor、importSidecarRecords）；app 导出/合成/最终输出改用记录；设置项；`ExportRecords.*` ×4；自检 4 项。
-- 分支 `unit/U003-export-records` · PR 待建 · Tag/Release 待建。
+- 分支 `unit/U003-export-records`（已变基到 main `7413e55`，提交 `cd2b1a3`）· PR #5 · 不单独发布。
 
 ### U004 目标优先回导与证据模型
 - 工单：UX-07（主体）；关联 FK-007。
 - 范围：选中目标相纸 → 选任意文件 → 确定导出版本（多个版本时由证据或用户选择）→ 兼容性验证（尺寸、方向、色彩、内容）→ 预览确认 → 关联。批量回导：嵌入 ID、内部导出记录、文件名、内容签名作为证据评分；歧义必选、冲突必示，绝不自动错配。无本项目导出历史的编辑图可明确建立新对齐关系，不伪造历史。只替换确认的 Inner 内容。RFC-0006 修订。
 - 验收：同名、改名、移文件夹、XMP 保留/丢失、无侧车、一次多文件、多个导出版本、保存重开、重启后（工程已保存）均按规则完成；无歧义样本成功率 100%；歧义不自动错配；未修改 TIFF 往返在规定条件下逐像素一致，修改后 Inner 外像素不变（同色彩空间、位深、可比较几何）。
+- 实现：RFC-0006 §Relink v2。核心 core/src/relink_assess.cpp（`describeGradedFile`、`assessRelink` 证据评分与 unique/ambiguous/none 判定、`alignmentGeometry` 新建对位形状、`signatureOfExport` 按导出几何从预览取样、`alignmentRecord`；记录 `origin: "manual_alignment"`）；编辑软件后缀增加 `_n`。应用：`relinkFiles(urls, target, update)`、`relinkTargets`、`dropFiles`（拖入分流）、`applyRelink` 新建对位；回导对话框（候选、证据 ✓/✗、指定为…重新检查）；右栏“回导到这张相片…”；回导入口在有相片时即可用。
+- 设计细化：新建对位的宽高比容差由 RFC 初稿的 ±2% 改为 0.5%（与合成缩放容差一致，否则只能拉伸）；形状按“尺寸完全一致 → 宽高比更接近 → 画面”选择裁切或拉正。
+- 测试：核心 `RelinkV2.*` ×12；自检 9 项（替换 3 个 UX-07 已知问题）；含“新会话中经新建对位合成，与整张相片导出逐像素一致”。
+- 分支 `unit/U004-relink-evidence`（基于 U003）· PR 待建 · 不单独发布。
 
 ### U005 回导变换：旋转/缩放/裁切分离并持久化
 - 工单：FK-002；关联 UX-07。

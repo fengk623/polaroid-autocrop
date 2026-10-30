@@ -40,6 +40,10 @@ Compatibility: `exportRecords` is a new **top-level** key in the same schema `fk
 0.6.0-alpha.3 preserve unknown top-level keys verbatim, so they open, edit and save such projects without losing the
 records (they just do not use them). Opening an older project imports the readable sidecar files of its exports
 into `exportRecords` (saved with the next save), so those exports keep relinking after their sidecars are gone.
+Manual alignments (since 0.6.0-alpha.4, RFC-0006 §New alignment): a record with `"origin": "manual_alignment"`
+places a graded file on a print that has no export in this project. It has no `exportedAt`; `file` is the graded
+file; its geometry is the print's current Inner (pixel crop or straightened); `version` is the print's next version
+and a matching `edits[]` entry has an empty `path`. `origin` is absent on export records (absent = export).
 Save: write `name.fkproj.tmp-<rand>` → flush+fsync → rename over `name.fkproj`; previous file copied to
 `name.fkproj.bak` first. Load failure → offer `.bak`.
 
@@ -69,7 +73,8 @@ stored in the project's `exportRecords`.
  "icc": {"description": "…", "sha256": "hex"}, "dpi": [1600, 1600],
  "file": {"name": "…_P01_EDIT_v001.tif", "sha256": "hex"},
  "signature": "base64 of 4096 float32",
- "software": "FrameKeeper 0.5.0", "exportedAt": "ISO-8601"}
+ "software": "FrameKeeper 0.5.0", "exportedAt": "ISO-8601",
+ "origin": "manual_alignment (project records only; absent for exports)"}
 ```
 
 ## 5. XMP written into exports

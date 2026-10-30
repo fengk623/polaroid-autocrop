@@ -1714,89 +1714,323 @@ void AppController::exportFullPrints(const QStringList& itemIds) {
 
 // ---- relink -------------------------------------------------------------------------------------------
 
-void AppController::relinkFiles(const QVariantList& urls) {
+namespace {
+
+/// "file_hash+embedded_ids+content": the supporting evidence of an option (stored as EditVersion::matchedBy).
+QString supportSummary(const fk::RelinkOption& o) {
+    QStringList k;
+    for (const auto& e : o.evidence)
+        if (e.supports) k << QString::fromLatin1(fk::evidenceKindName(e.kind));
+    if (o.newAlignment) k << QStringLiteral("manual_alignment");
+    k.removeDuplicates();
+    return k.join(QLatin1Char('+'));
+}
+
+fk::Result<fk::ImageBuffer> bufferOf(const QImage& image) {
+    const QImage im = image.convertToFormat(QImage::Format_RGB888);
+    auto buf = fk::ImageBuffer::create(im.width(), im.height(), 3, 8);
+    if (!buf) return buf.error();
+    for (int y = 0; y < im.height(); ++y)
+        std::memcpy(buf->row(y), im.constScanLine(y), static_cast<size_t>(im.width()) * 3);
+    return buf;
+}
+
+const QStringList kChoiceKeys = {"itemId",       "editVersionId", "label",      "scanName",
+                                 "source",       "actions",       "score",      "signaturePass",
+                                 "sizeMatches",  "rotate",        "depthLower", "ok",
+                                 "newAlignment", "alignmentKey",  "conflict",   "alignmentMode"};
+
+/// Copies the chosen option into the row's top-level fields (what applyRelink and the dialog read).
+void selectOption(QVariantMap& row, int choice, bool accept) {
+    const QVariantList opts = row.value("options").toList();
+    row["choice"] = choice;
+    row["matched"] = !opts.isEmpty();
+    if (choice < 0 || choice >= opts.size()) {
+        for (const auto& k : kChoiceKeys)
+            row.remove(k);
+        row["ok"] = false;
+        row["accept"] = false;
+        return;
+    }
+    const QVariantMap o = opts[choice].toMap();
+    for (const auto& k : kChoiceKeys)
+        row[k] = o.value(k);
+    row["accept"] = accept && o.value("ok").toBool();
+}
+
+} // namespace
+
+void AppController::relinkFiles(const QVariantList& urls, const QString& targetItemId, bool update) {
     std::vector<std::string> files;
     for (const auto& u : urls)
         files.push_back(toStd(localPath(u)));
     if (files.empty()) return;
     const fk::Project projCopy = project_;
+    const std::string target = toStd(targetItemId);
+    // the target's current image area, sampled from the scan preview (content check of a new alignment)
+    QImage preview;
+    int proxyScale = 1;
+    if (const fk::ScanRecord* s = target.empty() ? nullptr : scanOf(target)) {
+        if (auto r = rt_.find(s->scanId); r != rt_.end()) {
+            preview = r->second.display;
+            proxyScale = r->second.proxyScale;
+        }
+    }
     auto rows = std::make_shared<QVariantList>();
+    auto aligned = std::make_shared<std::map<QString, fk::Sidecar>>();
     const JobSnapshot snap = snapshotFor({}, {});
     jobs_->start(
         Lane::exportJob, tr("Checking %n graded file(s)", nullptr, static_cast<int>(files.size())),
-        [files, projCopy, rows](JobContext& ctx) {
+        [files, projCopy, target, preview, proxyScale, rows, aligned](JobContext& ctx) {
+            const fk::ScanRecord* tScan = nullptr;
+            const fk::ItemRecord* tItem = nullptr;
+            for (const auto& s : projCopy.scans)
+                for (const auto& it : s.items)
+                    if (it.itemId == target) {
+                        tScan = &s;
+                        tItem = &it;
+                    }
+            std::optional<fk::ImageBuffer> previewBuf;
+            if (tItem && !preview.isNull())
+                if (auto buf = bufferOf(preview)) previewBuf = std::move(buf.value());
+            auto where = [&](const std::string& itemId) {
+                QVariantMap m;
+                for (const auto& s : projCopy.scans)
+                    for (const auto& it : s.items)
+                        if (it.itemId == itemId) {
+                            m["label"] = toQ(it.label);
+                            m["scanName"] = fromPath(fk::pathFromUtf8(s.path).filename());
+                        }
+                return m;
+            };
             for (size_t i = 0; i < files.size(); ++i) {
                 if (ctx.cancel.cancelled()) return;
                 ctx.progress(static_cast<double>(i) / files.size(), QString());
                 const auto path = fk::pathFromUtf8(files[i]);
-                QVariantMap row{{"file", toQ(files[i])}, {"fileName", fromPath(path.filename())}};
-                const fk::RelinkCandidate c = fk::findMatch(path, projCopy);
-                if (c.source == fk::MatchSource::none) {
-                    row["matched"] = false;
-                    row["message"] = tr("No matching print (no FrameKeeper metadata, sidecar or file name).");
-                    rows->push_back(row);
-                    continue;
-                }
-                row["matched"] = true;
-                row["itemId"] = toQ(c.itemId);
-                row["editVersionId"] = toQ(c.editVersionId);
-                row["source"] = QString::fromLatin1(fk::matchSourceName(c.source));
-                for (const auto& s : projCopy.scans)
-                    for (const auto& it : s.items)
-                        if (it.itemId == c.itemId) {
-                            row["label"] = toQ(it.label);
-                            row["scanName"] = fromPath(fk::pathFromUtf8(s.path).filename());
-                        }
-                if (!c.sidecar) {
-                    row["ok"] = false;
-                    row["message"] =
-                        tr("This print has no export record for the file in the project (exported "
-                           "by another project, or the project was not saved).");
-                    rows->push_back(row);
-                    continue;
-                }
+                QVariantMap row{{"file", toQ(files[i])},
+                                {"fileName", fromPath(path.filename())},
+                                {"target", toQ(target)},
+                                {"options", QVariantList()}};
                 fk::ImageInfo info;
                 auto img = fk::readImageFile(path, &info);
                 if (!img) {
-                    row["ok"] = false;
+                    row["decision"] = QStringLiteral("none");
+                    selectOption(row, -1, false);
                     row["message"] = errText(img.error());
                     rows->push_back(row);
                     continue;
                 }
-                const fk::RelinkCheck chk = fk::checkEdited(*c.sidecar, *img, info);
-                QStringList actions;
-                for (const auto& a : chk.actionsNeeded)
-                    actions << toQ(a);
-                row["actions"] = actions;
-                row["score"] = chk.signatureScore;
-                row["signaturePass"] = chk.signaturePass;
-                row["sizeMatches"] = chk.sizeMatches;
-                row["rotate"] = chk.suggestedRotate * 90;
-                row["depthLower"] = chk.depthLower;
-                row["ok"] = !actions.contains(QStringLiteral("manual_alignment"));
-                row["accept"] = chk.signaturePass && chk.sizeMatches;
-                if (auto sha = fk::sha256File(path)) row["sha256"] = toQ(*sha);
+                const fk::RelinkInput in = fk::describeGradedFile(path, *img);
+                row["sha256"] = toQ(in.sha256);
+                // a new alignment places the file on the print's current image area, shaped like the file
+                fk::ExportGeometry ag;
+                fk::Signature area;
+                if (tItem) {
+                    ag = previewBuf ? fk::alignmentGeometry(*tScan, *tItem, in.size, *previewBuf, proxyScale,
+                                                            in.signature)
+                                    : fk::alignmentGeometry(*tScan, *tItem, in.size);
+                    if (previewBuf) area = fk::signatureOfExport(*previewBuf, ag, proxyScale);
+                }
+                const fk::RelinkAssessment a =
+                    fk::assessRelink(in, projCopy, target, area.valid ? &area : nullptr);
+                const QString decision = QString::fromLatin1(fk::relinkDecisionName(a.decision));
+                row["decision"] = decision;
+                QVariantList options;
+                if (a.decision != fk::RelinkDecision::none) {
+                    for (const fk::RelinkOption& o : a.options) {
+                        // list what some evidence speaks for (other prints stay reachable via "Assign to …")
+                        const bool supported =
+                            o.hashMatch || o.contentPass || o.newAlignment || !target.empty() ||
+                            std::any_of(o.evidence.begin(), o.evidence.end(), [](const fk::Evidence& e) {
+                                return e.supports && (e.kind == fk::EvidenceKind::embedded_ids ||
+                                                      e.kind == fk::EvidenceKind::file_name);
+                            });
+                        if (!supported) continue;
+                        QVariantMap om = where(o.itemId);
+                        om["itemId"] = toQ(o.itemId);
+                        om["newAlignment"] = o.newAlignment;
+                        om["conflict"] = o.conflict;
+                        om["contentScore"] = o.contentScore;
+                        om["contentPass"] = o.contentPass;
+                        om["source"] = supportSummary(o);
+                        QVariantList ev;
+                        for (const auto& e : o.evidence) {
+                            QString text;
+                            switch (e.kind) {
+                            case fk::EvidenceKind::file_hash:
+                                text = tr("identical to the exported file");
+                                break;
+                            case fk::EvidenceKind::embedded_ids:
+                                text = e.supports ? tr("embedded IDs name this print")
+                                                  : tr("embedded IDs name another print");
+                                break;
+                            case fk::EvidenceKind::file_name:
+                                text = e.supports ? tr("file name names this print")
+                                                  : tr("file name names another print");
+                                break;
+                            case fk::EvidenceKind::content:
+                                text =
+                                    (o.contentPass ? tr("picture matches (%1 %)")
+                                     : e.supports ? tr("picture is similar, below the match threshold (%1 %)")
+                                                  : tr("picture differs (%1 %)"))
+                                        .arg(qRound(o.contentScore * 100));
+                                break;
+                            case fk::EvidenceKind::user_target:
+                                text = tr("chosen by you");
+                                break;
+                            }
+                            ev << QVariantMap{{"kind", QString::fromLatin1(fk::evidenceKindName(e.kind))},
+                                              {"supports", e.supports},
+                                              {"text", text}};
+                        }
+                        om["evidence"] = ev;
+                        fk::Sidecar rec;
+                        if (o.newAlignment) {
+                            if (!tItem || o.itemId != tItem->itemId) continue;
+                            rec = fk::alignmentRecord(projCopy, *tScan, *tItem, ag, area,
+                                                      fk::pathToUtf8(path.filename()), in.sha256);
+                            const QString key = toQ(files[i]) + QLatin1Char('|') + toQ(o.itemId);
+                            (*aligned)[key] = rec;
+                            om["alignmentKey"] = key;
+                        } else if (const fk::Sidecar* r = fk::findExportRecord(projCopy, o.editVersionId)) {
+                            rec = *r;
+                        } else {
+                            continue;
+                        }
+                        om["alignmentMode"] = QString::fromLatin1(fk::geometryModeName(rec.geometry.mode));
+                        om["editVersionId"] = toQ(rec.editVersionId);
+                        om["version"] = rec.version;
+                        const fk::RelinkCheck chk = fk::checkEdited(rec, *img, info);
+                        QStringList actions;
+                        for (const auto& x : chk.actionsNeeded)
+                            actions << toQ(x);
+                        om["actions"] = actions;
+                        om["score"] = chk.signatureScore;
+                        om["signaturePass"] = chk.signaturePass;
+                        om["sizeMatches"] = chk.sizeMatches;
+                        om["rotate"] = chk.suggestedRotate * 90;
+                        om["depthLower"] = chk.depthLower;
+                        const bool placeable = !actions.contains(QStringLiteral("manual_alignment"));
+                        om["ok"] = placeable;
+                        if (!placeable)
+                            om["message"] =
+                                o.newAlignment
+                                    ? tr("The graded file's aspect ratio differs from this print's image "
+                                         "area. "
+                                         "Crop or resize it to the image area first; it is never stretched.")
+                                    : tr("The graded file's aspect ratio differs from the export; it cannot "
+                                         "be "
+                                         "placed without stretching.");
+                        om["acceptDefault"] = a.decision == fk::RelinkDecision::unique && placeable &&
+                                              !o.newAlignment && chk.signaturePass && chk.sizeMatches;
+                        options << om;
+                    }
+                }
+                row["options"] = options;
+                const bool unique = a.decision == fk::RelinkDecision::unique && !options.isEmpty();
+                selectOption(row, unique ? 0 : -1,
+                             unique && options.first().toMap().value("acceptDefault").toBool());
+                if (options.isEmpty())
+                    row["message"] = target.empty()
+                                         ? tr("No matching print. Choose the print this file belongs to.")
+                                         : tr("This print cannot take the file.");
+                else if (!unique)
+                    row["message"] =
+                        std::any_of(options.begin(), options.end(),
+                                    [](const QVariant& v) { return v.toMap().value("conflict").toBool(); })
+                            ? tr("The evidence disagrees. Check which print this file belongs to.")
+                        : options.size() > 1
+                            ? tr("Several prints or exports fit. Choose one.")
+                            : tr("Only the picture matches. Confirm the print or choose another.");
+                else if (!row.value("ok").toBool())
+                    row["message"] = options.first().toMap().value("message");
+                else if (row.value("newAlignment").toBool())
+                    row["message"] = row.value("alignmentMode").toString() == QLatin1String("pixel_crop")
+                                         ? tr("New alignment: this print has no export in this project. The "
+                                              "graded image is "
+                                              "placed on its current image area as an unrotated crop.")
+                                         : tr("New alignment: this print has no export in this project. The "
+                                              "graded image is "
+                                              "placed on its current image area, straightened.");
                 rows->push_back(row);
             }
         },
-        [this, rows, snap](const JobOutcome& o) -> JobDone {
+        [this, rows, aligned, snap, update](const JobOutcome& o) -> JobDone {
             if (o.cancelled) return JobApply::applied;
             if (!sameProject(snap)) return JobApply::outdated; // rows refer to the previous project's prints
-            Q_EMIT relinkResults(*rows);
+            for (auto& [k, rec] : *aligned)
+                pendingAlignments_[k] = rec;
+            if (update)
+                for (const auto& r : *rows)
+                    Q_EMIT relinkRowUpdated(r.toMap());
+            else
+                Q_EMIT relinkResults(*rows);
             return JobApply::applied;
         });
 }
 
+QVariantList AppController::relinkTargets() const {
+    QVariantList out;
+    for (const auto& s : project_.scans)
+        for (const auto& it : s.items)
+            out << QVariantMap{{"id", toQ(it.itemId)},
+                               {"label", toQ(it.label)},
+                               {"scanName", fromPath(fk::pathFromUtf8(s.path).filename())}};
+    return out;
+}
+
+void AppController::dropFiles(const QVariantList& urls) {
+    QVariantList scans, graded;
+    for (const auto& u : urls) {
+        const QString file = localPath(u);
+        const QString lower = file.toLower();
+        if (lower.endsWith(QLatin1String(".fkproj"))) {
+            openProject(u);
+            return;
+        }
+        bool isGraded = !(lower.endsWith(QLatin1String(".tif")) || lower.endsWith(QLatin1String(".tiff")));
+        if (!isGraded) {
+            // a TIFF is a graded file when it carries our IDs or an export name; anything else is a scan
+            if (fk::parseEditFileName(fk::pathToUtf8(fk::pathFromUtf8(toStd(file)).stem())))
+                isGraded = true;
+            else if (auto xmp = fk::readXmpPacket(fk::pathFromUtf8(toStd(file))); xmp && !xmp->empty())
+                isGraded = !fk::parseXmpIds(*xmp).itemId.empty();
+        }
+        (isGraded ? graded : scans) << u;
+    }
+    if (!scans.isEmpty()) importScans(scans);
+    if (!graded.isEmpty()) relinkFiles(graded);
+}
+
 void AppController::applyRelink(const QVariantList& rows) {
-    int n = 0;
+    int n = 0, changed = 0;
     for (const QVariant& v : rows) {
         const QVariantMap r = v.toMap();
-        if (!r.value("accept").toBool() || !r.value("matched").toBool()) continue;
+        if (!r.value("accept").toBool() || !r.value("ok").toBool()) continue;
         fk::ItemRecord* it = findItemMut(toStd(r.value("itemId").toString()));
-        if (!it || it->edits.empty()) continue;
-        fk::EditVersion* ev = &it->edits.back();
-        for (auto& e : it->edits)
-            if (toQ(e.editVersionId) == r.value("editVersionId").toString()) ev = &e;
+        if (!it) continue;
+        fk::EditVersion* ev = nullptr;
+        if (r.value("newAlignment").toBool()) {
+            auto pa = pendingAlignments_.find(r.value("alignmentKey").toString());
+            if (pa == pendingAlignments_.end()) continue;
+            const fk::Sidecar rec = pa->second;
+            pendingAlignments_.erase(pa);
+            if (!(rec.inner == it->inner) || !(rec.outer == it->outer)) {
+                ++changed; // the print was edited after the check: its image area is not what was compared
+                continue;
+            }
+            project_.exportRecords.push_back(rec);
+            fk::EditVersion nv;
+            nv.editVersionId = rec.editVersionId;
+            nv.version = rec.version;
+            nv.format = toStd(QFileInfo(r.value("file").toString()).suffix().toLower());
+            it->edits.push_back(nv);
+            ev = &it->edits.back();
+        } else {
+            for (auto& e : it->edits)
+                if (toQ(e.editVersionId) == r.value("editVersionId").toString()) ev = &e;
+            if (!ev) continue;
+        }
         ev->relinkedPath = toStd(r.value("file").toString());
         ev->relinkedSha256 = toStd(r.value("sha256").toString());
         ev->matchedBy = toStd(r.value("source").toString());
@@ -1805,6 +2039,9 @@ void AppController::applyRelink(const QVariantList& rows) {
         invalidateItem(it->itemId);
         ++n;
     }
+    if (changed)
+        notify(tr("%n print(s) changed after the check; check the graded file again.", nullptr, changed),
+               QStringLiteral("warning"));
     if (n) {
         touch(false);
         notify(tr("Relinked %n graded file(s).", nullptr, n));

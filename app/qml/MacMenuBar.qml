@@ -23,7 +23,7 @@ P.MenuBar {
         P.MenuSeparator {}
         P.MenuItem { text: qsTr("Export Image Areas…"); shortcut: "Ctrl+E"; enabled: App.counts.prints > 0; onTriggered: cmd.exportImageAreas([]) }
         P.MenuItem { text: qsTr("Export Full Prints…"); enabled: App.counts.prints > 0; onTriggered: cmd.exportFullPrints([]) }
-        P.MenuItem { text: qsTr("Relink Graded Files…"); shortcut: "Ctrl+Alt+I"; enabled: App.counts.exported > 0; onTriggered: cmd.relink() }
+        P.MenuItem { text: qsTr("Relink Graded Files…"); shortcut: "Ctrl+Alt+I"; enabled: App.counts.prints > 0; onTriggered: cmd.relink() }
         P.MenuItem { text: qsTr("Export Final…"); shortcut: "Ctrl+Shift+E"; enabled: App.counts.relinked > 0; onTriggered: cmd.exportFinal([]) }
         P.MenuSeparator {}
         P.MenuItem { text: qsTr("Close Project"); shortcut: StandardKey.Close; onTriggered: cmd.newProject() }

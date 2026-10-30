@@ -44,7 +44,7 @@ MenuBar {
         MenuSeparator {}
         Item2 { action: Action { text: qsTr("Export Image Areas…"); shortcut: "Ctrl+E"; enabled: App.counts.prints > 0; onTriggered: cmd.exportImageAreas([]) } }
         Item2 { action: Action { text: qsTr("Export Full Prints…"); enabled: App.counts.prints > 0; onTriggered: cmd.exportFullPrints([]) } }
-        Item2 { action: Action { text: qsTr("Relink Graded Files…"); shortcut: "Ctrl+Alt+I"; enabled: App.counts.exported > 0; onTriggered: cmd.relink() } }
+        Item2 { action: Action { text: qsTr("Relink Graded Files…"); shortcut: "Ctrl+Alt+I"; enabled: App.counts.prints > 0; onTriggered: cmd.relink() } }
         Item2 { action: Action { text: qsTr("Export Final…"); shortcut: "Ctrl+Shift+E"; enabled: App.counts.relinked > 0; onTriggered: cmd.exportFinal([]) } }
         MenuSeparator {}
         Item2 { action: Action { text: qsTr("Close Project"); shortcut: StandardKey.Close; onTriggered: cmd.newProject() } }

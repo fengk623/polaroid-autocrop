@@ -45,7 +45,7 @@ D1–D8 的处理（按审核建议）：D1 0.5.0 作为冻结基线以明确标
 4. **任务安全**：每个结果绑定 project/item/purpose/generation 与参数快照，失效即丢弃并释放。
 5. **数据保护**：手动保存 + 恢复快照 + 历史备份；统一“替换当前工程”入口。
 
-## 4. 开发方式：按 Unit 开发、验证、发布
+## 4. 开发方式：按 Unit 开发、验证；全部完成后统一发布
 
 Unit = 可独立验收的交付单元（[UNITS.md](UNITS.md)）。每个 Unit：
 
@@ -55,8 +55,10 @@ Unit = 可独立验收的交付单元（[UNITS.md](UNITS.md)）。每个 Unit：
 4. 建 PR；CI（Linux/macOS/Windows 核心 + 应用自检）全绿；Release 工作流为 PR head 提交构建测试包并做打包冒烟测试（版本/提交一致性检查）。
 5. 开发者自测（含真实扫描场景，若相关）；在 PR 中写测试说明与实际结果。
 6. 满足合并条件后合并（仓库保护或审批要求不允许自动合并时，请所有者合并；不绕过）。
-7. 在 `main` 上手动运行 Release（publish）：在合并提交上建唯一 Tag `v<版本>`，生成并校验发布包，建 GitHub Pre-release。
+7. ~~在 `main` 上手动运行 Release（publish）~~ —— **所有者 2026-10-30 16:13 调整：不再逐 Unit 发布。** 其余步骤不变（包括 PR 上绑定 head 提交的测试包）；全部任务完成后再统一打包、建 Tag 与 Release（§5 的内容要求届时适用）。已发布：v0.5.0、v0.6.0-alpha.1；v0.6.0-alpha.2 的发布运行（41128749850）在发布前已按此调整取消，未建 Tag/Release。
 8. 更新 UNITS.md、TRACEABILITY.md、WORKLOG.md，继续下一个 Unit。
+
+`VERSION` 仍按 Unit 递增（`0.6.0-alpha.N`），使 PR 测试包、关于对话框与自检报告能对应到 Unit；这些版本号不建 Tag、不发布。`docs/release-notes/v<版本>.md` 继续逐 Unit 记录（作为最终 Release 说明的素材）。
 
 问题修复：记录出现版本与复现步骤 → 按版本差异和相关 Unit 定位（必要时比较历史版本或二分提交）→ 从最新集成基线建修复分支 → 补该 Unit 及受影响依赖的回归测试 → 发布新版本并注明修复的 Unit 与受影响旧版本。不回退到旧 Unit 代码上开发，不移动旧 Tag，不覆盖旧包。
 
