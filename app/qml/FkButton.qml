@@ -26,6 +26,7 @@ Button {
             anchors.verticalCenter: parent.verticalCenter
         }
         Text {
+            objectName: "buttonLabel" // FK-009: a button label must not be cut (self-test)
             text: b.text
             font: b.font
             color: b.primary ? Theme.onAccent : Theme.textPrimary

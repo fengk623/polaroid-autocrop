@@ -112,7 +112,8 @@ Rectangle {
                         onReset: App.resetToDetected(rail.it.id)
                         FieldRow {
                             label: qsTr("Film type"); labelWidth: rail.lw
-                            Text { text: cmd.filmTypeName(rail.it.filmType); font.pixelSize: Theme.fontBody; color: Theme.textPrimary }
+                            // values fill the rest of the row and wrap: a fixed-width value would widen the rail (FK-009)
+                            Text { Layout.fillWidth: true; wrapMode: Text.Wrap; text: cmd.filmTypeName(rail.it.filmType); font.pixelSize: Theme.fontBody; color: Theme.textPrimary }
                         }
                         FieldRow {
                             label: qsTr("Confidence"); labelWidth: rail.lw
@@ -122,6 +123,8 @@ Rectangle {
                                 color: rail.it.confidenceClass === "high" ? Theme.accent : (rail.it.confidenceClass === "medium" ? Theme.warning : Theme.error)
                             }
                             Text {
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
                                 text: (rail.it.confidenceClass === "high" ? qsTr("High") : rail.it.confidenceClass === "medium" ? qsTr("Check recommended") : qsTr("Review required"))
                                       + "  " + Math.round((rail.it.confidence || 0) * 100) + " %"
                                 font.pixelSize: Theme.fontBody
@@ -402,7 +405,9 @@ Rectangle {
                             color: Theme.textTertiary
                             text: rail.it.relinkCheck ? qsTr("Content check %1 %").arg(Math.round((rail.it.relinkCheck.score || 0) * 100)) : ""
                         }
-                        RowLayout {
+                        // FK-009: wraps in a narrow rail instead of widening the tab past the rail (cut buttons)
+                        Flow {
+                            Layout.fillWidth: true
                             spacing: 6
                             FkButton { text: qsTr("Relink to this print…"); iconName: "relink"; onClicked: cmd.relink(rail.it.id) }
                             FkButton { text: qsTr("Relink graded files…"); onClicked: cmd.relink() }
@@ -508,13 +513,16 @@ Rectangle {
                     }
                     Section {
                         title: qsTr("Final output")
-                        FieldRow {
-                            label: qsTr("Frame"); labelWidth: rail.lw
-                            Segmented {
-                                value: App.settings.finalMode
-                                model: [{ text: qsTr("Real scanned frame"), value: "real" }, { text: qsTr("Synthetic frame"), value: "synthetic" }]
-                                onActivated: (v) => App.setSetting("finalMode", v)
-                            }
+                        // FK-009: the two choices are too wide beside a label in a 280–300 px rail: label above them
+                        Text {
+                            text: qsTr("Frame")
+                            font.pixelSize: Theme.fontBody
+                            color: Theme.textSecondary
+                        }
+                        Segmented {
+                            value: App.settings.finalMode
+                            model: [{ text: qsTr("Real scanned frame"), value: "real" }, { text: qsTr("Synthetic frame"), value: "synthetic" }]
+                            onActivated: (v) => App.setSetting("finalMode", v)
                         }
                         Text {
                             Layout.fillWidth: true

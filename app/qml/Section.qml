@@ -29,6 +29,7 @@ ColumnLayout {
             Item { width: 2 }
             Icon { name: sec.expanded ? "chevronDown" : "chevronRight"; size: 12; color: Theme.textSecondary }
             Text {
+                objectName: "sectionTitle"
                 text: sec.title
                 font.pixelSize: Theme.fontSectionTitle
                 font.weight: Font.DemiBold
