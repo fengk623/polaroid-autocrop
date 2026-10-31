@@ -94,6 +94,11 @@ class SelfTest : public QObject {
     /// overflows or overlaps at any window size and rail width (it compacts in a fixed order); the centre
     /// column keeps its minimum; the workflow steps follow the current print and lead to each step.
     void runToolbar();
+    /// FK-009 (U024): every visible text has glyphs in its font (no boxes), stays inside its box and its
+    /// clipping parent (no cut words), key controls are not covered; dark and light, three window sizes,
+    /// rails shown and folded, the three right-rail tabs and the main dialogs. Language and scale come from
+    /// the process (CI runs English and Chinese, 1× and 2×). Returns the number of problems.
+    int runTextLayout();
     void doubleClick(QQuickItem* item, QPointF local = QPointF(-1, -1));
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.

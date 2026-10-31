@@ -12,6 +12,6 @@ Pending item as "not yet verified".
 | HV-04 | Display colour accuracy | open `tests/data/color-patches.tif` (generated), compare with a colour-managed viewer | patches match | — | Pending |
 | HV-05 | 8 GB device run, 1600 DPI A4 16-bit scan: detect, export all, composite all | measure peak memory (Activity Monitor / Task Manager + app diagnostics) | < 2 GB peak | — | Pending |
 | HV-06 | Graded round trip through Photoshop and Lightroom (XMP kept/dropped) | export → edit → save → relink | correct item matched; frame untouched | — | Pending |
-| HV-07 | High-DPI: 150 %/200 % Windows scaling, Retina | visual check | crisp UI, 100 % = 1 image px per device px | — | Pending |
+| HV-07 | High-DPI: 150 %/200 % Windows scaling, Retina | visual check; FK-009 (U024): also Chinese, dark and light, at 1100×700 and full screen: no boxes instead of characters, no cut labels or buttons, top bar, edge strips and workflow steps uncovered (the offscreen checks in CI cover the layout rules, not the real renderer or the system fonts) | crisp UI, 100 % = 1 image px per device px; text readable | — | Pending |
 | HV-08 | Installer/uninstaller on clean Windows | install, run, uninstall | projects kept after uninstall | — | Pending |
 | HV-09 | Gatekeeper on unsigned macOS build | open per README instructions | app opens after approval | — | Pending |

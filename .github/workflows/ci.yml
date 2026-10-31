@@ -239,6 +239,14 @@ jobs:
             QT_QPA_PLATFORM=offscreen "$APP" --self-test "$PWD/build/selftest/miniswhite$b" --scan "$PWD/build/selftest-miw$b.tif" \
               --scenario miniswhite 2>&1 | tee -a build/selftest.log
           done
+          # FK-009 (U024): text and layout checks also in Chinese and at 1.5× / 2× (English 1× ran above)
+          for v in "zh_CN 1" "zh_CN 2" "en 1.5"; do
+            set -- $v
+            d="$PWD/build/text-$1-$2"; mkdir -p "$d/settings"
+            printf '[app]\nlanguage=%s\n' "$1" > "$d/settings/settings.ini"
+            FK_SETTINGS_DIR="$d/settings" QT_SCALE_FACTOR=$2 QT_QPA_PLATFORM=offscreen "$APP" --self-test "$d" \
+              --scan "$PWD/build/selftest-scan.tif" --scenario text 2>&1 | tee -a build/selftest.log
+          done
       - name: Self-test failures as annotations
         if: failure() && steps.selftest.outcome == 'failure'
         run: python3 tools/ci-annotate.py build/selftest.log || python tools/ci-annotate.py build/selftest.log

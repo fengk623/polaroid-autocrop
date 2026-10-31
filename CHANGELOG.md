@@ -3,6 +3,17 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.13 — U024: text and layout checks; right rail no longer wider than itself (FK-009)
+- Self-test `runTextLayout` (also `--scenario text`): every visible text has glyphs (no boxes), stays inside its box,
+  the window and its panel's sides; labels, titles and button texts are never shortened; key controls are not
+  covered. Dark and light, three window sizes, rails shown and folded, the three right-rail tabs, Settings, About
+  and Export dialogs; CI runs it in English (1×, 1.5×) and Chinese (1×, 2×) on all three platforms.
+- Found and fixed: the Return tab was wider than the right rail (two buttons in one row), cutting texts and buttons
+  at its right edge — the buttons now wrap and the final-output frame choice sits under its label; a field label
+  in Settings was shortened — field labels widen instead; the 8-bit refusal ended with a note for programmers
+  ("set allowDepthReduction …") — confirmation details go to the log, not to the message. Real windows (Direct3D,
+  Metal, 150/200 %, Retina) stay human verification. Notes: docs/release-notes/v0.7.0-alpha.13.md.
+
 ## 0.7.0-alpha.12 — U021 part 1: view switch between the eye and the zoom; the top bar fits narrow windows; workflow steps (UX-06)
 - The Scan · Print · Image · Composite switch sits between the overlays button and the zoom field (keys 1–4 and the
   View menu unchanged). In a narrow centre column the top bar gives up the file buttons, then shows the view switch

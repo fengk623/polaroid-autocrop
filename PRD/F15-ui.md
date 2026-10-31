@@ -23,7 +23,9 @@ RFC: `rfc/0011-ui-architecture.md`, `docs/ui-reference.md`, `CONTRACT-ui-core.md
 - Windows: in-window menu bar, Ctrl shortcuts, native dialogs, standard title bar, wheel zoom, Per-Monitor v2 DPI.
 
 ## Acceptance
-- A1 Automated snapshots for dark/light, 1280×800 and 1920×1080, 100 % and 200 % scale, long names, Chinese, empty project, low confidence, batch running, relink error. (`tests/app/snapshots`)
+- A1 Automated snapshots (offscreen self-test, software renderer) are evidence for people to look at, never a pass by
+  themselves (FK-009). The `tests/app/snapshots` suite this line used to name was never built (FK-013); the checks
+  are A7.
 - A2 Real-window captures on Windows (via the user's machine) and macOS (human verification list).
 - A3 UI stays responsive (< 50 ms frame) while a 1600 DPI export runs. (`tests/app/tst_responsiveness`)
 - A4 (UX-09) Value fields that opt in (the mask feather/inset width, U016): press and drag left/right adjusts the value
@@ -50,4 +52,13 @@ RFC: `rfc/0011-ui-architecture.md`, `docs/ui-reference.md`, `CONTRACT-ui-core.md
   area, relink, composite / final output: done, next, not done) and a click leads to each step. (self-test
   `runToolbar`; the UX-06 known issue in `runLayout` is a regular check) Part 2 (two workspaces, Library / Edit)
   follows the library (U018–U020).
+- A7 (FK-009, U024) Every visible text — main window, Settings, About and Export dialogs; dark and light; 1100×700,
+  1440×900, 1920×1080; rails shown and folded; the three right-rail tabs — has a glyph for every character in its
+  font or its fallbacks (no boxes), stays inside its own box and the window, is not cut at the side by its panel, and
+  labels, section titles, segment and button texts are never shortened (values such as paths and file names may
+  be); the strips, top-bar buttons, view switch, zoom field and workflow steps are not covered by anything painted
+  later. CI runs it in English (1×) with the self-test and as `--scenario text` in Chinese (1×, 2×) and English
+  (1.5×) on Windows, macOS and Linux. Real windows (Direct3D, Metal) at 100/150/200 % and Retina stay human
+  verification (HV-02, HV-03, HV-07). User messages carry no notes for programmers (the depth-reduction refusal
+  had "set allowDepthReduction …").
 

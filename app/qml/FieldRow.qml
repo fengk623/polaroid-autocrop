@@ -10,11 +10,14 @@ RowLayout {
     Layout.fillWidth: true
     spacing: 8
     Text {
+        id: labelText
+        objectName: "fieldLabel" // FK-009: a label must not be cut (self-test)
         text: r.label
         font.pixelSize: Theme.fontBody
         color: Theme.textSecondary
-        Layout.preferredWidth: r.labelWidth
-        elide: Text.ElideRight
+        // the section's label column, wider when this label needs it (a translation, a larger font): never cut
+        Layout.preferredWidth: Math.max(r.labelWidth, implicitWidth)
+        Layout.minimumWidth: implicitWidth
     }
     RowLayout {
         id: holder

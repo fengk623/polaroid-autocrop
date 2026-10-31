@@ -15,12 +15,17 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
+#include <QFontInfo>
+#include <QGlyphRun>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRectF>
+#include <QRegularExpression>
+#include <QTextLayout>
 #include <QThread>
 #include <QTransform>
 #include <QUrl>
@@ -726,8 +731,17 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
                   item.value("notExactReason").toString());
             const QString id = app_->currentItemId();
             const QStringList before = filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif"));
+            QStringList told;
+            auto c = connect(app_, &AppController::notification, this,
+                             [&](const QString& text, const QString&) { told << text; });
             app_->exportImageAreas({id}); // no consent
             app_->waitIdle(300000);
+            disconnect(c);
+            // FK-009 (U024): the refusal is for the user; the core's note for programmers stays out of it
+            check(QStringLiteral("FK-010 the 8-bit refusal tells the user without the core's developer note"),
+                  !told.isEmpty() &&
+                      !told.join(QLatin1Char(' ')).contains(QLatin1String("allowDepthReduction")),
+                  told.join(QStringLiteral(" | ")));
             const qsizetype refused =
                 filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif")).size() - before.size();
             app_->exportImageAreas({id}, true); // the user confirmed
@@ -3951,6 +3965,297 @@ void SelfTest::runToolbar() {
     restore();
 }
 
+namespace {
+bool isTextItem(const QQuickItem* it) {
+    return it->inherits("QQuickText") || it->inherits("QQuickTextInput") || it->inherits("QQuickTextEdit");
+}
+bool shown(const QQuickItem* it) {
+    for (const QQuickItem* p = it; p; p = p->parentItem())
+        if (!p->isVisible() || p->opacity() <= 0.01) return false;
+    return it->width() > 0.5 && it->height() > 0.5;
+}
+/// Characters of `text` the font (with its fallbacks) draws as the missing-glyph box.
+QString missingGlyphs(const QString& text, const QFont& font) {
+    QTextLayout layout(text, font);
+    layout.beginLayout();
+    while (layout.createLine().isValid()) {
+    }
+    layout.endLayout();
+    QString missing;
+    for (const QGlyphRun& run : layout.glyphRuns(-1, -1, QTextLayout::RetrieveAll)) {
+        const QList<quint32> glyphs = run.glyphIndexes();
+        const QList<qsizetype> at = run.stringIndexes();
+        for (qsizetype i = 0; i < glyphs.size(); ++i) {
+            if (glyphs[i] != 0) continue;
+            const qsizetype si = i < at.size() ? at[i] : -1;
+            const QChar c = si >= 0 && si < text.size() ? text.at(si) : QChar(u'?');
+            if (c.isSpace() || c.category() == QChar::Other_Control || c.category() == QChar::Other_Format)
+                continue;
+            if (!missing.contains(c)) missing += c;
+        }
+    }
+    return missing;
+}
+/// "Item › Row › Text" with object names where there are some (for reports).
+QString where(const QQuickItem* it) {
+    QStringList parts;
+    for (const QQuickItem* p = it; p && parts.size() < 4; p = p->parentItem())
+        if (!p->objectName().isEmpty()) parts.prepend(p->objectName());
+    return parts.isEmpty() ? QString::fromLatin1(it->metaObject()->className())
+                           : parts.join(QStringLiteral(" › "));
+}
+/// The part of `it` left visible by its clipping parents, in scene coordinates (empty: scrolled out of view).
+QRectF visiblePart(const QQuickItem* it) {
+    QRectF r = it->mapRectToScene(QRectF(0, 0, it->width(), it->height()));
+    for (const QQuickItem* p = it->parentItem(); p; p = p->parentItem())
+        if (p->clip()) r = r.intersected(p->mapRectToScene(QRectF(0, 0, p->width(), p->height())));
+    return r;
+}
+/// Items in paint order (children by z, then by declaration), depth first.
+void paintOrder(QQuickItem* it, std::vector<QQuickItem*>& out) {
+    out.push_back(it);
+    QList<QQuickItem*> kids = it->childItems();
+    std::stable_sort(kids.begin(), kids.end(), [](QQuickItem* a, QQuickItem* b) { return a->z() < b->z(); });
+    for (QQuickItem* k : kids)
+        paintOrder(k, out);
+}
+/// Draws something opaque enough to hide what lies below (a filled rectangle, text, an image, a canvas).
+bool paints(const QQuickItem* it) {
+    if (it->inherits("QQuickRectangle")) {
+        const QColor c = it->property("color").value<QColor>();
+        return c.alpha() > 200;
+    }
+    return it->inherits("QQuickImage") || it->inherits("QQuickPaintedItem");
+}
+} // namespace
+
+int SelfTest::runTextLayout() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    const QVariantMap saved = app_->settings();
+    const QStringList keys{"showLeftRail",   "showRightRail", "showFilmstrip", "leftRailWidth",
+                           "rightRailWidth", "rightTab",      "theme"};
+    auto settle = [] { waitFor([] { return false; }, 250); };
+    auto restore = [&] {
+        for (const auto& k : keys)
+            app_->setSetting(k, saved.value(k));
+        window_->resize(1440, 900);
+        settle();
+    };
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{
+             {"showFilmstrip", true}, {"leftRailWidth", 254}, {"rightRailWidth", 300}})
+        app_->setSetting(k, v);
+    QQuickItem* root = window_->contentItem();
+    const QRectF win(0, 0, window_->width(), window_->height());
+    auto rect = [](const QQuickItem* it) {
+        return it->mapRectToScene(QRectF(0, 0, it->width(), it->height()));
+    };
+
+    std::set<QString> problems; // "kind · where · text · detail", once each across the matrix
+    int texts = 0, elided = 0;
+    QStringList elidedSample;
+    std::set<QString> fontsSeen;
+    auto inspect = [&](const QString& state) {
+        std::vector<QQuickItem*> order;
+        paintOrder(root, order);
+        const QRectF w(0, 0, window_->width(), window_->height());
+        for (size_t idx = 0; idx < order.size(); ++idx) {
+            QQuickItem* it = order[idx];
+            if (!isTextItem(it) || !shown(it)) continue;
+            // scrolled out of its list: not on screen (a text half in view is still checked below)
+            if (visiblePart(it).isEmpty()) continue;
+            const QString text = it->property("text").toString();
+            if (text.trimmed().isEmpty()) continue;
+            ++texts;
+            const QFont font = it->property("font").value<QFont>();
+            fontsSeen.insert(QFontInfo(font).family());
+            const QString plain = it->property("textFormat").toInt() == 1 /* RichText */
+                                      ? QString(text).remove(QRegularExpression(QStringLiteral("<[^>]*>")))
+                                      : text;
+            const QString missing = missingGlyphs(plain, font);
+            const QString shortText = plain.left(48);
+            if (!missing.isEmpty())
+                problems.insert(QStringLiteral("no glyph · %1 · \"%2\" · missing %3 (%4) · %5")
+                                    .arg(where(it), shortText, missing, QFontInfo(font).family(), state));
+            const QRectF r = rect(it);
+            // text wider than its own box with neither eliding nor wrapping
+            if (it->inherits("QQuickText")) {
+                const int elide = it->property("elide").toInt(); // 3 = ElideNone
+                const int wrap = it->property("wrapMode").toInt();
+                const double cw = it->property("contentWidth").toDouble();
+                if (it->property("truncated").toBool()) {
+                    ++elided;
+                    if (elidedSample.size() < 12 && !elidedSample.contains(shortText))
+                        elidedSample << shortText;
+                    // values (paths, file names, status) may be shortened; labels, titles and buttons may not
+                    static const QStringList labels{"fieldLabel", "buttonLabel", "sectionTitle",
+                                                    "segmentLabel"};
+                    if (labels.contains(it->objectName()))
+                        problems.insert(QStringLiteral("label cut · %1 · \"%2\" · %3 of %4 px shown · %5")
+                                            .arg(where(it->parentItem()), shortText)
+                                            .arg(it->width(), 0, 'f', 0)
+                                            .arg(it->property("implicitWidth").toDouble(), 0, 'f', 0)
+                                            .arg(state));
+                }
+                if (elide == 3 && wrap == 0 && cw > it->width() + 1.5)
+                    problems.insert(QStringLiteral("wider than its box · %1 · \"%2\" · %3 > %4 px · %5")
+                                        .arg(where(it), shortText)
+                                        .arg(cw, 0, 'f', 0)
+                                        .arg(it->width(), 0, 'f', 0)
+                                        .arg(state));
+            }
+            // outside the window
+            if (r.left() < w.left() - 1 || r.right() > w.right() + 1 || r.bottom() > w.bottom() + 1)
+                problems.insert(
+                    QStringLiteral("outside the window · %1 · \"%2\" · %3").arg(where(it), shortText, state));
+            // cut by a clipping parent: at the side (a vertically scrolling list only scrolls up and down)
+            for (QQuickItem* p = it->parentItem(); p; p = p->parentItem()) {
+                if (!p->clip()) continue;
+                const QRectF c = rect(p);
+                const bool flick = p->inherits("QQuickFlickable");
+                const bool hScroll = flick && p->property("contentWidth").toDouble() > p->width() + 1;
+                const bool vScroll = flick && p->property("contentHeight").toDouble() > p->height() + 1;
+                const bool sideCut =
+                    !hScroll && (r.left() < c.left() - 1.5 || r.right() > c.right() + 1.5) && r.intersects(c);
+                const bool vCut = !vScroll && !flick &&
+                                  (r.top() < c.top() - 1.5 || r.bottom() > c.bottom() + 1.5) &&
+                                  r.intersects(c);
+                if (sideCut || vCut)
+                    problems.insert(QStringLiteral("cut by %1 · %2 · \"%3\" · text %4–%5, visible %6–%7 · %8")
+                                        .arg(where(p), where(it), shortText)
+                                        .arg(sideCut ? r.left() : r.top(), 0, 'f', 0)
+                                        .arg(sideCut ? r.right() : r.bottom(), 0, 'f', 0)
+                                        .arg(sideCut ? c.left() : c.top(), 0, 'f', 0)
+                                        .arg(sideCut ? c.right() : c.bottom(), 0, 'f', 0)
+                                        .arg(state));
+                break; // the nearest clipping parent decides
+            }
+        }
+        // key controls: nothing painted later covers their middle
+        QStringList keyNames{QStringLiteral("edgeLeft"),          QStringLiteral("edgeRight"),
+                             QStringLiteral("edgeBottom"),        QStringLiteral("viewSwitch"),
+                             QStringLiteral("viewSwitchCompact"), QStringLiteral("zoomField"),
+                             QStringLiteral("overlaysButton")};
+        for (int i = 1; i <= 5; ++i)
+            keyNames << QStringLiteral("workflowStep%1").arg(i);
+        std::vector<QQuickItem*> keysFound;
+        for (const auto& n : keyNames)
+            if (QQuickItem* k = findItem(n); k && shown(k)) keysFound.push_back(k);
+        QQuickItem* topBar = findItem(QStringLiteral("topBar"));
+        for (QQuickItem* tb : order) // the top bar's buttons
+            if (topBar && topBar->isAncestorOf(tb) && !tb->property("iconName").toString().isEmpty() &&
+                tb->inherits("QQuickAbstractButton") && shown(tb))
+                keysFound.push_back(tb);
+        for (QQuickItem* k : keysFound) {
+            const QRectF kr = visiblePart(k);
+            if (kr.width() < 0.5 * k->width() || kr.height() < 0.5 * k->height()) {
+                problems.insert(QStringLiteral("covered · %1 · cut by its panel · %2").arg(where(k), state));
+                continue;
+            }
+            const QPointF mid = kr.center();
+            const auto pos = std::find(order.begin(), order.end(), k);
+            for (auto it = pos + 1; it != order.end(); ++it) {
+                QQuickItem* o = *it;
+                if (k->isAncestorOf(o) || !shown(o) || !paints(o) || o->inherits("QQuickPopupItem")) continue;
+                bool inPopup = false;
+                for (QQuickItem* p = o; p; p = p->parentItem())
+                    if (p->inherits("QQuickOverlay") || p->objectName() == QLatin1String("toasts"))
+                        inPopup = true;
+                if (inPopup) continue;
+                if (rect(o).contains(mid)) {
+                    problems.insert(
+                        QStringLiteral("covered · %1 · by %2 · %3").arg(where(k), where(o), state));
+                    break;
+                }
+            }
+        }
+    };
+
+    // ---- the matrix: theme × window size × rails × right-rail tab; then the dialogs
+    const QString id = app_->currentItemId();
+    for (const QString theme : {QStringLiteral("dark"), QStringLiteral("light")}) {
+        app_->setSetting(QStringLiteral("theme"), theme);
+        for (const QSize sz : {QSize(1100, 700), QSize(1440, 900), QSize(1920, 1080)}) {
+            window_->resize(sz);
+            for (const bool rails : {true, false}) {
+                app_->setSetting(QStringLiteral("showLeftRail"), rails);
+                app_->setSetting(QStringLiteral("showRightRail"), rails);
+                for (int tab = 0; tab < (rails ? 3 : 1); ++tab) {
+                    app_->setSetting(QStringLiteral("rightTab"), tab);
+                    settle();
+                    inspect(QStringLiteral("%1 %2×%3 %4 tab %5")
+                                .arg(theme)
+                                .arg(sz.width())
+                                .arg(sz.height())
+                                .arg(rails ? QStringLiteral("rails") : QStringLiteral("folded"))
+                                .arg(tab));
+                }
+            }
+            if (sz.width() == 1100) snapshot(QStringLiteral("U024-%1-1100").arg(theme));
+        }
+    }
+    app_->setSetting(QStringLiteral("showLeftRail"), true);
+    app_->setSetting(QStringLiteral("showRightRail"), true);
+    window_->resize(1100, 700);
+    for (const QString theme : {QStringLiteral("dark"), QStringLiteral("light")}) {
+        app_->setSetting(QStringLiteral("theme"), theme);
+        for (const char* open : {"showSettings", "showAbout"}) {
+            QMetaObject::invokeMethod(window_, open);
+            settle();
+            inspect(QStringLiteral("%1 1100×700 dialog %2").arg(theme, QString::fromLatin1(open)));
+            QMetaObject::invokeMethod(window_, "closeDialogs");
+        }
+        QObject* commands = window_->property("commands").value<QObject*>();
+        if (commands && !id.isEmpty()) {
+            QMetaObject::invokeMethod(commands, "exportImageAreas",
+                                      Q_ARG(QVariant, QVariant(QStringList{id})));
+            settle();
+            inspect(QStringLiteral("%1 1100×700 dialog export").arg(theme));
+            if (theme == QLatin1String("dark")) snapshot(QStringLiteral("U024-export-dialog"));
+            QMetaObject::invokeMethod(window_, "closeDialogs");
+        }
+    }
+
+    QStringList byKind[4];
+    for (const auto& p : problems) {
+        const int k = p.startsWith(QLatin1String("no glyph"))                                             ? 0
+                      : p.startsWith(QLatin1String("covered"))                                            ? 3
+                      : p.startsWith(QLatin1String("cut by")) || p.startsWith(QLatin1String("label cut")) ? 2
+                                                                                                          : 1;
+        byKind[k] << p;
+    }
+    QStringList fonts;
+    for (const auto& f : fontsSeen)
+        fonts << f;
+    observe(QStringLiteral("FK-009 text and layout"),
+            {{"texts", texts},
+             {"elided", elided},
+             {"elidedSample", QJsonArray::fromStringList(elidedSample)},
+             {"fonts", QJsonArray::fromStringList(fonts)},
+             {"problems", QJsonArray::fromStringList(QStringList(problems.begin(), problems.end()))}});
+    auto list = [](const QStringList& l) {
+        return l.isEmpty() ? QString()
+                           : QStringLiteral("%1: ").arg(l.size()) + l.mid(0, 8).join(QStringLiteral(" | "));
+    };
+    check(QStringLiteral(
+              "FK-009 every visible text has glyphs in its font (no boxes): main window, dialogs, dark "
+              "and light, 3 window sizes"),
+          byKind[0].isEmpty(),
+          list(byKind[0]) + QStringLiteral(" · fonts: ") + fonts.join(QStringLiteral(", ")));
+    check(QStringLiteral("FK-009 no text wider than its box or outside the window"), byKind[1].isEmpty(),
+          list(byKind[1]));
+    check(QStringLiteral(
+              "FK-009 no text cut at the side by its panel, no label, title or button text shortened"),
+          byKind[2].isEmpty(), list(byKind[2]));
+    check(QStringLiteral("FK-009 key controls (strips, top bar, view switch, zoom, workflow steps) are not "
+                         "covered"),
+          byKind[3].isEmpty(), list(byKind[3]));
+    restore();
+    return static_cast<int>(problems.size());
+}
+
 void SelfTest::observe(const QString& name, const QJsonObject& data) {
     QJsonObject o = data;
     o.insert(QStringLiteral("name"), name);
@@ -3973,6 +4278,9 @@ int SelfTest::runScenario(const QString& name) {
         rc = scenarioMinIsWhite();
     else if (name == QLatin1String("memory"))
         rc = scenarioMemory();
+    else if (name ==
+             QLatin1String("text")) // FK-009: the text and layout matrix alone (CI: English, Chinese, 2×)
+        rc = runTextLayout() == 0 && allOk_ ? 0 : 1;
     QJsonObject report{
         {"scenario", name},
         {"version", app_->version()},
@@ -4418,6 +4726,7 @@ int SelfTest::run() {
     runFormats();
     runLayout();
     runToolbar();
+    runTextLayout();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

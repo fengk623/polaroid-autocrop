@@ -684,3 +684,30 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     renderer; to be checked with FK-009 / U024 before calling it a test artefact.
   - Results (U021 build): fixture 214 pass (1×, 2× and Chinese each); polaroid_92 209 + 3 skips; img20260702_0005
     207 + 5 skips. `runToolbar` 7/7 everywhere.
+
+### 09:30–10:40 — PR #25 opened (U021 part 1), U024
+- U021 part 1: PR #25 (stacked on #24). CI: Linux and macOS green; Windows failed "a click on a workflow step leads
+  to it" without detail → detail added: step 3 clicked (tab 1), step 5 `click()` returned false; position of step 5
+  and the window size added to find out why (pending).
+- U024 (FK-009), after U021 part 1 so that it covers the new top bar, strips and steps; version 0.7.0-alpha.13.
+  - Self-test `runTextLayout` (and `--scenario text`): every visible text — glyphs (QTextLayout with the item's font
+    and Qt's fallbacks; glyph 0 = box), wider than its own box, outside the window, cut at the side by its panel,
+    labels / section titles / segment and button texts shortened; key controls covered by later opaque paint.
+    Matrix: dark/light × 1100×700 / 1440×900 / 1920×1080 × rails shown/folded × the three right-rail tabs, plus
+    Settings, About and Export dialogs (≈ 2400 texts per run).
+  - First run (English 1×): 130 "outside the window" + 20 "covered" [check flaw: texts and buttons scrolled out of
+    the left rail's list] → only what the clipping parents leave visible is checked; key controls are only the top
+    bar's buttons, strips, view switch, zoom and steps. Then 52 "cut at the side" + 46 "outside the window", all in
+    the Return tab [real defect]: two buttons in one row (≈ 358 px) made the tab wider than the 300 px rail, so its
+    right side (texts, combo, the second button, "Synthetic frame") was cut — also visible in the Chinese snapshot
+    → the buttons wrap (Flow), the frame choice sits under its label. Then 1 "label cut": Settings' "Mask for new
+    prints" (110 of 112 px) [real defect] → field labels widen instead of eliding.
+  - The 8-bit refusal showed "(set allowDepthReduction after the user confirms)" [real defect, seen in U022's
+    Chinese run] → details of confirmation errors go to the log; check added to the FK-010 section.
+  - Results after the fixes: English 1× and 1.5×, Chinese 1× and 2×: 4/4 FK-009 checks.
+  - Mutations: T2 buttons back in one row, T3 labels elided again, T4 top bar overflowing, T5 developer note back
+    in the message — all caught. T1 (missing glyph) survived twice [mutation flaws]: U+E8E8 is covered by the
+    Unifont CSUR font on this machine, and U+10FFFD in the top-bar status was never shown (the status shows the
+    last job summary) → T1c, U+10FFFD in the right rail's title: caught. A small Qt program confirmed that an
+    uncovered character comes back as glyph 0.
+  - CI: `--scenario text` in Chinese 1× / 2× and English 1.5× on all three platforms after the self-test.
