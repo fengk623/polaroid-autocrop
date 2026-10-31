@@ -70,6 +70,8 @@ class AppController : public QObject {
     QStringList selectedItemIds() const;
     bool busy() const { return jobs_->busy(); }
     QVariantMap settings() const;
+    /// What the next start reads for `key` (the stored value, text in INI storage); self-test UX-10.
+    QVariant storedSetting(const QString& key) const;
     QStringList templates() const;
     QVariantMap counts() const;
     bool canUndo() const;
