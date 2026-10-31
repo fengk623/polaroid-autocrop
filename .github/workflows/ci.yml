@@ -243,9 +243,11 @@ jobs:
             FK_BENCH_SCANS=$n QT_QPA_PLATFORM=offscreen "$APP" --self-test "$PWD/build/memory/n$n" --scenario memory \
               --scan "$PWD/build/memcorpus" > build/memory-n$n.log 2>&1
           done
+          for n in 5 20; do [ -f build/memory/n$n/scenario-memory.json ] || { echo "::warning title=FK-005 memory::batch of $n produced no report"; tail -20 build/memory-n$n.log; }; done
           python3 tools/memory-summary.py build/memory/n5/scenario-memory.json build/memory/n20/scenario-memory.json \
-            --markdown-out "$GITHUB_STEP_SUMMARY" || python tools/memory-summary.py build/memory/n5/scenario-memory.json \
-            build/memory/n20/scenario-memory.json --markdown-out "$GITHUB_STEP_SUMMARY"
+            --markdown-out "$GITHUB_STEP_SUMMARY" --annotate "$RUNNER_OS" || python tools/memory-summary.py \
+            build/memory/n5/scenario-memory.json build/memory/n20/scenario-memory.json \
+            --markdown-out "$GITHUB_STEP_SUMMARY" --annotate "$RUNNER_OS"
       - name: Upload memory batch
         if: always() && steps.memory.outcome != 'skipped'
         uses: actions/upload-artifact@v4

@@ -3050,10 +3050,19 @@ int SelfTest::scenarioMemory() {
     app_->setSetting(QStringLiteral("geometryMode"), QStringLiteral("crop"));
     app_->setSetting(QStringLiteral("applyUpright"), false);
     QObject* canvas = findCanvas();
+    // waiting for jobs as the event loop would: deferred deletes too (see `stage`)
+    auto idle = [&](int ms) {
+        app_->waitIdle(ms);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    };
     QElapsedTimer t;
     t.start();
     auto stage = [&](const QString& name) {
-        waitFor([] { return false; }, 1000); // settle: deferred deletes, timers
+        waitFor([] { return false; }, 1000); // settle: timers
+        // the self-test runs before the application's event loop starts, and objects deleted later (QML
+        // delegates scrolled away while switching scans) are only deleted by that loop: do what it does, or
+        // they pile up and look like a leak (≈ 1.3 MB per switch on the VM)
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         QVariantMap r = app_->memoryReport();
         r["seconds"] = static_cast<double>(t.elapsed()) / 1000.0;
         r["scans"] = static_cast<int>(files.size());
@@ -3069,24 +3078,29 @@ int SelfTest::scenarioMemory() {
     for (const auto& f : files)
         urls << f;
     app_->importScans(urls);
-    app_->waitIdle(7200000);
+    idle(7200000);
     stage(QStringLiteral("1-detected"));
     std::vector<QString> ids;
     for (const auto& sc : app_->project().scans)
         ids.push_back(toQ(sc.scanId));
-    for (int round = 0; round < 2; ++round)
+    // FK_BENCH_ROUNDS=R switches through every scan R times (default 2) and records each round when R > 2:
+    // growth per round separates a leak from memory that settles
+    const int rounds = std::max(2, qEnvironmentVariableIntValue("FK_BENCH_ROUNDS"));
+    for (int round = 0; round < rounds; ++round) {
         for (const auto& id : ids) {
             app_->selectScan(id);
-            app_->waitIdle(600000);
+            idle(600000);
         }
+        if (rounds > 2) stage(QStringLiteral("2-switched-round-%1").arg(round + 1));
+    }
     stage(QStringLiteral("2-switched-twice"));
     for (const auto& id : ids) {
         app_->selectScan(id);
-        app_->waitIdle(600000);
+        idle(600000);
         if (!canvas) break;
         QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
         waitFor([&] { return canvas->property("badge").toString() == QLatin1String("Full"); }, 30000);
-        app_->waitIdle(600000);
+        idle(600000);
         QMetaObject::invokeMethod(canvas, "fit");
     }
     stage(QStringLiteral("3-full-resolution-each"));
@@ -3099,21 +3113,21 @@ int SelfTest::scenarioMemory() {
                     items << toQ(it.itemId);
     const QString exportDir = app_->settings().value("exportFolder").toString();
     app_->exportImageAreas(items);
-    app_->waitIdle(3600000);
+    idle(3600000);
     QVariantList rows;
     auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
     QVariantList edits;
     for (const auto& e : filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif")))
         edits << e;
     app_->relinkFiles(edits);
-    app_->waitIdle(3600000);
+    idle(3600000);
     disconnect(c);
     app_->applyRelink(rows);
     QMetaObject::invokeMethod(window_, "closeDialogs");
     if (canvas) canvas->setProperty("mode", QStringLiteral("composite"));
     for (const auto& id : items) {
         app_->selectItem(id);
-        app_->waitIdle(600000);
+        idle(600000);
     }
     if (canvas) canvas->setProperty("mode", QStringLiteral("scan"));
     stage(QStringLiteral("4-composite-previews"));
@@ -3121,10 +3135,10 @@ int SelfTest::scenarioMemory() {
         app_->detectScan(id);
     waitFor([] { return false; }, 2000);
     app_->jobRunner()->cancelAll();
-    app_->waitIdle(600000);
+    idle(600000);
     stage(QStringLiteral("5-detection-cancelled"));
     if (!ids.empty()) app_->selectScan(ids.front());
-    app_->waitIdle(600000);
+    idle(600000);
     waitFor([] { return false; }, 3000);
     stage(QStringLiteral("6-steady"));
 #if defined(__GLIBC__)
