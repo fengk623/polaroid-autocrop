@@ -3,6 +3,13 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.5 — U015: natural-blend mask by default, saved per print (UX-08)
+- New prints composite with a natural blend: a 0.05 mm feather inside the image area (converted with the scan's
+  DPI; px without one), chosen with the new `fkcli maskeval` on real scans (worst-case seam at 50 %: 6.61 → 3.64
+  ΔE00). Preserve edge 0.02 mm and hard edge 0 px (archival exact) remain. The mask is saved per print; applying it
+  to other prints is explicit; older projects keep their setting. Unchanged graded files stay bit-exact; preview and
+  final use the same mask; strong edge changes are flagged. Notes: docs/release-notes/v0.7.0-alpha.5.md.
+
 ## 0.7.0-alpha.4 — U014: rotate the whole scan (UX-04)
 - Print ▸ Rotate Whole Scan 90° Counterclockwise / Clockwise (also in the left rail and the scan list menu): every
   print, its boundaries, the canvas, scan thumbnails, hits and edits follow; the scan file is never rewritten (a

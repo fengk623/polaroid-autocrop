@@ -17,6 +17,41 @@ struct MaskStroke {
     bool add = true; ///< add (graded) or remove (keep scan)
 };
 
+/// UX-08: a print's mask as the user chose it. The width (feather ramp or preserve-edge inset; ignored for a
+/// hard edge) is in mm when the scan's DPI is reliable — converted when compositing, so a choice is the same
+/// physical edge at any DPI — or in px when there is no reliable DPI (or the print was set up before
+/// 0.7.0-alpha.5).
+struct MaskChoice {
+    MaskMode mode = MaskMode::hard_edge;
+    double width = 0;
+    bool mm = false;
+    friend bool operator==(const MaskChoice&, const MaskChoice&) = default;
+};
+/// Natural-blend presets (RFC-0007 §Natural blend), chosen with `fkcli maskeval` on the owner's real scans (7
+/// prints, 826 and 1200 dpi, ground truth): feather 0.05 mm had the smallest worst-case seam at 50 % (p99
+/// ΔE00 3.64 vs 6.61 for a hard edge, every print better) with an ungraded rim ≤ 0.33 px; the trial value
+/// 0.03 mm left 4.71. Preserve edge: 0.02 mm (3.96, rim ≤ 0.16 px). 1.6 / 2.4 / 3.1 px and 0.63 / 0.94 / 1.26
+/// px at 800 / 1200 / 1600 dpi.
+inline constexpr double kNaturalFeatherMm = 0.05;
+inline constexpr double kNaturalInsetMm = 0.02;
+/// The same edges in px for scans without a reliable DPI (as at 1200 dpi).
+inline constexpr double kNaturalFeatherPx = 2.4;
+inline constexpr double kNaturalInsetPx = 0.9;
+/// The natural-blend preset of `mode` (feather or preserve edge; hard edge = 0 px, the archival exact path).
+MaskChoice naturalBlend(MaskMode mode, bool dpiReliable);
+/// The renderer's parameters for a choice: the one conversion used by the composite preview and the final
+/// output. A width in mm with no DPI (≤ 0) is converted at 300 dpi.
+MaskParams resolveMask(const MaskChoice& c, double dpi);
+
+/// UX-08: how strongly a composite's picture differs from the scan just inside the image-area edge: the
+/// median ΔE00 (values taken as sRGB) over pixels 0.2–0.6 mm inside `inner`. Both buffers cover the same
+/// area: buffer pixel (u, v) is scan point `origin` + (u + 0.5, v + 0.5) / `scale`. Above kStrongEdgeChange
+/// no single default mask can be promised to look seamless (RFC-0007 §Natural blend): the app asks for a
+/// check at 100 % and an adjusted mask or alignment. 0 when nothing could be measured.
+inline constexpr double kStrongEdgeChange = 10.0;
+double edgeChange(const ImageBuffer& composite, const ImageBuffer& scanOnly, const Shape& inner, Vec2 origin,
+                  double scale, double pxPerMm);
+
 /// Confirmed adjustments for a graded file whose geometry differs from the export (PRD F06 table).
 struct EditAdjust {
     int rotate = 0;          ///< extra 90° clockwise turns the user applied in the editor (0..3)

@@ -129,6 +129,13 @@ struct CompositeRequest { const Item* item; const Sidecar* edit; const ImageBuff
   std::vector<uint8_t> editedIcc; RelinkActions actions; MaskParams mask;
   GeometryMode outputMode; WriteOptions write; ColorPolicy color; path output; XmpIds ids; };
 Result<ExportReport> compositeItem(ImageSource&, const CompositeRequest&, const CancelToken&, const ProgressFn&);
+// UX-08 natural blend: a print's mask choice (width in mm or px), presets, the one conversion, edge measurement
+struct MaskChoice { MaskMode mode; double width; bool mm; };
+inline constexpr double kNaturalFeatherMm = 0.05, kNaturalInsetMm = 0.02, kNaturalFeatherPx = 2.4, kNaturalInsetPx = 0.9;
+MaskChoice naturalBlend(MaskMode, bool dpiReliable);  MaskParams resolveMask(const MaskChoice&, double dpi);
+inline constexpr double kStrongEdgeChange = 10.0;
+double edgeChange(const ImageBuffer& composite, const ImageBuffer& scanOnly, const Shape& inner, Vec2 origin,
+                  double scale, double pxPerMm);
 ```
 
 ## 7. Project, sidecar, template (`fk/project.hpp`) — RFC-0009, `docs/project-format.md`
@@ -162,3 +169,4 @@ void fk_free(void*);
 | 1.0 | Initial API. |
 | 0.7.0-alpha.3 | `editShape`, `EditInput`, `EditHandle`, `ellipseHandle`, `isCircle` (UX-03). |
 | 0.7.0-alpha.4 | `quarterTurnMatrix`, `quarterTurnSize`, `ScanRecord::rotation`, `rotateScanView`, `exportTurns` (UX-04). |
+| 0.7.0-alpha.5 | `MaskChoice`, `naturalBlend`, `resolveMask`, `edgeChange`, `CompositeSettings::mask`/`maskSet`, `deltaE2000` (UX-08). |

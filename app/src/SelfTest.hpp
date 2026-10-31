@@ -65,6 +65,10 @@ class SelfTest : public QObject {
     /// (clicks at the expected screen positions), count kept, four turns restore the view, one undo, exports
     /// before the turn relink bit-exact after it, uprights never doubled, saved, source file unchanged.
     void runScanRotation();
+    /// UX-08 (U015): natural-blend default for new prints, per-print mask (right rail, typed width, undo,
+    /// explicit batch), preview and final with the same mask, edge-change hint, saved, older projects
+    /// unchanged.
+    void runMaskDefaults();
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.
     void key(int key, Qt::KeyboardModifiers mods, bool press, const QString& text = {});

@@ -48,6 +48,19 @@ FkDialog {
             color: Theme.textTertiary
             text: qsTr("For new scans. Each scan can be changed in the left rail.")
         }
+        // UX-08: the mask new prints get; each print keeps its own (right rail)
+        FieldRow {
+            label: qsTr("Mask for new prints"); labelWidth: 110
+            FkCombo {
+                objectName: "newPrintMaskSetting"
+                Layout.fillWidth: true
+                model: [{ text: qsTr("Natural blend (feather)"), value: "feather" },
+                        { text: qsTr("Preserve edge"), value: "preserve_edge" },
+                        { text: qsTr("Hard edge (archival exact)"), value: "hard_edge" }]
+                value: App.settings.newPrintMask
+                onPicked: (v) => App.setSetting("newPrintMask", v)
+            }
+        }
         // UX-03: on by default; holding Shift to constrain a drag works either way
         FkCheck {
             objectName: "shiftSwitchSetting"

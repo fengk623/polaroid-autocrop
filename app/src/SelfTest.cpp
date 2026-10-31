@@ -16,6 +16,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -155,6 +156,46 @@ bool samePixels(const QString& a, const QString& b, QString& why) {
             return false;
         }
     return true;
+}
+/// Writes `src` with per-channel gains and offsets (a colour grade: v × gain + offset, offset in 0…1),
+/// keeping its profile and its XMP (UX-08 edge tests).
+bool rewriteGraded(const QString& src, const QString& dst, std::array<double, 3> gain,
+                   std::array<double, 3> offset = {0, 0, 0}) {
+    fk::ImageInfo info;
+    auto img = fk::readImageFile(toPath(src), &info);
+    if (!img) return false;
+    const auto xmp = fk::readXmpPacket(toPath(src));
+    const int ch = img->channels();
+    for (int64_t y = 0; y < img->height(); ++y)
+        for (int64_t x = 0; x < img->width(); ++x)
+            for (int c = 0; c < ch; ++c) {
+                const double g = gain[static_cast<size_t>(std::min(c, 2))];
+                const double o = offset[static_cast<size_t>(std::min(c, 2))];
+                if (img->bits() == 16) {
+                    uint16_t v;
+                    std::memcpy(&v, img->row(y) + (x * ch + c) * 2, 2);
+                    v = static_cast<uint16_t>(std::clamp(std::lround(v * g + o * 65535), 0L, 65535L));
+                    std::memcpy(img->row(y) + (x * ch + c) * 2, &v, 2);
+                } else {
+                    uint8_t& v = img->row(y)[x * ch + c];
+                    v = static_cast<uint8_t>(std::clamp(std::lround(v * g + o * 255), 0L, 255L));
+                }
+            }
+    fk::WriteOptions opt;
+    opt.bits = img->bits();
+    opt.icc = info.icc;
+    opt.dpiX = info.dpiX;
+    opt.dpiY = info.dpiY;
+    if (xmp) opt.xmp = *xmp;
+    const QString tmp = dst + QStringLiteral(".tmp.tif");
+    QFile::remove(tmp);
+    auto sink = fk::createSink(toPath(tmp), opt);
+    if (!sink || !(*sink)->begin({img->width(), img->height()}, ch, img->bits())) return false;
+    for (int64_t y = 0; y < img->height(); ++y)
+        if (!(*sink)->writeRows(img->row(y), 1, img->rowBytes())) return false;
+    if (!(*sink)->finish()) return false;
+    QFile::remove(dst);
+    return QFile::rename(tmp, dst);
 }
 /// `b` is `a` turned by `k` quarter turns clockwise, pixel for pixel (UX-04: lossless export orientation).
 bool sameTurned(const QString& a, const QString& b, int k, QString& why) {
@@ -2046,6 +2087,239 @@ void SelfTest::runScanRotation() {
     app_->newProject();
 }
 
+void SelfTest::runMaskDefaults() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("mask"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QVariantMap saved = app_->settings();
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{{"exportFolder", exportDir},
+                                                                        {"exportFormat", "tif"},
+                                                                        {"geometryMode", "crop"},
+                                                                        {"finalMode", "real"},
+                                                                        {"finalFormat", "tif"},
+                                                                        {"applyUpright", false},
+                                                                        {"rightTab", 2}})
+        app_->setSetting(k, v);
+    auto restoreSettings = [&] {
+        for (const char* k : {"exportFolder", "exportFormat", "geometryMode", "finalMode", "finalFormat",
+                              "applyUpright", "rightTab", "newPrintMask"})
+            app_->setSetting(QString::fromLatin1(k), saved.value(QString::fromLatin1(k)));
+    };
+    check(QStringLiteral("UX-08 new prints get the natural blend by default"),
+          saved.value("newPrintMask").toString() == QLatin1String("feather"),
+          saved.value("newPrintMask").toString());
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    QCoreApplication::processEvents();
+    std::vector<std::string> ids;
+    double dpi = 0;
+    bool reliable = false;
+    if (!app_->project().scans.empty()) {
+        const auto& sc = app_->project().scans.front();
+        for (const auto& it : sc.items)
+            ids.push_back(it.itemId);
+        dpi = sc.dpiUsed > 0 ? sc.dpiUsed : sc.info.dpiX;
+        reliable =
+            dpi > 0 && std::find(sc.warnings.begin(), sc.warnings.end(), "dpi_unknown") == sc.warnings.end();
+    }
+    check(QStringLiteral("UX-08 setup: prints to composite"), !ids.empty(), QString::number(ids.size()));
+    if (ids.empty()) {
+        restoreSettings();
+        return;
+    }
+    auto rec = [&](const std::string& id) -> const fk::ItemRecord* { return app_->item(id); };
+    auto maskOf = [&](const std::string& id) {
+        app_->selectItem(toQ(id));
+        QCoreApplication::processEvents();
+        return app_->currentItem().value("mask").toMap();
+    };
+    auto maskText = [](const QVariantMap& m) {
+        return QStringLiteral("%1 %2 %3 (= %4 px), own %5")
+            .arg(m.value("mode").toString())
+            .arg(m.value("width").toDouble())
+            .arg(m.value("unit").toString())
+            .arg(m.value("px").toDouble(), 0, 'f', 3)
+            .arg(m.value("own").toBool());
+    };
+    const fk::MaskChoice natural = fk::naturalBlend(fk::MaskMode::feather, reliable);
+    bool allNatural = true;
+    for (const auto& id : ids)
+        allNatural = allNatural && rec(id)->composite.maskSet && rec(id)->composite.mask == natural;
+    const QVariantMap m0 = maskOf(ids.front());
+    check(QStringLiteral("UX-08 every new print: feather %1 %2, converted with the scan's DPI")
+              .arg(natural.width)
+              .arg(natural.mm ? QStringLiteral("mm") : QStringLiteral("px")),
+          allNatural && std::abs(m0.value("px").toDouble() -
+                                 (natural.mm ? natural.width * dpi / 25.4 : natural.width)) < 1e-9,
+          maskText(m0) + QStringLiteral(" at %1 dpi").arg(dpi));
+    QQuickItem* combo = findItem(QStringLiteral("maskModeCombo"));
+    QQuickItem* field = findItem(QStringLiteral("maskWidthField"));
+    check(QStringLiteral("UX-08 the right rail shows the print's mask"),
+          combo && field && combo->isVisible() && field->isVisible() &&
+              combo->property("value").toString() == QLatin1String("feather") &&
+              std::abs(field->property("value").toDouble() - natural.width) < 1e-9,
+          combo && field ? QStringLiteral("%1 / %2").arg(combo->property("value").toString(),
+                                                         field->property("text").toString())
+                         : QStringLiteral("controls not found"));
+    // the width typed into the field (real key events), then undone
+    if (field && field->isVisible()) {
+        field->forceActiveFocus();
+        key(Qt::Key_A, Qt::ControlModifier, true);
+        key(Qt::Key_A, Qt::ControlModifier, false);
+        const QString typed = natural.mm ? QStringLiteral("0.06") : QStringLiteral("2.5");
+        for (const QChar c : typed) {
+            const int k = c == QLatin1Char('.') ? Qt::Key_Period : Qt::Key_0 + (c.unicode() - '0');
+            key(k, Qt::NoModifier, true, QString(c));
+            key(k, Qt::NoModifier, false, QString(c));
+        }
+        key(Qt::Key_Return, Qt::NoModifier, true);
+        key(Qt::Key_Return, Qt::NoModifier, false);
+        const fk::MaskChoice afterTyping = rec(ids.front())->composite.mask;
+        app_->undo();
+        check(QStringLiteral("UX-08 width typed in the right rail is saved with the print; undo restores it"),
+              afterTyping.mode == fk::MaskMode::feather &&
+                  std::abs(afterTyping.width - typed.toDouble()) < 1e-9 &&
+                  rec(ids.front())->composite.mask == natural,
+              QStringLiteral("typed %1 → %2").arg(typed).arg(afterTyping.width));
+    }
+    // explicit batch: two prints selected, the current one's mask applied with the button (mouse)
+    if (ids.size() >= 2) {
+        app_->selectItem(toQ(ids[0]));
+        app_->selectItem(toQ(ids[1]), true);
+        QCoreApplication::processEvents();
+        app_->setItemMaskMode(app_->currentItemId(), QStringLiteral("preserve_edge"));
+        const std::string cur = toStd(app_->currentItemId());
+        const std::string other = cur == ids[0] ? ids[1] : ids[0];
+        const bool before = rec(other)->composite.mask == natural;
+        const bool clicked = click(findItem(QStringLiteral("maskApplyButton")));
+        const bool appliedToOther =
+            rec(other)->composite.mask == fk::naturalBlend(fk::MaskMode::preserve_edge, reliable);
+        const bool restUnchanged = ids.size() < 3 || rec(ids[2])->composite.mask == natural;
+        check(QStringLiteral("UX-08 applied to the selected prints only, with the button (mouse)"),
+              before && clicked && appliedToOther && restUnchanged);
+    } else {
+        skip(QStringLiteral("UX-08 applied to the selected prints only, with the button (mouse)"),
+             QStringLiteral("one print on this scan"));
+    }
+
+    // preview and final output use the same mask; graded files: a normal grade and a strong one
+    app_->selectItem(toQ(ids.front()));
+    app_->exportImageAreas({});
+    app_->waitIdle(300000);
+    const QStringList edits = filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif"));
+    // edits are named by label: P01 is ids[0], … (labels follow the detection order)
+    const bool graded =
+        edits.size() == ids.size() && rewriteGraded(edits[0], edits[0], {1.03, 1.03, 1.03}) &&
+        (ids.size() < 2 || rewriteGraded(edits.back(), edits.back(), {1.2, 1.0, 0.7}, {0.12, 0, 0}));
+    QVariantList rows;
+    auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+    QVariantList urls;
+    for (const auto& e : edits)
+        urls << e;
+    app_->relinkFiles(urls);
+    app_->waitIdle(300000);
+    disconnect(c);
+    app_->applyRelink(rows);
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    auto previewOf = [&](const std::string& id) {
+        app_->selectItem(toQ(id));
+        app_->requestCompositePreview(toQ(id));
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+        return app_->currentItem().value("mask").toMap();
+    };
+    const QVariantMap normal = previewOf(ids.front());
+    app_->exportFinal({toQ(ids.front())}, {});
+    app_->waitIdle(300000);
+    const auto used = app_->masksUsed(ids.front());
+    const fk::MaskParams want = fk::resolveMask(rec(ids.front())->composite.mask, dpi);
+    auto same = [](const fk::MaskParams& a, const fk::MaskParams& b) {
+        return a.mode == b.mode && a.featherPx == b.featherPx && a.preserveEdgePx == b.preserveEdgePx;
+    };
+    check(QStringLiteral("UX-08 the composite preview and the final output use the print's mask"),
+          graded && same(used.first, want) && same(used.second, want) &&
+              !filesMatching(exportDir, QStringLiteral("*_FINAL_v001.tif")).isEmpty(),
+          QStringLiteral("preview %1/%2 px, final %3/%4 px, print %5/%6 px")
+              .arg(used.first.featherPx)
+              .arg(used.first.preserveEdgePx)
+              .arg(used.second.featherPx)
+              .arg(used.second.preserveEdgePx)
+              .arg(want.featherPx)
+              .arg(want.preserveEdgePx));
+    check(QStringLiteral("UX-08 a normal grade (+3 %) is not flagged at the edge"),
+          normal.value("strongEdgeChange").toBool() == false && normal.value("edgeChange").toDouble() > 0,
+          QStringLiteral("edge change ΔE00 %1").arg(normal.value("edgeChange").toDouble(), 0, 'f', 2));
+    if (ids.size() >= 2) {
+        const QVariantMap strong = previewOf(ids.back());
+        QQuickItem* hint = findItem(QStringLiteral("strongEdgeHint"));
+        check(QStringLiteral("UX-08 a strong colour change at the edge asks for a check (right rail)"),
+              strong.value("strongEdgeChange").toBool() && hint && hint->isVisible(),
+              QStringLiteral("edge change ΔE00 %1").arg(strong.value("edgeChange").toDouble(), 0, 'f', 2));
+    } else {
+        skip(QStringLiteral("UX-08 a strong colour change at the edge asks for a check (right rail)"),
+             QStringLiteral("one print on this scan (its graded file carries the normal grade)"));
+    }
+    snapshot(QStringLiteral("U015-mask"));
+
+    // saved and reopened: each print keeps its own mask
+    std::map<std::string, fk::MaskChoice> masks;
+    for (const auto& id : ids)
+        masks[id] = rec(id)->composite.mask;
+    const QString proj = QDir(d).filePath(QStringLiteral("mask.fkproj"));
+    const bool savedOk = app_->saveProjectAs(proj);
+    app_->newProject();
+    const bool opened = app_->openProject(QUrl::fromLocalFile(proj));
+    app_->waitIdle(300000);
+    bool kept = savedOk && opened;
+    for (const auto& id : ids)
+        kept = kept && rec(id) && rec(id)->composite.maskSet && rec(id)->composite.mask == masks[id];
+    check(QStringLiteral("UX-08 saved and reopened: every print keeps its own mask"), kept);
+    // a project from before 0.7.0-alpha.5 (no per-print mask): its prints keep the project's setting
+    {
+        QFile f(proj);
+        f.open(QIODevice::ReadOnly);
+        QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+        f.close();
+        QJsonObject root = doc.object();
+        QJsonArray scans = root.value("scans").toArray();
+        for (int i = 0; i < scans.size(); ++i) {
+            QJsonObject sc = scans[i].toObject();
+            QJsonArray items = sc.value("items").toArray();
+            for (int j = 0; j < items.size(); ++j) {
+                QJsonObject it = items[j].toObject();
+                QJsonObject comp = it.value("composite").toObject();
+                comp.remove(QStringLiteral("mask"));
+                it.insert(QStringLiteral("composite"), comp);
+                items[j] = it;
+            }
+            sc.insert(QStringLiteral("items"), items);
+            scans[i] = sc;
+        }
+        root.insert(QStringLiteral("scans"), scans);
+        const QString old = QDir(d).filePath(QStringLiteral("before-0.7.0-alpha.5.fkproj"));
+        QFile o(old);
+        o.open(QIODevice::WriteOnly);
+        o.write(QJsonDocument(root).toJson());
+        o.close();
+        app_->newProject();
+        app_->openProject(QUrl::fromLocalFile(old));
+        app_->waitIdle(300000);
+        const QVariantMap m = maskOf(ids.front());
+        check(QStringLiteral("UX-08 older projects: prints keep compositing with the project's setting"),
+              rec(ids.front()) && !rec(ids.front())->composite.maskSet && !m.value("own").toBool() &&
+                  m.value("unit").toString() == QLatin1String("px") &&
+                  m.value("mode").toString() == app_->settings().value("maskMode").toString(),
+              maskText(m));
+    }
+    restoreSettings();
+    app_->newProject();
+}
+
 int SelfTest::scenarioMinIsWhite() {
     // FK-011: rows from the TIFF reader are already in normal polarity; the display converter inverts
     // MinIsWhite again, so Preview (proxy) and Full (rows) disagree.
@@ -2417,6 +2691,7 @@ int SelfTest::run() {
     runCountSetting();
     runShapeEditing();
     runScanRotation();
+    runMaskDefaults();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

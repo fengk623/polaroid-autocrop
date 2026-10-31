@@ -11,6 +11,7 @@ Rectangle {
     required property var canvas
     color: Theme.surfacePanel
     readonly property var it: App.currentItem
+    readonly property var mk: (it && it.mask) ? it.mask : ({}) // UX-08: the current print's mask
     readonly property bool hasItem: it.id !== undefined
     readonly property int lw: 96
 
@@ -420,26 +421,76 @@ Rectangle {
                             FkButton { text: qsTr("Compare"); enabled: rail.it.relinked === true; onClicked: { canvas.mode = "composite"; canvas.compare = true } }
                         }
                     }
+                    // UX-08: this print's mask (saved with the print); preview and final output use the same mask
                     Section {
                         title: qsTr("Mask")
+                        note: rail.mk.own === false ? qsTr("project setting") : ""
                         FieldRow {
                             label: qsTr("Edge"); labelWidth: rail.lw
                             FkCombo {
+                                objectName: "maskModeCombo"
                                 Layout.fillWidth: true
-                                model: [{ text: qsTr("Hard edge"), value: "hard_edge" }, { text: qsTr("Feather"), value: "feather" }, { text: qsTr("Preserve edge"), value: "preserve_edge" }]
-                                value: App.settings.maskMode
-                                onPicked: (v) => App.setSetting("maskMode", v)
+                                model: [{ text: qsTr("Natural blend (feather)"), value: "feather" },
+                                        { text: qsTr("Preserve edge"), value: "preserve_edge" },
+                                        { text: qsTr("Hard edge (archival exact)"), value: "hard_edge" }]
+                                value: rail.mk.mode || "hard_edge"
+                                onPicked: (v) => App.setItemMaskMode(rail.it.id, v)
                             }
                         }
                         FieldRow {
-                            visible: App.settings.maskMode === "feather"
-                            label: qsTr("Feather"); labelWidth: rail.lw
-                            NumField { unit: "px"; from: 0; to: 5; step: 0.5; value: App.settings.featherPx; onCommitted: (v) => App.setSetting("featherPx", v) }
+                            visible: (rail.mk.mode || "hard_edge") !== "hard_edge"
+                            label: rail.mk.mode === "feather" ? qsTr("Feather") : qsTr("Inset"); labelWidth: rail.lw
+                            NumField {
+                                objectName: "maskWidthField"
+                                unit: rail.mk.unit || "px"
+                                from: 0; to: rail.mk.unit === "mm" ? 1 : 50
+                                step: rail.mk.unit === "mm" ? 0.01 : 0.5
+                                decimals: rail.mk.unit === "mm" ? 2 : 1
+                                value: rail.mk.width || 0
+                                onCommitted: (v) => App.setItemMaskWidth(rail.it.id, v)
+                            }
                         }
-                        FieldRow {
-                            visible: App.settings.maskMode === "preserve_edge"
-                            label: qsTr("Inset"); labelWidth: rail.lw
-                            NumField { unit: "px"; from: 0; to: 20; step: 0.5; value: App.settings.preserveEdgePx; onCommitted: (v) => App.setSetting("preserveEdgePx", v) }
+                        Text {
+                            visible: (rail.mk.mode || "hard_edge") !== "hard_edge" && rail.mk.unit === "mm"
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            text: qsTr("≈ %1 px at %2 dpi").arg((rail.mk.px || 0).toFixed(2)).arg(Math.round(rail.mk.dpi || 0))
+                            font.pixelSize: Theme.fontCaption; color: Theme.textTertiary
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: Theme.fontCaption
+                            color: Theme.textTertiary
+                            text: rail.mk.mode === "hard_edge" ? qsTr("Every image-area pixel comes from the graded file, every frame pixel from the scan: exact, for archives.")
+                                : rail.mk.unit === "px" ? qsTr("This scan has no reliable resolution: the width is in pixels.")
+                                : rail.mk.mode === "feather" ? qsTr("The grade fades in over a hair's width inside the image area; the frame is never changed.")
+                                : qsTr("A hair's width of the original image is kept along the edge; the frame is never changed.")
+                        }
+                        Text {
+                            objectName: "strongEdgeHint"
+                            visible: rail.mk.strongEdgeChange === true
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: Theme.fontCaption
+                            color: Theme.warning
+                            text: "⚠ " + qsTr("Strong colour change at the image edge: check the edge at 100 % and widen the mask or check the alignment if a line shows.")
+                        }
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            FkButton {
+                                objectName: "maskDefaultButton"
+                                text: qsTr("Natural default")
+                                enabled: (rail.mk.mode || "hard_edge") !== "hard_edge" && rail.mk.isDefault !== true
+                                onClicked: App.resetItemMask(rail.it.id)
+                            }
+                            FkButton {
+                                objectName: "maskApplyButton"
+                                visible: App.selectedItemIds.length > 1
+                                text: qsTr("Apply to %n selected print(s)", "", App.selectedItemIds.length - 1)
+                                onClicked: App.applyMaskToItems(rail.it.id, App.selectedItemIds)
+                            }
                         }
                     }
                     Section {
