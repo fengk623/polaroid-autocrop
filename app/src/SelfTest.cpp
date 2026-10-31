@@ -3606,6 +3606,37 @@ void SelfTest::runFreezeRegression() {
               QStringLiteral("%1 · %2-bit · %3 dpi").arg(icc).arg(sc.value("bits").toInt()).arg(dpi));
     }
 
+    // C04 the corner fields: one focused and left without typing changes nothing (the field shows the value
+    // rounded to 0.1 px; committing that would move the corner and mark the boundary edited)
+    {
+        app_->setSetting(QStringLiteral("rightTab"), 0);
+        app_->selectItem(first);
+        settle();
+        const QVariant before = app_->currentItem().value("outer");
+        const QString sourceBefore = app_->currentItem().value("outerSource").toString();
+        QQuickItem* cornerField = findItemIf([](QQuickItem* it) {
+            return it->isVisible() && it->isEnabled() && it->metaObject()->indexOfProperty("decimals") >= 0 &&
+                   it->property("unit").toString() == QLatin1String("x");
+        });
+        if (cornerField) {
+            cornerField->forceActiveFocus();
+            settle();
+            focusCanvas();
+            const QVariant after = app_->currentItem().value("outer");
+            const QVariantList p0 = before.toMap().value("points").toList().value(0).toList();
+            const QVariantList p1 = after.toMap().value("points").toList().value(0).toList();
+            check(QStringLiteral("FREEZE C04 a corner field focused and left without typing changes nothing"),
+                  after == before && app_->currentItem().value("outerSource").toString() == sourceBefore,
+                  QStringLiteral("corner x %1 → %2, source %3 → %4")
+                      .arg(p0.value(0).toDouble(), 0, 'f', 4)
+                      .arg(p1.value(0).toDouble(), 0, 'f', 4)
+                      .arg(sourceBefore, app_->currentItem().value("outerSource").toString()));
+        } else {
+            skip(QStringLiteral("FREEZE C04 a corner field focused and left without typing changes nothing"),
+                 QStringLiteral("no corner field visible"));
+        }
+    }
+
     // C11 exclude / include with X; H05 single keys do nothing while typing
     focusCanvas();
     app_->selectItem(first);

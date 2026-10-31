@@ -164,6 +164,7 @@
  },
  "C04": {
   "checks": [
+   "FREEZE C04",
    "FREEZE C07",
    "UX-09 drag right (mouse)"
   ],

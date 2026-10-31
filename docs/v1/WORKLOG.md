@@ -904,3 +904,12 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   blocked) and `docs/v1/REGRESSION.md`; guide §13 lists what is not built or not verified.
 - Results (Linux, fixture): self-test 245 passed, 0 failed, 0 skipped; freeze regression 75 passed, 3 by CI steps,
   3 manual, 0 failed.
+- PR #29 CI round 1: core and app jobs green on all platforms; the release workflow's packaged self-tests failed on
+  macOS (arm64 and x86_64) and Windows with one check each: "FREEZE C07 reset to detected restores the detected
+  boundary" — the corner was 0.049 px from the detected one after the reset. Cause: the step before (H05) focused
+  a corner coordinate field and left it; the number field committed its displayed text, rounded to 0.1 px, which
+  moved the corner and marked the boundary edited — a real defect, also reachable by a user who only clicks into
+  the field and away (on Linux the same rounding was 0.001 px, inside the check's tolerance) [real defect]. New
+  check "FREEZE C04 a corner field focused and left without typing changes nothing": red first (260.6013 →
+  260.6000, source auto → manual), then the number field commits only when its text changed: green, and C07 0.000
+  px. 23 FREEZE checks.

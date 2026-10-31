@@ -11,6 +11,9 @@ All notable changes. Versions follow `VERSION`; release notes with measurements 
   folder import, relocating a moved scan, removing a scan, templates, reset and snap, reviewed-and-next, exclude,
   select all, print/scan navigation, view keys, zoom, overlays, compare, full screen, Settings, About, the info
   chips, batch counts, recent projects, no single-key shortcuts while typing.
+- Fixed (found by the regression): clicking into a corner coordinate field and leaving it without typing
+  committed the field's rounded text — the corner moved by up to 0.05 px and the boundary was marked edited.
+  Number fields now commit only when their text was changed.
 - User guide completed: every shortcut the app defines is in it (`tools/check-guide.py`, CI) — close project, quit,
   arrow-key nudges, number fields and edge strips were missing; a closing section lists what is not built or not
   verified yet. `docs/v1/COMPLETION.md`: the 26 items with status and evidence (23 done with automated
