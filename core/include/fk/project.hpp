@@ -156,6 +156,9 @@ struct ProjectSettings {
     std::string exportCompression = "lzw";
     std::string colorPolicy = "keep";
     std::string privacy = "keep_all_safe";
+    /// FK-008: the remaining output parameters (geometry, final output, mask, frame…) as a JSON object, so a
+    /// reopened project produces the same outputs; written by the app, kept verbatim by the core.
+    std::string outputJson;
 };
 
 // ---- sidecar / export record
@@ -201,8 +204,13 @@ enum class OpenMode : int { read_write = 0, read_only = 1 };
 
 Project newProject(const std::string& name);
 /// Loads (and migrates) a project. Newer schemas open read-only (`mode`), damaged files fail with
-/// parse_error.
+/// parse_error — whose detail names the backup when one is usable (FK-008).
 Result<Project> loadProject(const std::filesystem::path& path, OpenMode* mode = nullptr);
+/// FK-008: `<project>.bak`, kept by the last save, when it is a readable project.
+std::optional<std::filesystem::path> usableBackup(const std::filesystem::path& projectPath);
+/// FK-008: moves a damaged project file aside to `<name>.damaged-<UTC time>` (kept, never deleted) and
+/// returns that path; the project path is then free for the restored content.
+Result<std::filesystem::path> setAsideDamaged(const std::filesystem::path& projectPath);
 /// Atomic save: temp → flush → rename; the previous file is kept as `<name>.bak`.
 Status saveProject(const Project& p, const std::filesystem::path& path);
 std::string projectToJson(const Project& p);

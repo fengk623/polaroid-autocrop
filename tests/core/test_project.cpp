@@ -1002,3 +1002,91 @@ TEST(SourceIdentity, AGradedFileSavedOverIsCheckedAgain) {
     EXPECT_TRUE(recheckGraded(rec, turnedT, turned(regraded, 2), {}).samePicture);
     EXPECT_FALSE(recheckGraded(rec, turnedT, regraded, {}).samePicture);
 }
+
+// ---- data protection (FK-008, U008, RFC-0017)
+// --------------------------------------------------------------------
+
+TEST(DataProtection, DamagedProjectOffersItsBackup) {
+    // formerly KnownIssue.FK008_DamagedProjectOffersItsBackup
+    TempDir t;
+    const auto file = t / "p.fkproj";
+    Project p = newProject("t");
+    ASSERT_TRUE(saveProject(p, file));
+    ASSERT_TRUE(saveProject(p, file)); // second save keeps p.fkproj.bak
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << "{ damaged";
+    auto loaded = loadProject(file);
+    ASSERT_FALSE(loaded);
+    const std::string all = loaded.error().message + " " + loaded.error().detail;
+    EXPECT_NE(all.find(".bak"), std::string::npos) << all;
+    ASSERT_TRUE(usableBackup(file).has_value());
+}
+
+TEST(DataProtection, ADamagedFileNeverReplacesAGoodBackup) {
+    TempDir t;
+    const auto file = t / "p.fkproj";
+    Project p = newProject("good");
+    ASSERT_TRUE(saveProject(p, file));
+    p.name = "good, second save";
+    ASSERT_TRUE(saveProject(p, file)); // .bak = "good"
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << "{ damaged";
+    p.name = "saved over the damaged file";
+    ASSERT_TRUE(saveProject(p, file));
+    auto bak = loadProject(pathFromUtf8(pathToUtf8(file) + ".bak"));
+    ASSERT_TRUE(bak.ok()) << "the backup must still be the last good save";
+    EXPECT_EQ(bak->name, "good");
+    EXPECT_EQ(loadProject(file)->name, "saved over the damaged file");
+}
+
+TEST(DataProtection, RestoringKeepsTheDamagedFile) {
+    TempDir t;
+    const auto file = t / "p.fkproj";
+    Project p = newProject("restore me");
+    ASSERT_TRUE(saveProject(p, file));
+    ASSERT_TRUE(saveProject(p, file));
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << "{ damaged";
+    auto bak = usableBackup(file);
+    ASSERT_TRUE(bak.has_value());
+    auto aside = setAsideDamaged(file);
+    ASSERT_TRUE(aside.ok()) << aside.error().message;
+    EXPECT_FALSE(std::filesystem::exists(file));
+    EXPECT_EQ(slurp(*aside), "{ damaged") << "the damaged original is kept unchanged";
+    auto restored = loadProject(*bak);
+    ASSERT_TRUE(restored.ok());
+    ASSERT_TRUE(saveProject(*restored, file));
+    EXPECT_EQ(loadProject(file)->name, "restore me");
+    EXPECT_TRUE(std::filesystem::exists(*aside));
+    // a second damage the same second gets its own name
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << "{ again";
+    auto aside2 = setAsideDamaged(file);
+    ASSERT_TRUE(aside2.ok());
+    EXPECT_NE(*aside2, *aside);
+}
+
+TEST(DataProtection, OutputParametersAreSavedWithTheProject) {
+    TempDir t;
+    const auto file = t / "p.fkproj";
+    Project p = newProject("out");
+    p.settings.outputJson = R"({"geometryMode":"straighten","finalMode":"synthetic","featherPx":2.5})";
+    ASSERT_TRUE(saveProject(p, file));
+    auto back = loadProject(file);
+    ASSERT_TRUE(back.ok());
+    EXPECT_NE(back->settings.outputJson.find("\"geometryMode\":\"straighten\""), std::string::npos)
+        << back->settings.outputJson;
+    EXPECT_NE(back->settings.outputJson.find("2.5"), std::string::npos);
+}
+
+TEST(DataProtection, AnInterruptedSaveLeavesTheProjectIntact) {
+    TempDir t;
+    const auto file = t / "p.fkproj";
+    Project p = newProject("intact");
+    ASSERT_TRUE(saveProject(p, file));
+    // what a save interrupted before its rename leaves behind
+    std::ofstream(pathFromUtf8(pathToUtf8(file) + ".fk-tmp-abcd1234"), std::ios::binary) << "{ half writ";
+    auto back = loadProject(file);
+    ASSERT_TRUE(back.ok());
+    EXPECT_EQ(back->name, "intact");
+    // a save into a folder that cannot be written fails and reports it; nothing is changed
+    auto st = saveProject(p, t / "no-such-dir" / "p.fkproj");
+    EXPECT_FALSE(st.ok());
+    EXPECT_EQ(loadProject(file)->name, "intact");
+}

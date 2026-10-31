@@ -33,10 +33,16 @@ ApplicationWindow {
         readonly property string mod: win.isMac ? "⌘" : "Ctrl+"
         function importScans() { scanDialog.open() }
         function importFolder() { folderDialog.purpose = "import"; folderDialog.open() }
+        // FK-001: every way of replacing the open project goes through win.replaceProject (save / don't save / cancel)
         function openProject() { projectOpenDialog.open() }
+        function recoverWork() {
+            const snaps = App.recoverySnapshots()
+            if (snaps.length) recoveryDialog.show(snaps)
+            else App.notify(qsTr("No unsaved work to recover."))
+        }
         function save() { if (App.projectPath.length === 0) projectSaveDialog.open(); else App.saveProject() }
         function saveAs() { projectSaveDialog.open() }
-        function newProject() { App.newProject() }
+        function newProject() { win.replaceProject("new", "") }
         function relocate() { folderDialog.purpose = "relocate"; folderDialog.open() }
         function chooseExportFolder() { folderDialog.purpose = "export"; folderDialog.open() }
         function exportImageAreas(ids) { exportDialog.openFor(ids === undefined ? App.selectedItemIds : ids, false) }
@@ -188,7 +194,7 @@ ApplicationWindow {
         title: qsTr("Open project")
         fileMode: FileDialog.OpenFile
         nameFilters: [qsTr("FrameKeeper projects (*.fkproj)")]
-        onAccepted: App.openProject(selectedFile)
+        onAccepted: win.replaceProject("openUrl", selectedFile)
     }
     FileDialog {
         id: projectSaveDialog
@@ -196,7 +202,13 @@ ApplicationWindow {
         fileMode: FileDialog.SaveFile
         defaultSuffix: "fkproj"
         nameFilters: [qsTr("FrameKeeper projects (*.fkproj)")]
-        onAccepted: App.saveProjectAs(selectedFile)
+        onAccepted: {
+            const ok = App.saveProjectAs(selectedFile)
+            const p = win.saveThen
+            win.saveThen = null
+            if (ok && p) win.doReplace(p.action, p.url)
+        }
+        onRejected: win.saveThen = null // no path chosen: the project stays as it is, unsaved
     }
     FolderDialog {
         id: folderDialog
@@ -246,6 +258,8 @@ ApplicationWindow {
         target: App
         function onNotification(text, kind) { toasts.push(text, kind) }
         function onRelinkResults(rows) { relinkDialog.show(rows) }
+        function onOpenRequested(url) { win.replaceProject("openUrl", url) }
+        function onBackupAvailable(path, backupName, backupTime) { backupDialog.show(path, backupName, backupTime) }
         function onRelinkRowUpdated(row) { relinkDialog.updateRow(row) }
         function onExportFinished(folder, written, failed) {
             toasts.push(failed > 0 ? qsTr("%1 written, %2 failed.").arg(written).arg(failed) : qsTr("%n file(s) written.", "", written),
@@ -254,27 +268,131 @@ ApplicationWindow {
         }
     }
 
+    // ---------------------------------------------------------------- data protection (FK-001, FK-008)
+    property var pendingReplace: null
+    property var saveThen: null
+    property bool quitConfirmed: false
     onClosing: (close) => {
-        if (App.dirty && App.counts.scans > 0 && !quitConfirm.confirmed) {
+        const info = App.replaceInfo()
+        if (!quitConfirmed && (info.unsaved || info.jobs > 0)) {
             close.accepted = false
-            quitConfirm.open()
+            replaceProject("quit", "")
+        }
+    }
+    /// Asks before anything replaces the open project: new, open (menu, recent, drop), restore, recover, quit.
+    function replaceProject(action, url) {
+        const info = App.replaceInfo()
+        if (!info.unsaved && info.jobs === 0) { doReplace(action, url); return }
+        pendingReplace = { action: action, url: url || "", unsaved: info.unsaved, jobs: info.jobs }
+        replaceConfirm.open()
+    }
+    function doReplace(action, url) {
+        if (action === "new") App.newProject()
+        else if (action === "openUrl") App.openProject(url)
+        else if (action === "restore") App.restoreBackup(url)
+        else if (action === "recover") App.recoverSnapshot(url)
+        else if (action === "quit") { quitConfirmed = true; win.close() }
+    }
+    /// "save", "dontsave" or "cancel".
+    function finishReplace(choice) {
+        const p = pendingReplace
+        pendingReplace = null
+        replaceConfirm.close()
+        if (!p || choice === "cancel") return
+        if (choice === "dontsave") {
+            App.discardCurrentRecovery()
+            doReplace(p.action, p.url)
+            return
+        }
+        if (App.projectPath.length === 0) { saveThen = p; projectSaveDialog.open(); return }
+        if (App.saveProject()) doReplace(p.action, p.url)
+        // a failed save keeps everything as it was; the error has been shown
+    }
+    FkDialog {
+        id: replaceConfirm
+        objectName: "replaceConfirm"
+        title: win.pendingReplace && win.pendingReplace.unsaved ? qsTr("Unsaved changes") : qsTr("Tasks running")
+        onRejected: win.pendingReplace = null
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.fontBody; color: Theme.textPrimary
+                text: !win.pendingReplace ? ""
+                      : (win.pendingReplace.unsaved ? (win.pendingReplace.action === "quit" ? qsTr("Save the project before quitting?")
+                                                                                            : qsTr("Save the project before closing it?"))
+                                                    : qsTr("Continue?"))
+                        + (win.pendingReplace.jobs > 0 ? " " + qsTr("%n background task(s) will be cancelled.", "", win.pendingReplace.jobs) : "")
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                FkButton {
+                    text: win.pendingReplace && win.pendingReplace.unsaved ? qsTr("Don't save") : qsTr("Continue")
+                    onClicked: win.finishReplace("dontsave")
+                }
+                FkButton { text: qsTr("Cancel"); onClicked: win.finishReplace("cancel") }
+                FkButton {
+                    visible: win.pendingReplace !== null && win.pendingReplace.unsaved
+                    primary: true; text: qsTr("Save"); onClicked: win.finishReplace("save")
+                }
+            }
         }
     }
     FkDialog {
-        id: quitConfirm
-        property bool confirmed: false
-        title: qsTr("Unsaved changes")
+        id: backupDialog
+        property string path: ""
+        property string backupName: ""
+        property string backupTime: ""
+        function show(p, n, t) { path = p; backupName = n; backupTime = t; open() }
+        title: qsTr("The project file is damaged")
         contentItem: ColumnLayout {
             spacing: 10
-            Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.fontBody; color: Theme.textPrimary
-                   text: qsTr("Save the project before quitting?") }
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.fontBody; color: Theme.textPrimary
+                text: qsTr("A backup from the last save is available (%1, %2). Restore it? The damaged file is kept next to it under a new name.")
+                      .arg(backupDialog.backupName).arg(backupDialog.backupTime)
+            }
             RowLayout {
                 Layout.alignment: Qt.AlignRight
-                FkButton { text: qsTr("Don't save"); onClicked: { quitConfirm.confirmed = true; quitConfirm.close(); win.close() } }
-                FkButton { text: qsTr("Cancel"); onClicked: quitConfirm.close() }
-                FkButton { primary: true; text: qsTr("Save"); onClicked: { quitConfirm.close(); cmd.save(); if (!App.dirty) { quitConfirm.confirmed = true; win.close() } } }
+                FkButton { text: qsTr("Cancel"); onClicked: backupDialog.close() }
+                FkButton { primary: true; text: qsTr("Restore backup"); onClicked: { backupDialog.close(); win.replaceProject("restore", backupDialog.path) } }
             }
         }
+    }
+    FkDialog {
+        id: recoveryDialog
+        property var snaps: []
+        function show(list) { snaps = list; open() }
+        title: qsTr("Recover unsaved work")
+        contentItem: ColumnLayout {
+            spacing: 8
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.fontBody; color: Theme.textPrimary
+                text: qsTr("FrameKeeper was closed with unsaved changes. Recovered work opens unsaved; save it to keep it.")
+            }
+            Repeater {
+                model: recoveryDialog.snaps
+                RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Text {
+                        Layout.fillWidth: true; elide: Text.ElideMiddle; font.pixelSize: Theme.fontBody; color: Theme.textPrimary
+                        text: qsTr("%1 · %2").arg(modelData.name).arg(modelData.savedAt)
+                              + (modelData.projectPath ? " · " + modelData.projectPath : " · " + qsTr("never saved"))
+                    }
+                    FkButton { text: qsTr("Discard"); onClicked: { App.discardSnapshot(modelData.file); recoveryDialog.snaps = App.recoverySnapshots(); if (!recoveryDialog.snaps.length) recoveryDialog.close() } }
+                    FkButton { primary: true; text: qsTr("Recover"); onClicked: { recoveryDialog.close(); win.replaceProject("recover", modelData.file) } }
+                }
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                FkButton { text: qsTr("Later"); onClicked: recoveryDialog.close() }
+            }
+        }
+    }
+    Component.onCompleted: {
+        const snaps = App.recoverySnapshots()
+        if (snaps.length) recoveryDialog.show(snaps)
     }
     function showSettings() { settingsDialog.open() }
     function closeDialogs() { relinkDialog.close(); exportDialog.close(); finalDialog.close() }

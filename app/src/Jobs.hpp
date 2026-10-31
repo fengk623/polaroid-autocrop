@@ -78,6 +78,8 @@ class JobRunner : public QObject {
     Q_INVOKABLE void cancel(int id);
     void cancelAll();
     bool busy() const;
+    /// Jobs queued or running (FK-001: replacing the project cancels them).
+    int activeCount() const;
     /// Blocks until every job has finished (shutdown, self-test).
     void waitAll();
     /// Test hook (self-test only): each job's work starts this many milliseconds late, so tests can change
@@ -130,6 +132,12 @@ class JobModel : public QAbstractListModel {
     QVariant data(const QModelIndex& index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
     int count() const { return static_cast<int>(rows_.size()); }
+    int activeCount() const {
+        int n = 0;
+        for (const auto& r : rows_)
+            if (r.state == QLatin1String("queued") || r.state == QLatin1String("running")) ++n;
+        return n;
+    }
     double overallProgress() const;
     QString summary() const;
     Q_INVOKABLE void clearFinished();

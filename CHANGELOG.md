@@ -3,6 +3,13 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.6.0-alpha.8 — U008: data protection (FK-001, FK-008)
+- Every way of replacing the open project asks Save / Don't save / Cancel (also for dropped project files and with
+  running tasks); a failed save keeps everything. Recovery snapshots of unsaved work (never the project file),
+  restore of a damaged project from its backup (the damaged file is kept), a damaged file never replaces a good
+  backup, output parameters saved with the project. Manual save stays (RFC-0017).
+  Notes: docs/release-notes/v0.6.0-alpha.8.md.
+
 ## 0.6.0-alpha.7 — U007: source identity (FK-007)
 - Scans are hashed whole at import and verified (streamed, off the UI thread) before every preview, detection and
   output; a replaced or edited scan is refused with the reason and can be relocated by content; outputs made while a

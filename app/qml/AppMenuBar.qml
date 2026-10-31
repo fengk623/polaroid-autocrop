@@ -35,6 +35,7 @@ MenuBar {
         title: qsTr("&File")
         Item2 { action: Action { text: qsTr("New Project"); shortcut: StandardKey.New; onTriggered: cmd.newProject() } }
         Item2 { action: Action { text: qsTr("Open Project…"); shortcut: StandardKey.Open; onTriggered: cmd.openProject() } }
+        Item2 { action: Action { text: qsTr("Recover Unsaved Work…"); onTriggered: cmd.recoverWork() } }
         MenuSeparator {}
         Item2 { action: Action { text: qsTr("Import Scans…"); shortcut: "Ctrl+I"; onTriggered: cmd.importScans() } }
         Item2 { action: Action { text: qsTr("Import Folder…"); shortcut: "Ctrl+Shift+I"; onTriggered: cmd.importFolder() } }

@@ -14,6 +14,7 @@ P.MenuBar {
         title: qsTr("File")
         P.MenuItem { text: qsTr("New Project"); shortcut: StandardKey.New; onTriggered: cmd.newProject() }
         P.MenuItem { text: qsTr("Open Project…"); shortcut: StandardKey.Open; onTriggered: cmd.openProject() }
+        P.MenuItem { text: qsTr("Recover Unsaved Work…"); onTriggered: cmd.recoverWork() }
         P.MenuSeparator {}
         P.MenuItem { text: qsTr("Import Scans…"); shortcut: "Ctrl+I"; onTriggered: cmd.importScans() }
         P.MenuItem { text: qsTr("Import Folder…"); shortcut: "Ctrl+Shift+I"; onTriggered: cmd.importFolder() }

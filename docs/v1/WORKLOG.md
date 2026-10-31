@@ -244,3 +244,22 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   reason (a tampered LZW file may not decode) — the checks now also require the user-visible reason [tightened].
 - Tests: core `SourceIdentity.*` ×5 pass; core suite 167/167. Self-test (fixture, on a copy of the scan): all pass incl.
   6 FK-007 checks; the original scan file is never modified.
+
+### 18:50–19:30 — PR #9 green, U008
+- PR #9 (U007): all checks green incl. both test packages; waiting for the owner's merge.
+- U008 (branch `unit/U008-data-protection`), FK-001 + FK-008; RFC-0017 (save semantics; manual save stays).
+  Root causes: only the window's close asked about unsaved changes (New/Open/drop replaced the project directly);
+  `saveProjectAs` changed the project path before saving, so a failed Save As left a wrong path; a damaged project
+  only reported "damaged"; every save copied the previous file to `.bak`, so saving over a damaged file would
+  replace a good backup with it.
+  - Core: `usableBackup`, `setAsideDamaged`, loadProject error detail names the backup, save rotates the backup only
+    when the previous file reads, `settings.output`.
+  - App: `replaceInfo`, `adoptProject`, `restoreBackup`, recovery snapshots (`recovery/<projectId>.fkrecovery`,
+    written ~3 s after a change while unsaved, removed after save or "Don't save", listed at start and in File ▸
+    Recover Unsaved Work…), Save As restores path/name/read-only on failure, dropped projects go to QML via
+    `openRequested`, `JobRunner::activeCount`.
+  - QML: one question (Save / Don't save / Cancel; Continue / Cancel with running tasks) for New, Open, recent,
+    drop, restore, recover and Quit; damaged-project and recovery dialogs.
+- Tests: core `DataProtection.*` ×5 (incl. the former `KnownIssue.FK008`, WILL_FAIL list now only FK-004); core
+  suite 171 pass. Self-test (fixture): 11 FK-001/FK-008 checks pass, all others pass. Read-only/disk-full simulated by
+  an unwritable path (the container runs as root, so permission-based read-only cannot be simulated reliably).

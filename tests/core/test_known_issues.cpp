@@ -26,17 +26,3 @@ TEST(KnownIssue, FK004_RemoveIdentityDropsCreatorFromSourceXmp) {
     const std::string xmp = buildXmp(XmpIds{}, &filtered);
     EXPECT_EQ(xmp.find("Ann Example"), std::string::npos) << xmp;
 }
-
-// FK-008: a damaged project whose backup is intact must say so (explicit recovery), not only "damaged".
-TEST(KnownIssue, FK008_DamagedProjectOffersItsBackup) {
-    TempDir t;
-    const auto file = t / "p.fkproj";
-    Project p = newProject("t");
-    ASSERT_TRUE(saveProject(p, file));
-    ASSERT_TRUE(saveProject(p, file)); // second save keeps p.fkproj.bak
-    std::ofstream(file, std::ios::binary | std::ios::trunc) << "{ damaged";
-    auto loaded = loadProject(file);
-    ASSERT_FALSE(loaded);
-    const std::string all = loaded.error().message + " " + loaded.error().detail;
-    EXPECT_NE(all.find(".bak"), std::string::npos) << all;
-}
