@@ -2,9 +2,11 @@
 """FK-012 (U026): independent decode of the Linear DNG that FrameKeeper exports.
 
 Decodes the DNG with LibRaw (rawpy, not our code) and compares it with the 16-bit TIFF export of the same image
-area, both from the same generated scan. LibRaw is asked for linear sRGB (gamma 1, no auto brightness, the DNG's
+area, both from the same generated scans (seed 5: two round prints, seed 8: two Polaroid 600). LibRaw is asked for linear sRGB (gamma 1, no auto brightness, the DNG's
 own neutral), the TIFF is linearised with the sRGB curve (the generated scan carries an sRGB profile). Passes when
 every channel matches: gain within 5 %, correlation ≥ 0.995, mean absolute error after the gain ≤ 1 % of full scale.
+Round image areas: the TIFF is transparent outside the circle and the DNG keeps the scanned corners (it has no
+alpha), so only the TIFF's opaque pixels are compared.
 
 Usage: dng-interop.py --fkcli PATH --fkfixture PATH --out DIR [--json report.json]
 Needs: numpy, rawpy (LibRaw), tifffile + imagecodecs (LZW). CI installs them; not product dependencies.
@@ -36,18 +38,22 @@ def main() -> int:
     import tifffile
 
     os.makedirs(a.out, exist_ok=True)
-    scan = os.path.join(a.out, "scan.tif")
-    subprocess.run([a.fkfixture, "--out", scan, "--dpi", "300", "--count", "2", "--seed", "5", "--bits", "16"],
-                   check=True, stdout=subprocess.DEVNULL)
-    for fmt, extra in (("dng", []), ("tif", ["--bits", "16"])):
-        subprocess.run([a.fkcli, "export", scan, "--out-dir", os.path.join(a.out, fmt), "--what", "image",
-                        "--mode", "crop", "--format", fmt] + extra, check=True, stdout=subprocess.DEVNULL)
+    for seed in (5, 8):
+        scan = os.path.join(a.out, f"scan{seed}.tif")
+        subprocess.run([a.fkfixture, "--out", scan, "--dpi", "300", "--count", "2", "--seed", str(seed), "--bits",
+                        "16"], check=True, stdout=subprocess.DEVNULL)
+        for fmt, extra in (("dng", []), ("tif", ["--bits", "16"])):
+            subprocess.run([a.fkcli, "export", scan, "--out-dir", os.path.join(a.out, fmt), "--what", "image",
+                            "--mode", "crop", "--format", fmt] + extra, check=True, stdout=subprocess.DEVNULL)
     report = {"decoder": f"LibRaw {rawpy.libraw_version} via rawpy {rawpy.__version__}", "files": []}
     ok = True
     for dng in sorted(glob.glob(os.path.join(a.out, "dng", "*.dng"))):
         tif = os.path.join(a.out, "tif", os.path.basename(dng)[:-4] + ".tif")
         entry = {"dng": os.path.basename(dng)}
-        ref = srgb_to_linear(tifffile.imread(tif).astype(np.float64) / 65535.0)
+        img = tifffile.imread(tif).astype(np.float64) / 65535.0
+        opaque = img[..., 3] >= 1.0 if img.shape[-1] == 4 else np.ones(img.shape[:2], dtype=bool)
+        ref = srgb_to_linear(img[..., :3])
+        entry["comparedPixels"] = int(opaque.sum())
         with rawpy.imread(dng) as raw:
             entry["libraw"] = {"color_desc": raw.color_desc.decode("latin-1", "replace"),
                                "num_colors": int(raw.num_colors), "sizes": [int(raw.sizes.width), int(raw.sizes.height)]}
@@ -61,7 +67,7 @@ def main() -> int:
             continue
         channels = []
         for c in range(3):
-            x, y = ref[..., c].ravel(), dec[..., c].ravel()
+            x, y = ref[..., c][opaque], dec[..., c][opaque]
             gain = float((x * y).sum() / max((x * x).sum(), 1e-12))
             corr = float(np.corrcoef(x, y)[0, 1])
             mae = float(np.abs(y / gain - x).mean())
