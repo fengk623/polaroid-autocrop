@@ -61,3 +61,24 @@ Status: Accepted, implemented in U013.
 - **Self-test.** `runShapeEditing` drives all of this with injected key and mouse events (Qt Test's
   `qt_handleKeyEvent` / `qt_handleMouseEvent`); focus loss is a `FocusOut` sent to the window. The macOS native
   menu bar is not reachable offscreen (that check is recorded as skipped there).
+
+## Whole-scan rotation (v0.7.0-alpha.4, U014, UX-04)
+
+Status: Accepted, implemented in U014.
+- **Model.** `ScanRecord::rotation` (quarter turns clockwise) is a view attribute saved with the project
+  (`scans[].view.rotation`). Boundaries, detection, hit tests, edits, exports and relink stay in scan file
+  coordinates — one coordinate system, the turn applied once (no double rotation). The scan file is never rewritten.
+- **Canvas.** `ScanCanvas` maps scan → display with `quarterTurnMatrix` (and back), then scale and offset; images
+  (proxy pyramid, full-resolution patch, composite preview) are drawn in scan coordinates under that painter
+  transform, overlays through `mapFromScan`. Fit, pan limits, zoom anchors and the navigator work in display
+  coordinates; labels sit at the corner that is top-left on screen; arrow-key nudges move in screen directions.
+  A turn re-fits the view; the current print and tool stay.
+- **Thumbnails.** Scan thumbnails (scan list, navigator) are turned losslessly; print thumbnails keep showing each
+  print upright (their own upright, RFC-0005 §Orientation).
+- **Controls.** Print ▸ Rotate Whole Scan 90° Counterclockwise / Clockwise, the left rail's "Whole scan" row (with the
+  current angle) and the scan list's context menu. The per-print command is renamed "Turn This Print Upright Left /
+  Right" (export orientation of one print) so the two are not confused.
+- **Undo.** A turn is one undo step for the whole scan. Steps of the current print and of its scan share one order
+  (`seq`): undo takes the most recent of the two, redo the most recently undone.
+- **Self-test** `runScanRotation` (UX-04) builds a scan with one print four times turned 0/90/180/270°, then clicks
+  each print at the screen position computed independently of the canvas, before and after a turn.

@@ -17,6 +17,7 @@ All files: UTF-8 JSON, LF, 2-space indent, keys in lower camelCase. Unknown keys
     "info": {"width": 0, "height": 0, "channels": 3, "bits": 16, "compression": "lzw",
              "dpiX": 1600, "dpiY": 1600, "iccDescription": "…", "iccSha256": "hex"},
     "detection": {"at": "ISO-8601", "expectedCount": 4, "autoCount": true, "warnings": [], "proxyScale": 7.0},
+    "view": {"rotation": 0},
     "items": [{
       "itemId": "uuid", "index": 1, "label": "P01", "filmType": "polaroid_600",
       "outer": {"kind": "quad", "points": [[x,y],[x,y],[x,y],[x,y]], "source": "auto", "cornerRadiusPx": 0},
@@ -71,6 +72,11 @@ counted automatically (no count warning); `detection.expectedCount` is the manua
 their scans keep the manual count they were detected with (`autoCount` false); the project default for new scans
 is automatic. Earlier versions ignore both keys (and drop them on save): they show the stored warnings and use
 `expectedCount` when detecting again.
+`view.rotation` (since 0.7.0-alpha.4, UX-04, RFC-0011 §Whole-scan rotation): the whole-scan view, quarter turns
+clockwise 0–3 (other integers are taken modulo 4, anything else = 0). Display only: every boundary stays in the scan
+file's coordinates and the scan file is never rewritten; exports use it only when uprights are off
+(`exportTurns`). Absent in older projects = 0. Earlier versions ignore it (and drop it on save): the scan shows
+unturned, nothing else changes.
 Save: write `name.fkproj.tmp-<rand>` → flush+fsync → rename over `name.fkproj`; previous file copied to
 `name.fkproj.bak` first. Load failure → offer `.bak`.
 

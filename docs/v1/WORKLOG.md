@@ -390,3 +390,32 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   off (rectangle checks), mouse-held arming (Shift pressed during a drag). Restored; no markers left.
 - Self-test results (app from this branch): fixture 126 pass; owner's polaroid_92 124 pass; img20260702_0005 120 pass + 4 skipped (FK-003 conversion checks need a tagged scan); the 33 UX-03 checks pass on all three.
 - Not verified: real window feel, macOS native menu (skipped offscreen), Shift with an input method active.
+
+### 21:40–22:30 — PR #15 opened and green, PR #14 merged, U014
+- U013 committed (8fb15dc), PR #15 opened; all checks green, including the packaged self-test on Windows and macOS
+  (the macOS menu check is skipped there). The owner merged PR #14 at 21:21.
+- U014 (branch `unit/U014-scan-rotation`, stacked on U013), UX-04. Design choice: the turn is a **view** of the scan
+  (`ScanRecord::rotation`); every boundary stays in scan-file coordinates, so detection, edits, exports, export
+  records and relink need no conversion and nothing is rotated twice. Rejected: turning the geometry and reading
+  the scan turned (every reader and every stored shape would change; old export records would need migrating).
+  - Exports: `exportTurns` = the print's own upright when uprights are applied (a view turn does not change which
+    way is up for a print — adding it would turn correctly detected prints twice), else the view rotation.
+  - Canvas: scan → display mapping applied once (`quarterTurnMatrix`), images drawn under the painter transform,
+    overlays/hits/nudges through the same mapping; labels at the on-screen top-left corner.
+  - Undo: print steps and scan steps share one order (`seq`) so one Ctrl+Z restores the whole scan and undo/redo
+    interleave correctly.
+  - Self-test scan: one print of the test scan four times, turned 0/90/180/270° (detection found 4 prints with 4
+    different uprights). Each print is clicked at the screen position computed independently of the canvas. The
+    first run failed one check: the generated bed was square, so a turned thumbnail had the same size [test flaw]
+    → non-square bed and a pixel comparison with the thumbnail turned 90°.
+- Tests: ctest 201/201 (+ `ScanRotation.*` ×3, `Geometry.QuarterTurnsAreExactPermutations`); self-test
+  `runScanRotation` 14 checks + 5 snapshots (scan, 100 % with the full-resolution patch, composite with split,
+  image area — all turned).
+- Mutations (each → the self-test fails at the targeted check): scan thumbnail not turned; canvas ignoring the turn
+  (clicks select the wrong prints); uprights doubled ("never doubled"); turn ignored with uprights off (pixel 0,0);
+  undo ignoring the scan's steps; turn not saved. The first form of the "ignored when off" mutation did not compile
+  (unused parameter) and was rerun as `scan.rotation * 0`. Restored; no markers left.
+- Self-test results: fixture 145 pass; polaroid_92 143 pass; img20260702_0005 139 pass + 4 skipped (FK-003 needs a
+  tagged scan); 14 UX-04 checks pass on all three. polaroid_92 failed "four orientations" at first (4 prints, one
+  upright): the print fills that scan, so the "backing" copied from the scan border was its own white frame and the
+  bed was white-on-white [test flaw] → a dark lid for scans filled by their print (≥ 60 % of the area).

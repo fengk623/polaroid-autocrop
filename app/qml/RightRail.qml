@@ -189,10 +189,10 @@ Rectangle {
                     Section {
                         title: qsTr("Geometry")
                         FieldRow {
-                            label: qsTr("Upright"); labelWidth: rail.lw
-                            ToolBtn { iconName: "rotateLeft"; tip: qsTr("Rotate upright left"); shortcutText: cmd.mod + "["; onClicked: App.rotateUpright(rail.it.id, -1) }
+                            label: qsTr("Print upright"); labelWidth: rail.lw
+                            ToolBtn { iconName: "rotateLeft"; tip: qsTr("Turn This Print Upright Left"); shortcutText: cmd.mod + "["; onClicked: App.rotateUpright(rail.it.id, -1) }
                             Text { text: (rail.it.upright || 0) + "°"; font.pixelSize: Theme.fontBody; color: Theme.textPrimary; Layout.preferredWidth: 36; horizontalAlignment: Text.AlignHCenter }
-                            ToolBtn { iconName: "rotateRight"; tip: qsTr("Rotate upright right"); shortcutText: cmd.mod + "]"; onClicked: App.rotateUpright(rail.it.id, 1) }
+                            ToolBtn { iconName: "rotateRight"; tip: qsTr("Turn This Print Upright Right"); shortcutText: cmd.mod + "]"; onClicked: App.rotateUpright(rail.it.id, 1) }
                         }
                         FkCheck { text: qsTr("Reviewed"); checked: rail.it.reviewed === true; onToggled: App.setReviewed(rail.it.id, checked) }
                         FkCheck { text: qsTr("Exclude from batch"); checked: rail.it.excluded === true; onToggled: App.setExcluded(rail.it.id, checked) }

@@ -25,7 +25,12 @@ Vec2 ellipseLocal(const Ellipse& e, Vec2 p) {
 }
 
 Mat3 uprightMatrix(int k, double w, double h) {
-    switch (k & 3) {
+    return quarterTurnMatrix(k, w, h);
+}
+} // namespace
+
+Mat3 quarterTurnMatrix(int k, double w, double h) {
+    switch (((k % 4) + 4) % 4) {
     case 1:
         return Mat3{{0, -1, h, 1, 0, 0, 0, 0, 1}};
     case 2:
@@ -36,7 +41,10 @@ Mat3 uprightMatrix(int k, double w, double h) {
         return Mat3::identity();
     }
 }
-} // namespace
+
+SizeI quarterTurnSize(int k, SizeI s) {
+    return (k & 1) ? SizeI{s.h, s.w} : s;
+}
 
 Mat3 Mat3::operator*(const Mat3& o) const {
     Mat3 r;

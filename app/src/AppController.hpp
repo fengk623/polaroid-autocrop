@@ -119,6 +119,9 @@ class AppController : public QObject {
     Q_INVOKABLE void setInnerKind(const QString& itemId, const QString& kind);
     Q_INVOKABLE void resetToDetected(const QString& itemId);
     Q_INVOKABLE void rotateUpright(const QString& itemId, int delta);
+    /// UX-04: turns the whole scan's view by `delta` quarter turns (clockwise positive). Every print follows;
+    /// no boundary, file or export record changes; one undo step for the whole scan.
+    Q_INVOKABLE void rotateScan(const QString& scanId, int delta);
     Q_INVOKABLE void setReviewed(const QString& itemId, bool reviewed);
     Q_INVOKABLE void setExcluded(const QString& itemId, bool excluded);
     Q_INVOKABLE void reviewAndNext();
@@ -175,6 +178,7 @@ class AppController : public QObject {
         QImage display;     ///< proxy in display space
         int proxyScale = 1; ///< scan px per proxy px
         int64_t width = 0, height = 0;
+        int rotation = 0; ///< UX-04: view quarter turns clockwise
         bool ready = false;
         QString state, error;
         std::vector<const fk::ItemRecord*> items;
@@ -240,9 +244,18 @@ class AppController : public QObject {
         fk::BoundarySource outerSource, innerSource;
         int upright = 0;
         bool reviewed = false;
+        quint64 seq = 0; ///< order across the print's and the scan's steps (one undo history)
     };
     struct UndoState {
         std::vector<Snapshot> undo, redo;
+    };
+    /// UX-04: whole-scan steps (the view rotation), ordered with the prints' steps by `seq`.
+    struct ScanStep {
+        int rotation = 0;
+        quint64 seq = 0;
+    };
+    struct ScanUndo {
+        std::vector<ScanStep> undo, redo;
     };
 
     fk::ScanRecord* findScan(const std::string& id);
@@ -272,6 +285,9 @@ class AppController : public QObject {
     std::vector<std::string> selection_;
     std::map<std::string, ScanRuntime> rt_;
     std::map<std::string, UndoState> undo_;
+    std::map<std::string, ScanUndo> scanUndo_;
+    quint64 undoSeq_ = 0;
+    void afterScanRotation(const std::string& scanId);
     std::map<std::string, std::pair<fk::Shape, fk::Shape>> detected_; ///< itemId → detected outer/inner
     std::map<std::string, QImage> compositePreviews_;
     // ---- task safety (RFC-0010 §Task safety, FK-006) ----

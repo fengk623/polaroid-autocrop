@@ -109,6 +109,11 @@ double frameAngle(const Quad& q);
 /// Average side lengths: {width (p0→p1, p3→p2), height (p1→p2, p0→p3)}.
 std::array<double, 2> quadSideLengths(const Quad& q);
 Quad rectQuad(double x0, double y0, double x1, double y1);
+/// `k` quarter turns clockwise of a w×h image: maps its coordinates to the turned image's (exact: integer
+/// permutations of pixel corners). Used for export upright and the whole-scan view rotation (UX-04).
+Mat3 quarterTurnMatrix(int k, double w, double h);
+/// Size of a w×h image after `k` quarter turns (w and h swap for odd k).
+SizeI quarterTurnSize(int k, SizeI s);
 
 // ---- boundary editing (RFC-0002 §Editing, UX-03) ------------------------------------------
 /// Handles the canvas drags. Quads: corner i (p[i]), edge i (p[i]→p[i+1]), move. Ellipses: centre, the end of

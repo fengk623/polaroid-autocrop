@@ -81,6 +81,8 @@ struct EditInput { EditHandle handle; int index; Vec2 delta; bool constrain; };
 inline constexpr double kMinEditSize = 4.0;
 std::optional<Shape> editShape(const Shape& start, const EditInput&);
 Vec2 ellipseHandle(const Ellipse&, bool xAxis);  bool isCircle(const Ellipse&);
+// quarter turns (export upright, whole-scan view rotation UX-04): exact, integer corners → integer corners
+Mat3 quarterTurnMatrix(int k, double w, double h);  SizeI quarterTurnSize(int k, SizeI);
 ```
 
 ## 5. Detection (`fk/detection.hpp`) — RFC-0004
@@ -134,6 +136,9 @@ Result<ExportReport> compositeItem(ImageSource&, const CompositeRequest&, const 
 `Result<Sidecar> loadSidecar(const path&)`, `Result<void> saveSidecar(const Sidecar&, const path&)`,
 `Result<Template> loadTemplate(const path&)`, `Result<void> saveTemplate(...)`, `Template makeTemplate(const Scan&)`,
 `Fingerprint fingerprint(const path&, bool full)`. JSON schemas: `fk.project/1`, `fk.sidecar/1`, `fk.template/1`.
+`ScanRecord::rotation` (UX-04, quarter turns clockwise, display only); `void rotateScanView(ScanRecord&, int delta)`;
+`int exportTurns(const ScanRecord&, const ItemRecord&, bool applyUpright)` — a print's upright when uprights are
+applied, else the scan's view rotation, never both; `void updateCountWarning(ScanRecord&)` (UX-01).
 
 ## 8. Colour, metadata, cache, jobs, diagnostics, capabilities
 See RFC-0012/13/14/10/15 and ADR-0007. Key types: `Profile`, `Transform`, `MetadataSet`, `PrivacyPreset {keep_all_safe=0, remove_location=1, remove_identity=2}`,
@@ -155,3 +160,5 @@ void fk_free(void*);
 | Version | Change |
 | --- | --- |
 | 1.0 | Initial API. |
+| 0.7.0-alpha.3 | `editShape`, `EditInput`, `EditHandle`, `ellipseHandle`, `isCircle` (UX-03). |
+| 0.7.0-alpha.4 | `quarterTurnMatrix`, `quarterTurnSize`, `ScanRecord::rotation`, `rotateScanView`, `exportTurns` (UX-04). |

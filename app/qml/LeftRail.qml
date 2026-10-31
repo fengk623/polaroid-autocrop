@@ -170,6 +170,8 @@ Rectangle {
                             Menu {
                                 id: scanMenu
                                 MenuItem { text: qsTr("Detect again"); onTriggered: cmd.detectAgain(row.scanId) }
+                                MenuItem { text: qsTr("Rotate Whole Scan 90° Counterclockwise"); onTriggered: App.rotateScan(row.scanId, -1) }
+                                MenuItem { text: qsTr("Rotate Whole Scan 90° Clockwise"); onTriggered: App.rotateScan(row.scanId, 1) }
                                 MenuItem { text: App.platform === "macos" ? qsTr("Reveal in Finder") : qsTr("Show in Explorer"); onTriggered: App.revealInFileManager(row.path) }
                                 MenuItem { text: qsTr("Remove from project"); onTriggered: App.removeScan(row.scanId) }
                             }
@@ -212,6 +214,13 @@ Rectangle {
                                 else App.setSetting("expectedCount", value)
                             }
                         }
+                    }
+                    // UX-04: turns the whole scan view (every print follows); the file and the boundaries are not changed
+                    FieldRow {
+                        label: qsTr("Whole scan")
+                        ToolBtn { objectName: "scanRotateLeft"; iconName: "rotateLeft"; tip: qsTr("Rotate Whole Scan 90° Counterclockwise"); enabled: App.currentScanId.length > 0; onClicked: App.rotateScan(App.currentScanId, -1) }
+                        Text { text: (App.currentScan.rotation || 0) + "°"; font.pixelSize: Theme.fontBody; color: Theme.textPrimary; Layout.preferredWidth: 36; horizontalAlignment: Text.AlignHCenter }
+                        ToolBtn { objectName: "scanRotateRight"; iconName: "rotateRight"; tip: qsTr("Rotate Whole Scan 90° Clockwise"); enabled: App.currentScanId.length > 0; onClicked: App.rotateScan(App.currentScanId, 1) }
                     }
                     FieldRow {
                         label: qsTr("Method")

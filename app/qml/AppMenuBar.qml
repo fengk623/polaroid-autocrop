@@ -99,8 +99,11 @@ MenuBar {
         Item2 { objectName: "menuEditInner"; text: qsTr("Edit Inner"); keys: "I"; onTriggered: canvas.tool = "inner" }
         Item2 { objectName: "menuSwitchBoundary"; text: qsTr("Switch Outer ↔ Inner"); keys: qsTr("tap Shift"); onTriggered: win.switchBoundary(false) }
         MenuSeparator {}
-        Item2 { action: Action { text: qsTr("Rotate Upright Left"); shortcut: "Ctrl+["; onTriggered: App.rotateUpright(App.currentItemId, -1) } }
-        Item2 { action: Action { text: qsTr("Rotate Upright Right"); shortcut: "Ctrl+]"; onTriggered: App.rotateUpright(App.currentItemId, 1) } }
+        // UX-04: the whole scan (every print) vs one print's export orientation — named apart
+        Item2 { objectName: "menuRotateScanLeft"; text: qsTr("Rotate Whole Scan 90° Counterclockwise"); enabled: App.currentScanId.length > 0; onTriggered: App.rotateScan(App.currentScanId, -1) }
+        Item2 { objectName: "menuRotateScanRight"; text: qsTr("Rotate Whole Scan 90° Clockwise"); enabled: App.currentScanId.length > 0; onTriggered: App.rotateScan(App.currentScanId, 1) }
+        Item2 { action: Action { text: qsTr("Turn This Print Upright Left"); shortcut: "Ctrl+["; onTriggered: App.rotateUpright(App.currentItemId, -1) } }
+        Item2 { action: Action { text: qsTr("Turn This Print Upright Right"); shortcut: "Ctrl+]"; onTriggered: App.rotateUpright(App.currentItemId, 1) } }
         Item2 { text: qsTr("Snap Outer to Edges"); onTriggered: App.snapOuter(App.currentItemId) }
         Item2 { text: qsTr("Reset to Detected"); onTriggered: App.resetToDetected(App.currentItemId) }
         MenuSeparator {}

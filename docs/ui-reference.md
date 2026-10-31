@@ -195,7 +195,7 @@ Paths below are relative to the SpektraLab repository at commit `fd891c6`.
 | File: Open ⌘O; Export ⌘E | `SpektrafilmApp.swift:104-257` | Adapt for our product | Project and scan commands plus three exports (§4.6). | Our workflow has import, export, relink and final export. |
 | Edit: Undo; Copy/Paste Settings ⇧⌘C/V; Select All ⌘A; Sync Settings | `SpektrafilmApp.swift:127-135` | Adapt for our product | Undo/Redo; Copy/Paste Item Settings ⇧⌘C/V (export, composite and synthetic-frame settings, never geometry); Select All Prints ⌘A. | Geometry is per print and must never be pasted blindly. |
 | View: zoom in/out ⌘+ ⌘−; fit `,`; 100 % `.`; toggle panels ⌘B; filmstrip ⇧⌘F; bypass ⇧⌘B; before/after `Y`; restart service ⌥⌘R | `SpektrafilmApp.swift:143-157` | Adapt for our product | Zoom ⌘= ⌘−; Fit ⌘0; 100 % ⌘1; `Z` toggles fit ↔ 100 %; rails and filmstrip ⌥⌘0–3; Compare `Y`; Original `\`; Overlays ⇧⌘H; canvas modes `1`–`4`; Grid `G` (§4.6). | Photoshop/Lightroom conventions, which our users already know (PRD §2). |
-| Frame menu: Previous ←, Next →; New Half-Frame Pair ⌘J; resets; Reveal | `SpektrafilmApp.swift:104-257` | Adapt for our product | **Print** menu: Previous/Next Print ←/→; Previous/Next Scan ⇧←/⇧→; Mark Reviewed and Next ⌘↩; Exclude/Include `X`; Rotate Upright ⌘[ / ⌘]; Reset to Detected; Reveal Scan ⌥⌘R. | Half-frame pairs are domain-specific. |
+| Frame menu: Previous ←, Next →; New Half-Frame Pair ⌘J; resets; Reveal | `SpektrafilmApp.swift:104-257` | Adapt for our product | **Print** menu: Previous/Next Print ←/→; Previous/Next Scan ⇧←/⇧→; Mark Reviewed and Next ⌘↩; Exclude/Include `X`; Rotate Whole Scan 90° Counterclockwise / Clockwise (UX-04); Turn This Print Upright Left / Right ⌘[ / ⌘]; Reset to Detected; Reveal Scan ⌥⌘R. | Half-frame pairs are domain-specific. |
 | Crop menu: Rotate ⌥⌘[ ]; Flip H/V; Reset Crop | `SpektrafilmApp.swift:104-257` | Adapt for our product | Lossless upright rotation in the Print menu (⌘[ / ⌘], as in Lightroom). No flips. | A scanned print is never mirrored, and a flip would falsify the frame. |
 | Tool menu: Select `V`, Hand `H`, Crop `C` | `SpektrafilmApp.swift:104-257` | Adapt for our product | Select `V`, Hand `H` (or hold Space), Edit Outer `O`, Edit Inner `I`. | Our tools edit two boundaries. |
 | Mask menu hidden behind a feature flag | `SpektrafilmApp.swift:104-257` | Do not adopt | The mask brush is a control in the Return ▸ Mask group (F07). | No feature flags (F15). |
@@ -454,7 +454,8 @@ Single-key shortcuts (marked †) are disabled while a text or number field has 
 | Previous / Next Scan | ⇧← / ⇧→ † | Shift+← / Shift+→ † |
 | Mark Reviewed and Next | ⌘↩ | Ctrl+Enter |
 | Exclude / Include | X † | X † |
-| Rotate Upright Left / Right (lossless) | ⌘[ / ⌘] | Ctrl+[ / Ctrl+] |
+| Turn This Print Upright Left / Right (lossless, export orientation of one print) | ⌘[ / ⌘] | Ctrl+[ / Ctrl+] |
+| Rotate Whole Scan 90° Counterclockwise / Clockwise (view of the whole scan, every print follows) | Print menu, left rail, scan list menu | Print menu, left rail, scan list menu |
 | Reveal Scan | ⌥⌘R (Finder) | Ctrl+Alt+R (Explorer) |
 | Tools: Select / Hand / Edit Outer / Edit Inner | V / H / O / I † | V / H / O / I † |
 | Temporary Hand | hold Space † | hold Space † |

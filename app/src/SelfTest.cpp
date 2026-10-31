@@ -20,12 +20,14 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRectF>
+#include <QTransform>
 #include <QUrl>
 #include <QWheelEvent>
 
 #include <algorithm>
 #include <cstring>
 #include <functional>
+#include <set>
 
 // Exported by Qt GUI for input injection (declared, like this, by Qt Test's qtestmouse.h).
 Q_GUI_EXPORT void qt_handleMouseEvent(QWindow* window, const QPointF& local, const QPointF& global,
@@ -153,6 +155,136 @@ bool samePixels(const QString& a, const QString& b, QString& why) {
             return false;
         }
     return true;
+}
+/// `b` is `a` turned by `k` quarter turns clockwise, pixel for pixel (UX-04: lossless export orientation).
+bool sameTurned(const QString& a, const QString& b, int k, QString& why) {
+    auto ia = fk::readImageFile(toPath(a)), ib = fk::readImageFile(toPath(b));
+    if (!ia || !ib) {
+        why = QStringLiteral("cannot read");
+        return false;
+    }
+    const int64_t w = ia->width(), h = ia->height();
+    const bool odd = k & 1;
+    if ((odd ? h : w) != ib->width() || (odd ? w : h) != ib->height() || ia->channels() != ib->channels() ||
+        ia->bits() != ib->bits()) {
+        why = QStringLiteral("size/layout differ: %1×%2 vs %3×%4")
+                  .arg(w)
+                  .arg(h)
+                  .arg(ib->width())
+                  .arg(ib->height());
+        return false;
+    }
+    for (int64_t y = 0; y < h; ++y)
+        for (int64_t x = 0; x < w; ++x) {
+            int64_t bx = x, by = y;
+            switch (k & 3) {
+            case 1:
+                bx = h - 1 - y, by = x;
+                break;
+            case 2:
+                bx = w - 1 - x, by = h - 1 - y;
+                break;
+            case 3:
+                bx = y, by = w - 1 - x;
+                break;
+            default:
+                break;
+            }
+            for (int c = 0; c < ia->channels(); ++c)
+                if (ia->sample16(x, y, c) != ib->sample16(bx, by, c)) {
+                    why = QStringLiteral("pixel %1,%2 differs").arg(x).arg(y);
+                    return false;
+                }
+        }
+    return true;
+}
+/// A scanner bed with the first print of `src` four times, turned 0°, 90°, 180° and 270° (UX-04 test scan),
+/// at about 300 dpi on the scan's own background.
+bool writeFourOrientations(const QString& src, const fk::Shape& outer, const QString& dst) {
+    fk::ImageInfo info;
+    auto img = fk::readImageFile(toPath(src), &info);
+    if (!img) return false;
+    const double dpi = info.dpiX > 0 ? info.dpiX : 300.0;
+    const int64_t k = std::max<int64_t>(1, std::llround(dpi / 300.0));
+    const int ch = img->channels();
+    std::vector<uint16_t> bg(static_cast<size_t>(ch));
+    const int64_t band = std::max<int64_t>(4, std::min(img->width(), img->height()) / 50);
+    for (int c = 0; c < ch; ++c) {
+        std::vector<uint16_t> v;
+        for (int64_t y = 0; y < img->height(); y += 3)
+            for (int64_t x = 0; x < img->width(); x += 3)
+                if (x < band || y < band || x >= img->width() - band || y >= img->height() - band)
+                    v.push_back(img->sample16(x, y, c));
+        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2), v.end());
+        bg[static_cast<size_t>(c)] = v[v.size() / 2];
+    }
+    // the print with 1.5 mm around it, at 300 dpi (every k-th pixel)
+    const fk::RectI b =
+        fk::boundingRect(fk::expandShape(outer, 1.5 / 25.4 * dpi), fk::SizeI{img->width(), img->height()});
+    // a scan filled by its print has no backing to copy (its border is the print's frame): use a dark lid, as
+    // a user would for white frames, so the bed is a valid detection input
+    if (static_cast<double>(b.w) * static_cast<double>(b.h) >=
+        0.6 * static_cast<double>(img->width()) * static_cast<double>(img->height()))
+        std::fill(bg.begin(), bg.end(), static_cast<uint16_t>(0.12 * 65535));
+    const int64_t cw = b.w / k, chh = b.h / k;
+    const int64_t gap = 236; // 20 mm between prints and to the bed's edges
+    const int64_t cell = std::max(cw, chh) + gap;
+    const int64_t ow = 2 * cell + gap + cell / 2, oh = 2 * cell + gap; // not square: a turn changes the shape
+    auto out = fk::ImageBuffer::create(ow, oh, ch, img->bits());
+    if (!out) return false;
+    uint32_t rng = 11;
+    auto put = [&](int64_t x, int64_t y, int c, int v) {
+        if (img->bits() == 8) {
+            out->row(y)[x * ch + c] = static_cast<uint8_t>(v / 257);
+        } else {
+            const uint16_t u = static_cast<uint16_t>(v);
+            std::memcpy(out->row(y) + (x * ch + c) * 2, &u, 2);
+        }
+    };
+    for (int64_t y = 0; y < oh; ++y)
+        for (int64_t x = 0; x < ow; ++x) {
+            rng = rng * 1664525u + 1013904223u;
+            const int n = static_cast<int>((rng >> 16) % 3) - 1;
+            for (int c = 0; c < ch; ++c)
+                put(x, y, c,
+                    std::clamp(bg[static_cast<size_t>(c)] + n * (img->bits() == 8 ? 257 : 64), 0, 65535));
+        }
+    for (int q = 0; q < 4; ++q) {
+        const bool odd = q & 1;
+        const int64_t tw = odd ? chh : cw, th = odd ? cw : chh;
+        const int64_t ox = gap + (q % 2) * cell + (cell - gap - tw) / 2,
+                      oy = gap + (q / 2) * cell + (cell - gap - th) / 2;
+        for (int64_t y = 0; y < th; ++y)
+            for (int64_t x = 0; x < tw; ++x) {
+                // (x, y) in the turned crop → (sx, sy) in the crop
+                int64_t sx = x, sy = y;
+                switch (q) {
+                case 1:
+                    sx = y, sy = chh - 1 - x;
+                    break;
+                case 2:
+                    sx = cw - 1 - x, sy = chh - 1 - y;
+                    break;
+                case 3:
+                    sx = cw - 1 - y, sy = x;
+                    break;
+                default:
+                    break;
+                }
+                for (int c = 0; c < ch; ++c)
+                    put(ox + x, oy + y, c, img->sample16(b.x + sx * k, b.y + sy * k, c));
+            }
+    }
+    fk::WriteOptions opt;
+    opt.bits = img->bits();
+    opt.icc = info.icc;
+    opt.dpiX = opt.dpiY = dpi / static_cast<double>(k);
+    QFile::remove(dst);
+    auto sink = fk::createSink(toPath(dst), opt);
+    if (!sink || !(*sink)->begin({ow, oh}, ch, img->bits())) return false;
+    for (int64_t y = 0; y < oh; ++y)
+        if (!(*sink)->writeRows(out->row(y), 1, out->rowBytes())) return false;
+    return static_cast<bool>((*sink)->finish());
 }
 /// Writes `src`'s pixels brightened by `delta` (16-bit units; 8-bit scaled), keeping its profile — a "grade
 /// again".
@@ -1616,6 +1748,304 @@ void SelfTest::runShapeEditing() {
     app_->newProject();
 }
 
+void SelfTest::runScanRotation() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("rotation"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QVariantMap saved = app_->settings();
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    app_->setSetting(QStringLiteral("exportFolder"), exportDir);
+    app_->setSetting(QStringLiteral("exportFormat"), QStringLiteral("tif"));
+    app_->setSetting(QStringLiteral("geometryMode"), QStringLiteral("crop"));
+    app_->setSetting(QStringLiteral("finalMode"), QStringLiteral("real"));
+    app_->setSetting(QStringLiteral("finalFormat"), QStringLiteral("tif"));
+    app_->setSetting(QStringLiteral("autoCount"), true);
+    auto restoreSettings = [&] {
+        for (const char* k : {"exportFolder", "exportFormat", "geometryMode", "finalMode", "finalFormat",
+                              "autoCount", "applyUpright"})
+            app_->setSetting(QString::fromLatin1(k), saved.value(QString::fromLatin1(k)));
+    };
+
+    // the test scan: the first print of this scan four times, turned 0°, 90°, 180°, 270°
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    fk::Shape first;
+    if (!app_->project().scans.empty() && !app_->project().scans.front().items.empty())
+        first = app_->project().scans.front().items.front().outer;
+    const QString four = QDir(d).filePath(QStringLiteral("four-orientations.tif"));
+    const bool made = !app_->project().scans.empty() && writeFourOrientations(scan_, first, four);
+    check(QStringLiteral("UX-04 setup: a scan with four prints turned 0/90/180/270°"), made);
+    if (!made) {
+        restoreSettings();
+        return;
+    }
+    const auto sourceSha = fk::sha256File(toPath(four));
+    app_->newProject();
+    app_->importScans({four});
+    app_->waitIdle(300000);
+    QCoreApplication::processEvents();
+    const QString scanId = app_->currentScanId();
+    auto scan = [&]() -> const fk::ScanRecord* {
+        for (const auto& sc : app_->project().scans)
+            if (toQ(sc.scanId) == scanId) return &sc;
+        return nullptr;
+    };
+    auto shapes = [&] {
+        std::vector<std::pair<fk::Shape, fk::Shape>> v;
+        if (const auto* sc = scan())
+            for (const auto& it : sc->items)
+                v.emplace_back(it.outer, it.inner);
+        return v;
+    };
+    const auto start = shapes();
+    std::set<int> uprights;
+    if (const auto* sc = scan())
+        for (const auto& it : sc->items)
+            uprights.insert(it.upright);
+    check(QStringLiteral("UX-04 four prints found, in four orientations"),
+          start.size() == 4 && uprights.size() == 4,
+          QStringLiteral("%1 prints, %2 different uprights").arg(start.size()).arg(uprights.size()));
+    if (start.size() != 4) {
+        restoreSettings();
+        return;
+    }
+    auto* canvas = qobject_cast<QQuickItem*>(findCanvas());
+    canvas->setProperty("mode", QStringLiteral("scan"));
+    canvas->setProperty("tool", QStringLiteral("select"));
+    QMetaObject::invokeMethod(canvas, "fit");
+    QCoreApplication::processEvents();
+    const QString thumb0 = QStringLiteral("scan/") + scanId;
+    const QImage t0 = app_->thumbnail(thumb0);
+    const int64_t W = scan()->info.width, H = scan()->info.height;
+
+    // where a scan point must appear on screen with the view turned k times, computed here independently of
+    // the canvas: turn the scan, fit it with 16 px padding, centre it
+    auto expected = [&](fk::Vec2 p, int k) {
+        const double dw = (k & 1) ? static_cast<double>(H) : static_cast<double>(W);
+        const double dh = (k & 1) ? static_cast<double>(W) : static_cast<double>(H);
+        fk::Vec2 q = p;
+        for (int i = 0; i < k; ++i) // one turn clockwise of a w×h image: (x, y) → (h − y, x)
+            q = {((i & 1) ? static_cast<double>(W) : static_cast<double>(H)) - q.y, q.x};
+        const double sc = std::min((canvas->width() - 32) / dw, (canvas->height() - 32) / dh);
+        return QPointF(canvas->width() / 2 + (q.x - dw / 2) * sc, canvas->height() / 2 + (q.y - dh / 2) * sc);
+    };
+    // every print is where it must be: a click there selects exactly that print
+    auto clickEach = [&](int k) {
+        QStringList wrong;
+        if (const auto* sc = scan())
+            for (const auto& it : sc->items) {
+                const QPointF at = expected(fk::centroid(it.inner), k);
+                click(canvas, at);
+                if (app_->currentItemId() != toQ(it.itemId))
+                    wrong << QStringLiteral("%1 → %2").arg(toQ(it.label), app_->currentItemId());
+            }
+        return wrong;
+    };
+    const QStringList wrong0 = clickEach(0);
+    check(QStringLiteral("UX-04 before turning: a click on each print selects it"), wrong0.isEmpty(),
+          wrong0.join(QStringLiteral(", ")));
+    QImage before; // after the clicks: the same print is current when the view comes back
+    QMetaObject::invokeMethod(canvas, "grab", Q_RETURN_ARG(QImage, before));
+
+    // turn clockwise with the left-rail button (mouse)
+    const bool clicked = click(findItem(QStringLiteral("scanRotateRight")));
+    QMetaObject::invokeMethod(canvas, "fit");
+    QCoreApplication::processEvents();
+    const QStringList wrong1 = clickEach(1);
+    check(QStringLiteral(
+              "UX-04 whole scan turned 90° (left-rail button): every print follows, count and boundaries "
+              "unchanged"),
+          clicked && scan()->rotation == 1 && shapes() == start && wrong1.isEmpty() &&
+              app_->counts().value("prints").toInt() == 4,
+          QStringLiteral("rotation %1°, wrong: %2")
+              .arg(scan()->rotation * 90)
+              .arg(wrong1.join(QStringLiteral(", "))));
+    const QImage t1 = app_->thumbnail(thumb0);
+    check(QStringLiteral("UX-04 the scan thumbnail turns with it (lossless)"),
+          t0.width() != t0.height() && t1 == t0.transformed(QTransform().rotate(90)),
+          QStringLiteral("%1×%2 → %3×%4").arg(t0.width()).arg(t0.height()).arg(t1.width()).arg(t1.height()));
+    snapshot(QStringLiteral("U014-turned-90"));
+    // turned and zoomed to 100 %: the full-resolution patch arrives for the turned view, the navigator shows
+    // a part
+    QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
+    const bool full =
+        waitFor([&] { return canvas->property("badge").toString() == QLatin1String("Full"); }, 20000);
+    const QRectF nav = canvas->property("navigatorView").toRectF();
+    check(QStringLiteral("UX-04 turned view at 100 %: full resolution, navigator shows the visible part"),
+          full && nav.width() < 0.999 && nav.height() < 0.999 && nav.width() > 0 && nav.height() > 0,
+          QStringLiteral("badge %1, navigator %2 × %3")
+              .arg(canvas->property("badge").toString())
+              .arg(nav.width(), 0, 'f', 3)
+              .arg(nav.height(), 0, 'f', 3));
+    snapshot(QStringLiteral("U014-turned-100pct"));
+    QMetaObject::invokeMethod(canvas, "fit");
+    // three more quarter turns (menu on Windows/Linux, else the controller): back to the start, pixel for
+    // pixel
+    QQuickItem* printMenu = findItemIf([](QQuickItem* it) {
+        QObject* m = it->property("menu").value<QObject*>();
+        return m && m->objectName() == QLatin1String("menuPrint");
+    });
+    int viaMenu = 0;
+    for (int i = 0; i < 3; ++i) {
+        bool done = false;
+        if (printMenu && !window_->property("isMac").toBool()) {
+            click(printMenu);
+            waitFor(
+                [&] {
+                    QQuickItem* m = findItem(QStringLiteral("menuRotateScanRight"));
+                    return m && m->isVisible();
+                },
+                2000);
+            QQuickItem* m = findItem(QStringLiteral("menuRotateScanRight"));
+            const int r0 = scan()->rotation;
+            if (m && m->isVisible() && click(m)) done = scan()->rotation == (r0 + 1) % 4;
+            waitFor([] { return false; }, 300);
+        }
+        if (done)
+            ++viaMenu;
+        else
+            app_->rotateScan(scanId, 1);
+    }
+    QMetaObject::invokeMethod(canvas, "fit");
+    QCoreApplication::processEvents();
+    QImage after4;
+    QMetaObject::invokeMethod(canvas, "grab", Q_RETURN_ARG(QImage, after4));
+    check(QStringLiteral("UX-04 four turns: back to the start (view pixel-identical, boundaries unchanged)"),
+          scan()->rotation == 0 && shapes() == start && after4 == before,
+          QStringLiteral("%1 of 3 turns through the Print menu").arg(viaMenu));
+
+    // one undo restores the whole scan; it interleaves with a print's own edits
+    app_->rotateScan(scanId, 1);
+    canvas->forceActiveFocus();
+    const bool mac = window_->property("isMac").toBool();
+    if (mac) {
+        app_->undo(); // macOS: Undo's shortcut belongs to the native menu bar, which offscreen does not have
+    } else {
+        key(Qt::Key_Z, Qt::ControlModifier, true);
+        key(Qt::Key_Z, Qt::ControlModifier, false);
+    }
+    check(QStringLiteral("UX-04 one undo restores the whole scan"),
+          scan()->rotation == 0 && shapes() == start,
+          QStringLiteral("rotation %1° (%2)")
+              .arg(scan()->rotation * 90)
+              .arg(mac ? QStringLiteral("App.undo: native menu shortcut not available offscreen")
+                       : QStringLiteral("Ctrl+Z")));
+    const std::string firstId = scan()->items.front().itemId;
+    app_->selectItem(toQ(firstId));
+    fk::Shape moved = scan()->items.front().outer;
+    for (auto& q : moved.quad.p)
+        q = q + fk::Vec2{3, 0};
+    app_->commitShape(firstId, true, moved);
+    app_->rotateScan(scanId, -1);
+    app_->undo();
+    const bool u1 = scan()->rotation == 0 && scan()->items.front().outer == moved;
+    app_->undo();
+    const bool u2 = scan()->items.front().outer == start.front().first;
+    app_->redo();
+    app_->redo();
+    check(QStringLiteral("UX-04 undo/redo interleave a print's edit and a whole-scan turn in order"),
+          u1 && u2 && scan()->rotation == 3 && scan()->items.front().outer == moved);
+    app_->undo();
+    app_->undo();
+
+    // exports before the turn, relinked after it: matched, and the final composite equals the full print bit
+    // for bit
+    app_->setSetting(QStringLiteral("applyUpright"), false);
+    app_->exportImageAreas({});
+    app_->waitIdle(300000);
+    const QStringList edits = filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif"));
+    app_->rotateScan(scanId, 1);
+    QVariantList rows;
+    auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+    QVariantList urls;
+    for (const auto& e : edits)
+        urls << e;
+    app_->relinkFiles(urls);
+    app_->waitIdle(300000);
+    disconnect(c);
+    int matched = 0;
+    for (const auto& r : rows)
+        if (r.toMap().value("decision").toString() == QLatin1String("unique") &&
+            r.toMap().value("accept").toBool())
+            ++matched;
+    app_->applyRelink(rows);
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    app_->exportFinal({}, {});
+    app_->waitIdle(300000);
+    app_->exportFullPrints({});
+    app_->waitIdle(300000);
+    const QStringList finals = filesMatching(exportDir, QStringLiteral("*_FINAL_v001.tif"));
+    const QStringList fulls = filesMatching(exportDir, QStringLiteral("*_FULL_v001.tif"));
+    bool exact = edits.size() == 4 && finals.size() == 4 && fulls.size() == 4;
+    QString why;
+    for (int i = 0; exact && i < finals.size(); ++i)
+        exact = samePixels(finals[i], fulls[i], why);
+    check(QStringLiteral(
+              "UX-04 exported before the turn, relinked after it: 4/4 matched, final = full print bit for "
+              "bit"),
+          matched == 4 && exact,
+          QStringLiteral("edits %1, matched %2, finals %3, fulls %4 %5")
+              .arg(edits.size())
+              .arg(matched)
+              .arg(finals.size())
+              .arg(fulls.size())
+              .arg(why));
+    // the other canvas views follow the turn too (visual evidence; the checks above are the measurements)
+    canvas->setProperty("mode", QStringLiteral("composite"));
+    waitFor([&] { return !app_->compositePreview(app_->currentItemId().toStdString()).isNull(); }, 60000);
+    canvas->setProperty("compare", true);
+    snapshot(QStringLiteral("U014-composite-turned-90"));
+    canvas->setProperty("compare", false);
+    canvas->setProperty("mode", QStringLiteral("image"));
+    snapshot(QStringLiteral("U014-image-turned-90"));
+    canvas->setProperty("mode", QStringLiteral("scan"));
+    // uprights off: a new export looks like the turned canvas — the old one turned 90°, pixel for pixel
+    app_->exportImageAreas({});
+    app_->waitIdle(300000);
+    const QStringList edits2 = filesMatching(exportDir, QStringLiteral("*_EDIT_v002.tif"));
+    bool turned = edits2.size() == 4;
+    for (int i = 0; turned && i < 4; ++i)
+        turned = sameTurned(edits[i], edits2[i], 1, why);
+    check(QStringLiteral("UX-04 uprights off: exports follow the turned view (lossless quarter turn)"),
+          turned, why);
+    // uprights on: the turn is never added to a print's own upright
+    app_->setSetting(QStringLiteral("applyUpright"), true);
+    app_->exportImageAreas({});
+    app_->waitIdle(300000);
+    app_->rotateScan(scanId, -1);
+    app_->exportImageAreas({});
+    app_->waitIdle(300000);
+    const QStringList up3 = filesMatching(exportDir, QStringLiteral("*_EDIT_v003.tif"));
+    const QStringList up4 = filesMatching(exportDir, QStringLiteral("*_EDIT_v004.tif"));
+    bool same = up3.size() == 4 && up4.size() == 4;
+    for (int i = 0; same && i < 4; ++i)
+        same = samePixels(up3[i], up4[i], why);
+    check(QStringLiteral(
+              "UX-04 uprights on: the same export whether the scan is turned or not (never doubled)"),
+          same, why);
+
+    // saved and reopened; the scan file itself never changed
+    app_->rotateScan(scanId, -1); // 270°
+    const QString proj = QDir(d).filePath(QStringLiteral("rotation.fkproj"));
+    const bool savedOk = app_->saveProjectAs(proj);
+    app_->newProject();
+    const bool opened = app_->openProject(QUrl::fromLocalFile(proj));
+    app_->waitIdle(300000);
+    QCoreApplication::processEvents();
+    check(QStringLiteral("UX-04 saved and reopened: the turn, the prints and their boundaries are kept"),
+          savedOk && opened && scan() && scan()->rotation == 3 && shapes() == start);
+    const auto shaAfter = fk::sha256File(toPath(four));
+    check(QStringLiteral("UX-04 the scan file is unchanged (SHA-256)"),
+          sourceSha && shaAfter && *sourceSha == *shaAfter,
+          sourceSha ? QString::fromStdString(sourceSha->substr(0, 16)) : QString());
+    snapshot(QStringLiteral("U014-reopened-270"));
+    restoreSettings();
+    app_->newProject();
+}
+
 int SelfTest::scenarioMinIsWhite() {
     // FK-011: rows from the TIFF reader are already in normal polarity; the display converter inverts
     // MinIsWhite again, so Preview (proxy) and Full (rows) disagree.
@@ -1986,6 +2416,7 @@ int SelfTest::run() {
     runPrivacy();
     runCountSetting();
     runShapeEditing();
+    runScanRotation();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

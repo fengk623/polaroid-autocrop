@@ -1200,3 +1200,64 @@ TEST(CountSetting, ProjectsWithoutTheSettingKeepTheirManualCount) {
     EXPECT_EQ(q->scans[0].expectedCount, 2);
     EXPECT_TRUE(q->settings.autoCount);
 }
+
+// ---- UX-04: whole-scan view rotation ---------------------------------------------------------------------
+
+TEST(ScanRotation, SavedReopenedAndOlderProjectsAreUnrotated) {
+    TempDir dir;
+    Project p = sampleProject(dir / "scan.tif");
+    auto shapes = [](const ScanRecord& s) {
+        std::vector<std::pair<Shape, Shape>> v;
+        for (const auto& it : s.items)
+            v.emplace_back(it.outer, it.inner);
+        return v;
+    };
+    const auto before = shapes(p.scans[0]);
+    rotateScanView(p.scans[0], 1);
+    EXPECT_EQ(p.scans[0].rotation, 1);
+    EXPECT_EQ(shapes(p.scans[0]), before); // display only: no boundary moves
+    const auto file = dir / "rot.fkproj";
+    ASSERT_TRUE(saveProject(p, file).ok());
+    auto q = loadProject(file);
+    ASSERT_TRUE(q.ok()) << q.error().message;
+    EXPECT_EQ(q->scans[0].rotation, 1);
+    EXPECT_EQ(shapes(q->scans[0]), before);
+    // a 0.7.0-alpha.3 project has no "view" object: not rotated
+    const std::string js = std::regex_replace(
+        projectToJson(p), std::regex(R"("view"\s*:\s*\{\s*"rotation"\s*:\s*1\s*\}\s*,?)"), "");
+    ASSERT_EQ(js.find("\"view\""), std::string::npos);
+    auto old = projectFromJson(js);
+    ASSERT_TRUE(old.ok()) << old.error().message;
+    EXPECT_EQ(old->scans[0].rotation, 0);
+    // out-of-range or wrong-typed values: modulo 4, or 0
+    for (const auto& [text, want] :
+         std::vector<std::pair<std::string, int>>{{"5", 1}, {"-1", 3}, {"\"x\"", 0}}) {
+        const std::string bad = std::regex_replace(projectToJson(p), std::regex(R"("rotation"\s*:\s*1)"),
+                                                   "\"rotation\": " + text);
+        auto r = projectFromJson(bad);
+        ASSERT_TRUE(r.ok()) << text;
+        EXPECT_EQ(r->scans[0].rotation, want) << text;
+    }
+}
+
+TEST(ScanRotation, FourQuarterTurnsAreTheIdentity) {
+    ScanRecord s;
+    for (int k = 0; k < 4; ++k)
+        rotateScanView(s, 1);
+    EXPECT_EQ(s.rotation, 0);
+    rotateScanView(s, -1);
+    EXPECT_EQ(s.rotation, 3);
+    rotateScanView(s, 1);
+    EXPECT_EQ(s.rotation, 0);
+}
+
+TEST(ScanRotation, ExportTurnsNeverAddTheViewToThePrintsUpright) {
+    ScanRecord s;
+    ItemRecord it;
+    it.upright = 1;
+    s.rotation = 3;
+    EXPECT_EQ(exportTurns(s, it, true), 1);  // a print's own "up" does not change with the view
+    EXPECT_EQ(exportTurns(s, it, false), 3); // as in the scan: as the canvas shows it
+    s.rotation = 0;
+    EXPECT_EQ(exportTurns(s, it, false), 0);
+}
