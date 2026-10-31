@@ -9,7 +9,7 @@ Each release acceptance item → PRD → RFC → code → test → CI job → ev
 | 3 | Finds 1–12 mixed prints per scan | F02 | RFC-0004 | core/src/detection | test_detection, eval_corpus | ci.yml | ◐ core; app pending |
 | 4 | Real frame fully kept; inner_cut_violations = 0 | F02 | RFC-0004 | core/src/detection | eval_corpus (cuts_on_detected = 0), Detection.* containment | ci.yml | ◐ measured (TEST-PLAN §4); real scans HV-01 |
 | 5 | Inner detected incl. round frame | F03 | RFC-0004 | core/src/detection | eval_corpus (inner error), Detection.FindsAndContainsTwoTiltedPrints | ci.yml | ◐ |
-| 6 | Manual Outer/Inner editing | F04 | RFC-0002, RFC-0011 | app/canvas | tst_boundary_edit | ci.yml | ☐ |
+| 6 | Manual Outer/Inner editing | F04 | RFC-0002, RFC-0011 | core/src/geometry.cpp (`editShape`), app/src/ScanCanvas.cpp, ShiftTap.cpp | test_geometry (`Edit.*`), packaged self-test `runShapeEditing` (UX-03) | ci.yml, release.yml | ◐ offscreen + core; real window HV |
 | 7 | JPEG/PNG/TIFF/valid Linear DNG export | F05 | RFC-0005, ADR-0004 | core/src/export.cpp, tiff_sink.cpp, image_file.cpp | test_export, test_png_jpeg | ci.yml | ◐ DNG validity in Adobe tools: HV |
 | 8 | Relink graded files to the right print + content check | F06 | RFC-0006 | core/src/relink.cpp, project.cpp | test_relink, test_project (Relink.*) | ci.yml | ◐ core; app pending |
 | 9 | Inverse mapping back into the image area; frame untouched | F07 | RFC-0007 | core/src/composite.cpp | test_composite (GradedPixelsOnlyInsideTheImageArea, StraightenedRoundTripKeepsFrameExact) | ci.yml | ◐ core |

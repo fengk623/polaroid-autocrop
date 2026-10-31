@@ -3,11 +3,14 @@
 // and writes report.json. It cannot prove monitor colour or drawing in a real window (HV-02/HV-03).
 #pragma once
 
+#include <QEvent>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
 #include <QPointF>
 #include <QString>
+
+#include <functional>
 
 class QQuickItem;
 class QQuickWindow;
@@ -54,6 +57,17 @@ class SelfTest : public QObject {
     /// UX-01 (U011): automatic count by default, per-scan override with the left-rail controls (mouse
     /// input), warnings updated without detecting again, single/multi/blank scans in one project, saved.
     void runCountSetting();
+    /// UX-03 (U013): Shift tap switches Outer/Inner (real key events), Shift-drag keeps rectangles and
+    /// circles, Shift+click / Shift+arrows / typing / dialogs / focus loss never switch, undo/redo, menu and
+    /// tool buttons, saved and reopened.
+    void runShapeEditing();
+    /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
+    /// `local`.
+    void key(int key, Qt::KeyboardModifiers mods, bool press, const QString& text = {});
+    void mouse(QQuickItem* item, QPointF local, QEvent::Type type,
+               Qt::KeyboardModifiers mods = Qt::NoModifier);
+    QQuickItem* findItemIf(const std::function<bool(QQuickItem*)>& pred) const;
+    int inputTs_ = 0;
     void runTaskSafety(const QString& exportDir, const QString& projectPath);
     int scenarioMinIsWhite();
     QJsonArray known_;

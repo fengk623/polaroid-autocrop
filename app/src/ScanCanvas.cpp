@@ -3,6 +3,7 @@
 #include "AppController.hpp"
 
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QNativeGestureEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -58,7 +59,8 @@ void ScanCanvas::setApp(QObject* a) {
         connect(app_, &AppController::geometryChanged, this, &ScanCanvas::onGeometry);
         connect(app_, &AppController::currentChanged, this, [this] { update(); });
         connect(app_, &AppController::selectionChanged, this, [this] {
-            handle_.reset();
+            cancelDrag();
+            setHandle(std::nullopt);
             if (mode_ != QLatin1String("scan")) fit();
             update();
         });
@@ -83,9 +85,34 @@ void ScanCanvas::setMode(const QString& m) {
 
 void ScanCanvas::setTool(const QString& t) {
     if (t == tool_) return;
+    cancelDrag();
     tool_ = t;
-    handle_.reset();
+    setHandle(std::nullopt);
     Q_EMIT toolChanged();
+    update();
+}
+
+QString ScanCanvas::editTarget() const {
+    if (tool_ == QLatin1String("inner")) return QStringLiteral("inner");
+    if (tool_ == QLatin1String("outer") || tool_ == QLatin1String("select")) return QStringLiteral("outer");
+    return {};
+}
+
+bool ScanCanvas::switchBoundary() {
+    if (dragging_) return false;
+    setTool(tool_ == QLatin1String("inner") ? QStringLiteral("outer") : QStringLiteral("inner"));
+    return true;
+}
+
+void ScanCanvas::setHandle(std::optional<Handle> h) {
+    const bool had = handle_.has_value();
+    handle_ = h;
+    if (had != handle_.has_value()) Q_EMIT handleChanged();
+}
+
+void ScanCanvas::cancelDrag() {
+    if (!dragging_) return;
+    dragging_ = false;
     update();
 }
 
@@ -149,7 +176,8 @@ void ScanCanvas::onScanImage(const QString& scanId) {
     if (had != hasImage()) Q_EMIT badgeChanged();
     if (newScan) {
         detail_ = QImage();
-        handle_.reset();
+        cancelDrag();
+        setHandle(std::nullopt);
         fit();
     } else if (atFit_) {
         fit(); // e.g. the proxy arrived after the scan was selected: fit the real size now
@@ -520,7 +548,7 @@ void ScanCanvas::drawOverlays(QPainter* p) {
         const bool relinked = std::any_of(it->edits.begin(), it->edits.end(),
                                           [](const fk::EditVersion& e) { return !e.relinkedPath.empty(); });
         fk::Shape outer = it->outer, inner = it->inner;
-        if (dragging_ && it->itemId == dragItem_) (handle_ && handle_->outer ? outer : inner) = dragShape_;
+        if (dragging_ && it->itemId == dragItem_) (dragOuter_ ? outer : inner) = dragShape_;
         // outer
         QPen po(low                                             ? kLow
                 : it->outerSource == fk::BoundarySource::manual ? kManual
@@ -583,7 +611,7 @@ void ScanCanvas::drawOverlays(QPainter* p) {
                 p->setBrush(sel ? QColor(0x35, 0xB5, 0xA8) : QColor(Qt::white));
                 p->drawRect(QRectF(c.x() - s / 2, c.y() - s / 2, s, s));
             };
-            auto isSel = [&](HandleKind k, int idx, bool o) {
+            auto isSel = [&](fk::EditHandle k, int idx, bool o) {
                 return handle_ && handle_->kind == k && handle_->index == idx && handle_->outer == o;
             };
             if (outerTool || innerTool) {
@@ -591,15 +619,16 @@ void ScanCanvas::drawOverlays(QPainter* p) {
                 const bool o = outerTool;
                 if (s.kind == fk::ShapeKind::quad) {
                     for (int i = 0; i < 4; ++i) {
-                        handleSq(toScreen(s.quad.p[i]), 9, isSel(HandleKind::corner, i, o));
+                        handleSq(toScreen(s.quad.p[i]), 9, isSel(fk::EditHandle::corner, i, o));
                         handleSq(toScreen((s.quad.p[i] + s.quad.p[(i + 1) % 4]) * 0.5), 7,
-                                 isSel(HandleKind::edge, i, o));
+                                 isSel(fk::EditHandle::edge, i, o));
                     }
                 } else {
                     const auto& e = s.ellipse;
-                    handleSq(toScreen(e.c), 9, isSel(HandleKind::center, 0, o));
-                    handleSq(toScreen(e.c + fk::Vec2{e.rx, 0}), 7, isSel(HandleKind::radiusX, 0, o));
-                    handleSq(toScreen(e.c + fk::Vec2{0, e.ry}), 7, isSel(HandleKind::radiusY, 0, o));
+                    handleSq(toScreen(e.c), 9, isSel(fk::EditHandle::center, 0, o));
+                    // on the rotated axes (UX-03): the handles sit on the outline whatever its angle
+                    handleSq(toScreen(fk::ellipseHandle(e, true)), 7, isSel(fk::EditHandle::radiusX, 0, o));
+                    handleSq(toScreen(fk::ellipseHandle(e, false)), 7, isSel(fk::EditHandle::radiusY, 0, o));
                 }
             }
         }
@@ -629,98 +658,41 @@ std::optional<ScanCanvas::Handle> ScanCanvas::hitHandle(QPointF pos) const {
     };
     if (s->kind == fk::ShapeKind::quad) {
         for (int i = 0; i < 4; ++i)
-            if (near(s->quad.p[i])) return Handle{HandleKind::corner, i, outerTool};
+            if (near(s->quad.p[i])) return Handle{fk::EditHandle::corner, i, outerTool};
         for (int i = 0; i < 4; ++i)
             if (near((s->quad.p[i] + s->quad.p[(i + 1) % 4]) * 0.5))
-                return Handle{HandleKind::edge, i, outerTool};
+                return Handle{fk::EditHandle::edge, i, outerTool};
     } else {
         const auto& e = s->ellipse;
-        if (near(e.c + fk::Vec2{e.rx, 0})) return Handle{HandleKind::radiusX, 0, outerTool};
-        if (near(e.c + fk::Vec2{0, e.ry})) return Handle{HandleKind::radiusY, 0, outerTool};
-        if (near(e.c)) return Handle{HandleKind::center, 0, outerTool};
+        if (near(fk::ellipseHandle(e, true))) return Handle{fk::EditHandle::radiusX, 0, outerTool};
+        if (near(fk::ellipseHandle(e, false))) return Handle{fk::EditHandle::radiusY, 0, outerTool};
+        if (near(e.c)) return Handle{fk::EditHandle::center, 0, outerTool};
     }
     // inside the shape with an edit tool: move the whole boundary
     if (tool_ != QLatin1String("select") && fk::contains(*s, toScan(pos)))
-        return Handle{HandleKind::move, 0, outerTool};
+        return Handle{fk::EditHandle::move, 0, outerTool};
     return std::nullopt;
 }
 
 void ScanCanvas::applyDrag(QPointF pos) {
-    const fk::Shape* start = currentShape(handle_->outer);
-    if (!start) return;
+    if (!handle_) return;
+    // one geometry for the canvas and the stored boundary: fk::editShape (RFC-0002 §Editing). Shift held:
+    // corners keep the rectangle (aspect, right angles, rotation), moves lock to an axis, radii scale
+    // together.
     const fk::Vec2 d = toScan(pos) - toScan(pressPos_);
-    fk::Shape s = *start;
-    switch (handle_->kind) {
-    case HandleKind::corner:
-        s.quad.p[handle_->index] = start->quad.p[handle_->index] + d;
-        break;
-    case HandleKind::edge: {
-        const int i = handle_->index, j = (i + 1) % 4;
-        const fk::Vec2 n = fk::perp(fk::normalized(start->quad.p[j] - start->quad.p[i]));
-        const double m = fk::dot(d, n);
-        s.quad.p[i] = start->quad.p[i] + n * m;
-        s.quad.p[j] = start->quad.p[j] + n * m;
-        break;
-    }
-    case HandleKind::move:
-        if (s.kind == fk::ShapeKind::quad)
-            for (auto& p : s.quad.p)
-                p = p + d;
-        else
-            s.ellipse.c = s.ellipse.c + d;
-        break;
-    case HandleKind::center:
-        s.ellipse.c = start->ellipse.c + d;
-        break;
-    case HandleKind::radiusX:
-    case HandleKind::radiusY: {
-        const double r = fk::norm(toScan(pos) - start->ellipse.c);
-        const bool circle = std::abs(start->ellipse.rx - start->ellipse.ry) < 1e-6;
-        if (handle_->kind == HandleKind::radiusX || circle) s.ellipse.rx = std::max(2.0, r);
-        if (handle_->kind == HandleKind::radiusY || circle) s.ellipse.ry = std::max(2.0, r);
-        break;
-    }
-    }
-    if (s.kind == fk::ShapeKind::quad && !fk::isConvex(s.quad)) return; // keep the last valid shape
-    dragShape_ = s;
+    if (auto s = fk::editShape(dragStart_, {handle_->kind, handle_->index, d, constrain_}))
+        dragShape_ = *s; // otherwise keep the last valid shape
     update();
 }
 
 void ScanCanvas::nudge(int dx, int dy) {
-    if (!handle_ || !app_) return;
+    if (!handle_ || !app_ || dragging_) return;
     const fk::Shape* start = currentShape(handle_->outer);
     if (!start) return;
-    fk::Shape s = *start;
-    const fk::Vec2 d{static_cast<double>(dx), static_cast<double>(dy)};
-    switch (handle_->kind) {
-    case HandleKind::corner:
-        s.quad.p[handle_->index] = s.quad.p[handle_->index] + d;
-        break;
-    case HandleKind::edge: {
-        const int i = handle_->index, j = (i + 1) % 4;
-        const fk::Vec2 n = fk::perp(fk::normalized(s.quad.p[j] - s.quad.p[i]));
-        const double m = fk::dot(d, n);
-        s.quad.p[i] = s.quad.p[i] + n * m;
-        s.quad.p[j] = s.quad.p[j] + n * m;
-        break;
-    }
-    case HandleKind::move:
-    case HandleKind::center:
-        if (s.kind == fk::ShapeKind::quad)
-            for (auto& p : s.quad.p)
-                p = p + d;
-        else
-            s.ellipse.c = s.ellipse.c + d;
-        break;
-    case HandleKind::radiusX:
-        s.ellipse.rx = std::max(2.0, s.ellipse.rx + dx);
-        break;
-    case HandleKind::radiusY:
-        s.ellipse.ry = std::max(2.0, s.ellipse.ry + dy);
-        break;
-    }
-    if (s.kind == fk::ShapeKind::quad && !fk::isConvex(s.quad)) return;
-    app_->commitShape(app_->currentItemId().toStdString(), handle_->outer, s);
+    // arrows move the selected handle freely (Shift = 10 px steps, never the constraint)
+    const auto s = fk::editShape(
+        *start, {handle_->kind, handle_->index, {static_cast<double>(dx), static_cast<double>(dy)}, false});
+    if (s) app_->commitShape(app_->currentItemId().toStdString(), handle_->outer, *s);
 }
 
 void ScanCanvas::mousePressEvent(QMouseEvent* e) {
@@ -743,10 +715,12 @@ void ScanCanvas::mousePressEvent(QMouseEvent* e) {
         }
     }
     if (auto h = hitHandle(e->position())) {
-        handle_ = h;
+        setHandle(h);
         dragging_ = true;
         dragItem_ = app_->currentItemId().toStdString();
-        dragShape_ = *currentShape(h->outer);
+        dragOuter_ = h->outer;
+        dragStart_ = dragShape_ = *currentShape(h->outer);
+        constrain_ = e->modifiers() & Qt::ShiftModifier;
         update();
         return;
     }
@@ -759,11 +733,11 @@ void ScanCanvas::mousePressEvent(QMouseEvent* e) {
             app_->selectItem(QString::fromStdString((*it)->itemId), e->modifiers() & Qt::ShiftModifier,
                              toggle);
             Q_EMIT itemClicked(QString::fromStdString((*it)->itemId));
-            handle_.reset();
+            setHandle(std::nullopt);
             update();
             return;
         }
-    handle_.reset();
+    setHandle(std::nullopt);
     panning_ = !atFit_;
     if (panning_) setCursor(Qt::ClosedHandCursor);
     update();
@@ -772,6 +746,7 @@ void ScanCanvas::mousePressEvent(QMouseEvent* e) {
 void ScanCanvas::mouseMoveEvent(QMouseEvent* e) {
     const QPointF pos = e->position();
     if (dragging_) {
+        constrain_ = e->modifiers() & Qt::ShiftModifier;
         applyDrag(pos);
     } else if (panning_) {
         setView(scale_, offset_ + (pos - lastPos_));
@@ -786,14 +761,55 @@ void ScanCanvas::mouseMoveEvent(QMouseEvent* e) {
     lastPos_ = pos;
 }
 
-void ScanCanvas::mouseReleaseEvent(QMouseEvent*) {
+void ScanCanvas::mouseReleaseEvent(QMouseEvent* e) {
     if (dragging_ && app_) {
+        constrain_ = e->modifiers() & Qt::ShiftModifier;
+        applyDrag(e->position());
         dragging_ = false;
-        app_->commitShape(dragItem_, handle_->outer, dragShape_);
+        // one complete drag = one undo step (a drag back to the start adds none)
+        app_->commitShape(dragItem_, dragOuter_, dragShape_);
     }
     dragging_ = panning_ = compareDrag_ = false;
     unsetCursor();
     update();
+}
+
+void ScanCanvas::mouseUngrabEvent() {
+    // the grab was taken away (window lost focus, a popup opened): nothing was completed
+    cancelDrag();
+    panning_ = compareDrag_ = false;
+    unsetCursor();
+}
+
+void ScanCanvas::focusOutEvent(QFocusEvent* e) {
+    cancelDrag();
+    QQuickPaintedItem::focusOutEvent(e);
+}
+
+void ScanCanvas::keyPressEvent(QKeyEvent* e) {
+    // pressing or releasing Shift mid-drag switches the constraint at once, without moving the mouse
+    if (dragging_ && e->key() == Qt::Key_Shift) {
+        constrain_ = true;
+        applyDrag(lastPos_);
+        e->accept();
+        return;
+    }
+    if (dragging_ && e->key() == Qt::Key_Escape) {
+        cancelDrag();
+        e->accept();
+        return;
+    }
+    QQuickPaintedItem::keyPressEvent(e);
+}
+
+void ScanCanvas::keyReleaseEvent(QKeyEvent* e) {
+    if (dragging_ && e->key() == Qt::Key_Shift) {
+        constrain_ = false;
+        applyDrag(lastPos_);
+        e->accept();
+        return;
+    }
+    QQuickPaintedItem::keyReleaseEvent(e);
 }
 
 void ScanCanvas::mouseDoubleClickEvent(QMouseEvent* e) {
@@ -831,13 +847,13 @@ void ScanCanvas::hoverMoveEvent(QHoverEvent* e) {
     }
     if (auto h = hitHandle(e->position())) {
         switch (h->kind) {
-        case HandleKind::move:
-        case HandleKind::center:
+        case fk::EditHandle::move:
+        case fk::EditHandle::center:
             setCursor(Qt::SizeAllCursor);
             break;
-        case HandleKind::edge:
-        case HandleKind::radiusX:
-        case HandleKind::radiusY:
+        case fk::EditHandle::edge:
+        case fk::EditHandle::radiusX:
+        case fk::EditHandle::radiusY:
             setCursor(Qt::SizeHorCursor);
             break;
         default:

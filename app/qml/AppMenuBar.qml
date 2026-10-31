@@ -84,6 +84,7 @@ MenuBar {
         Item2 { text: qsTr("Reset Layout"); onTriggered: cmd.resetLayout() }
     }
     Menu2 {
+        objectName: "menuPrint"
         title: qsTr("&Print")
         Item2 { text: qsTr("Previous Print"); keys: "←"; onTriggered: App.stepItem(-1) }
         Item2 { text: qsTr("Next Print"); keys: "→"; onTriggered: App.stepItem(1) }
@@ -92,6 +93,12 @@ MenuBar {
         MenuSeparator {}
         Item2 { action: Action { text: qsTr("Mark Reviewed and Next"); shortcut: "Ctrl+Return"; onTriggered: App.reviewAndNext() } }
         Item2 { text: qsTr("Exclude / Include"); keys: "X"; onTriggered: App.toggleExcludedSelection() }
+        MenuSeparator {}
+        // UX-03: the same as the tool buttons and the Shift tap
+        Item2 { objectName: "menuEditOuter"; text: qsTr("Edit Outer"); keys: "O"; onTriggered: canvas.tool = "outer" }
+        Item2 { objectName: "menuEditInner"; text: qsTr("Edit Inner"); keys: "I"; onTriggered: canvas.tool = "inner" }
+        Item2 { objectName: "menuSwitchBoundary"; text: qsTr("Switch Outer ↔ Inner"); keys: qsTr("tap Shift"); onTriggered: win.switchBoundary(false) }
+        MenuSeparator {}
         Item2 { action: Action { text: qsTr("Rotate Upright Left"); shortcut: "Ctrl+["; onTriggered: App.rotateUpright(App.currentItemId, -1) } }
         Item2 { action: Action { text: qsTr("Rotate Upright Right"); shortcut: "Ctrl+]"; onTriggered: App.rotateUpright(App.currentItemId, 1) } }
         Item2 { text: qsTr("Snap Outer to Edges"); onTriggered: App.snapOuter(App.currentItemId) }

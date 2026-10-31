@@ -48,6 +48,13 @@ FkDialog {
             color: Theme.textTertiary
             text: qsTr("For new scans. Each scan can be changed in the left rail.")
         }
+        // UX-03: on by default; holding Shift to constrain a drag works either way
+        FkCheck {
+            objectName: "shiftSwitchSetting"
+            text: qsTr("Tap Shift to switch between editing Outer and Inner")
+            checked: App.settings.shiftSwitchesBoundary === true
+            onToggled: App.setSetting("shiftSwitchesBoundary", checked)
+        }
         // UX-07: export records are kept in the project; the portable sidecar is optional (off by default)
         FkCheck {
             text: qsTr("Also write a portable sidecar (.fk.json) next to each export")

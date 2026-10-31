@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
+import FrameKeeper
 import FrameKeeper.Core
 
 ApplicationWindow {
@@ -109,11 +110,36 @@ ApplicationWindow {
     Shortcut { sequence: "X"; enabled: !win.typing; onActivated: App.toggleExcludedSelection() }
     Shortcut { sequence: "Y"; enabled: !win.typing && canvasArea.canvas.mode === "composite"; onActivated: canvasArea.canvas.compare = !canvasArea.canvas.compare }
     Shortcut { sequence: "\\"; enabled: !win.typing && canvasArea.canvas.mode === "composite"; onActivated: canvasArea.canvas.showOriginal = !canvasArea.canvas.showOriginal }
-    Shortcut { sequence: "Left"; enabled: !win.typing && !canvasArea.canvas.hasHandle(); onActivated: App.stepItem(-1) }
-    Shortcut { sequence: "Right"; enabled: !win.typing && !canvasArea.canvas.hasHandle(); onActivated: App.stepItem(1) }
-    Shortcut { sequence: "Shift+Left"; enabled: !win.typing; onActivated: App.stepScan(-1) }
-    Shortcut { sequence: "Shift+Right"; enabled: !win.typing; onActivated: App.stepScan(1) }
+    Shortcut { sequence: "Left"; enabled: !win.typing && !canvasArea.canvas.handleActive; onActivated: App.stepItem(-1) }
+    Shortcut { sequence: "Right"; enabled: !win.typing && !canvasArea.canvas.handleActive; onActivated: App.stepItem(1) }
+    // a selected handle owns the arrows (Shift = 10 px nudge), also with Shift (UX-03)
+    Shortcut { sequence: "Shift+Left"; enabled: !win.typing && !canvasArea.canvas.handleActive; onActivated: App.stepScan(-1) }
+    Shortcut { sequence: "Shift+Right"; enabled: !win.typing && !canvasArea.canvas.handleActive; onActivated: App.stepScan(1) }
     Shortcut { sequence: "Escape"; enabled: !win.typing; onActivated: canvasArea.canvas.tool = "select" }
+    // UX-03: a lone tap of Shift switches the edited boundary (Outer ↔ Inner). Holding Shift only constrains a
+    // drag; Shift+click, Shift+arrows, Shift+wheel and Shift shortcuts never switch (ShiftTap). Not while typing,
+    // not with a dialog or menu open, never mid-drag (the canvas refuses).
+    ShiftTap {
+        id: shiftTap
+        objectName: "shiftTap"
+        window: win
+        enabled: App.settings.shiftSwitchesBoundary === true
+        onTapped: win.switchBoundary(true)
+    }
+    function inPopup(item) {
+        for (let p = item; p; p = p.parent)
+            if (p === Overlay.overlay) return true
+        return false
+    }
+    function dialogOpen() {
+        for (const d of modalDialogs)
+            if (d.visible) return true
+        return false
+    }
+    function switchBoundary(fromShift) {
+        if (fromShift && (typing || inPopup(activeFocusItem) || dialogOpen())) return false
+        return canvasArea.canvas.switchBoundary()
+    }
     // modifier shortcuts are owned by the menu bar (native on macOS); these cover non-macOS
     Shortcut { sequences: [StandardKey.ZoomIn, "Ctrl+="]; enabled: !win.isMac; onActivated: canvasArea.canvas.zoomStep(1) }
     Shortcut { sequence: StandardKey.ZoomOut; enabled: !win.isMac; onActivated: canvasArea.canvas.zoomStep(-1) }
@@ -403,9 +429,11 @@ ApplicationWindow {
         if (snaps.length) recoveryDialog.show(snaps)
     }
     function showSettings() { settingsDialog.open() }
+    readonly property var modalDialogs: [relinkDialog, exportDialog, finalDialog, settingsDialog, aboutDialog,
+                                         nameDialog, redetectConfirm, replaceConfirm, backupDialog, recoveryDialog]
     function closeDialogs() {
-        relinkDialog.close(); exportDialog.close(); finalDialog.close(); settingsDialog.close(); aboutDialog.close()
-        nameDialog.close(); redetectConfirm.close(); replaceConfirm.close(); backupDialog.close(); recoveryDialog.close()
+        for (const d of modalDialogs)
+            d.close()
     }
     function showAbout() { aboutDialog.open() }
 }

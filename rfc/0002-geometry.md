@@ -27,6 +27,24 @@ No user-facing perspective correction in v1 (flatbed scans are affine; ADR-0014)
 quad image area's exact straightening, which absorbs the window's small shear (≈ 0.3°) so no frame remains;
 `outToScan`/`scanToOut` are therefore general 3×3 matrices (stored as such in export records).
 
+## Editing (UX-03, U013)
+`std::optional<Shape> editShape(const Shape& start, const EditInput&)` is the only boundary-edit geometry: the
+canvas previews its result during a drag and commits the same value; arrow-key nudges call it too. `EditInput`
+= handle (`corner`, `edge`, `move`, `center`, `radiusX`, `radiusY`), quad index, pointer delta (scan px) and
+`constrain` (Shift held).
+- Corner, free: only that corner moves. Corner, constrained: the result is an exact rectangle with the start's
+  rotation (mean of the p0→p1 and p3→p2 directions) and side ratio (`quadSideLengths`), scaled about the fixed
+  opposite corner (unchanged bit for bit) so the dragged corner follows the pointer's projection on the diagonal;
+  never smaller than `kMinEditSize` (4 px) on the short side and never flipped.
+- Edge: both ends move along the edge's normal. Move/centre: translation; constrained = the dominant axis only.
+- Ellipse radius handles sit at the ends of the rotated axes (`ellipseHandle`); the radius is the pointer's
+  projection on that axis (≥ 4 px). A circle (`isCircle`: rx = ry within 1e-9 relative) changes only its radius
+  (rx = ry exactly); a constrained ellipse scales both radii by the same factor.
+- Invalid results (non-convex quad) return nullopt; the caller keeps the last valid shape.
+- `transformShape` keeps a circle exactly round under maps that keep it round (rotation, uniform scale): the
+  radii otherwise drift apart in the last bits after a translation + rotation.
+Tests: `Edit.*` in `tests/core/test_geometry.cpp`.
+
 ## Containment
 `maskWeight(shape, mode, x, y)` = 1/0 by pixel-centre containment (hard), or a linear ramp of width
 `feather` on the inside distance; `Preserve edge` shrinks the shape by N px. Used by compositing,

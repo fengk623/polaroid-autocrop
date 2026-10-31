@@ -21,6 +21,7 @@
 #include <QQuickWindow>
 #include <QRectF>
 #include <QUrl>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cstring>
@@ -30,6 +31,9 @@
 Q_GUI_EXPORT void qt_handleMouseEvent(QWindow* window, const QPointF& local, const QPointF& global,
                                       Qt::MouseButtons state, Qt::MouseButton button, QEvent::Type type,
                                       Qt::KeyboardModifiers mods, int timestamp);
+
+Q_GUI_EXPORT void qt_handleKeyEvent(QWindow* window, QEvent::Type t, int k, Qt::KeyboardModifiers mods,
+                                    const QString& text = QString(), bool autorep = false, ushort count = 1);
 
 namespace fkapp {
 
@@ -76,14 +80,39 @@ bool SelfTest::click(QQuickItem* item, QPointF local) {
     const QPointF global = item->mapToGlobal(local);
     // the same injection Qt Test uses: through the window system interface, so the click is delivered,
     // grabbed and released exactly like a user's (a QMouseEvent sent to the window is not grabbed)
-    static int timestamp = 0;
-    timestamp += 1000; // apart enough never to be a double click
+    inputTs_ += 1000; // apart enough never to be a double click
     qt_handleMouseEvent(window_, at, global, Qt::LeftButton, Qt::LeftButton, QEvent::MouseButtonPress,
-                        Qt::NoModifier, timestamp);
+                        Qt::NoModifier, inputTs_);
     qt_handleMouseEvent(window_, at, global, Qt::NoButton, Qt::LeftButton, QEvent::MouseButtonRelease,
-                        Qt::NoModifier, timestamp + 50);
+                        Qt::NoModifier, inputTs_ + 50);
     QCoreApplication::processEvents();
     return true;
+}
+
+void SelfTest::mouse(QQuickItem* item, QPointF local, QEvent::Type type, Qt::KeyboardModifiers mods) {
+    const QPointF at = item->mapToScene(local);
+    const QPointF global = item->mapToGlobal(local);
+    inputTs_ += type == QEvent::MouseButtonPress ? 1000 : 40;
+    const Qt::MouseButtons state = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton;
+    const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+    qt_handleMouseEvent(window_, at, global, state, button, type, mods, inputTs_);
+    QCoreApplication::processEvents();
+}
+
+void SelfTest::key(int k, Qt::KeyboardModifiers mods, bool press, const QString& text) {
+    qt_handleKeyEvent(window_, press ? QEvent::KeyPress : QEvent::KeyRelease, k, mods, text);
+    QCoreApplication::processEvents();
+}
+
+QQuickItem* SelfTest::findItemIf(const std::function<bool(QQuickItem*)>& pred) const {
+    std::function<QQuickItem*(QQuickItem*)> find = [&](QQuickItem* it) -> QQuickItem* {
+        if (!it) return nullptr;
+        if (pred(it)) return it;
+        for (QQuickItem* c : it->childItems())
+            if (QQuickItem* f = find(c)) return f;
+        return nullptr;
+    };
+    return find(window_->contentItem());
 }
 
 QObject* SelfTest::findCanvas() const {
@@ -1187,6 +1216,406 @@ void SelfTest::runCountSetting() {
     app_->newProject();
 }
 
+namespace {
+double rightAngleError(const fk::Quad& q) {
+    double worst = 0;
+    for (int i = 0; i < 4; ++i)
+        worst = std::max(worst, std::abs(fk::dot(fk::normalized(q.p[(i + 1) % 4] - q.p[i]),
+                                                 fk::normalized(q.p[(i + 3) % 4] - q.p[i]))));
+    return worst;
+}
+double sideRatio(const fk::Quad& q) {
+    const auto s = fk::quadSideLengths(q);
+    return s[0] / s[1];
+}
+fk::Quad tiltedRect(fk::Vec2 c, double w, double h, double angle) {
+    const fk::Mat3 m = fk::Mat3::translate(c.x, c.y) * fk::Mat3::rotate(angle);
+    return fk::normalizeQuad({m.apply({-w / 2, -h / 2}), m.apply({w / 2, -h / 2}), m.apply({w / 2, h / 2}),
+                              m.apply({-w / 2, h / 2})});
+}
+QString quadText(const fk::Quad& q) {
+    return QStringLiteral("right-angle error %1, ratio %2, angle %3°")
+        .arg(rightAngleError(q), 0, 'g', 3)
+        .arg(sideRatio(q), 0, 'f', 6)
+        .arg(fk::frameAngle(q) * 180 / M_PI, 0, 'f', 4);
+}
+} // namespace
+
+void SelfTest::runShapeEditing() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("shapes"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const bool shiftDefault = app_->settings().value("shiftSwitchesBoundary").toBool();
+    check(QStringLiteral("UX-03 Shift switching is on by default"), shiftDefault);
+    app_->setSetting(QStringLiteral("shiftSwitchesBoundary"), true);
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    QCoreApplication::processEvents();
+    auto* canvas = qobject_cast<QQuickItem*>(findCanvas());
+    const QString itemId = app_->currentItemId();
+    check(QStringLiteral("UX-03 setup: a print to edit"), canvas && !itemId.isEmpty());
+    if (!canvas || itemId.isEmpty()) return;
+    const std::string sid = itemId.toStdString();
+    auto rec = [&]() -> const fk::ItemRecord* {
+        for (const auto& sc : app_->project().scans)
+            for (const auto& it : sc.items)
+                if (it.itemId == sid) return &it;
+        return nullptr;
+    };
+    fk::SizeI scanSize{};
+    for (const auto& sc : app_->project().scans)
+        for (const auto& it : sc.items)
+            if (it.itemId == sid) scanSize = {sc.info.width, sc.info.height};
+    canvas->setProperty("mode", QStringLiteral("scan"));
+    canvas->setProperty("tool", QStringLiteral("select"));
+    QMetaObject::invokeMethod(canvas, "fit");
+    window_->requestActivate();
+    waitFor([&] { return window_->isActive(); }, 2000);
+    canvas->forceActiveFocus();
+    QCoreApplication::processEvents();
+
+    auto target = [&] { return canvas->property("editTarget").toString(); };
+    QQuickItem* badge = findItem(QStringLiteral("editTargetBadge"));
+    auto badgeText = [&] {
+        return badge && badge->isVisible() ? badge->property("text").toString()
+                                           : QStringLiteral("(not shown)");
+    };
+    auto state = [&] {
+        return QStringLiteral("tool %1, editing %2, canvas says \"%3\"")
+            .arg(canvas->property("tool").toString(), target(), badgeText());
+    };
+    auto tapShift = [&] {
+        key(Qt::Key_Shift, Qt::ShiftModifier, true);
+        key(Qt::Key_Shift, Qt::NoModifier, false);
+    };
+    auto at = [&](fk::Vec2 p) {
+        QPointF r;
+        QMetaObject::invokeMethod(canvas, "mapFromScan", Q_RETURN_ARG(QPointF, r), Q_ARG(double, p.x),
+                                  Q_ARG(double, p.y));
+        return r;
+    };
+    // a drag in screen steps: press at `from`, move by `by` in 4 steps, release (mods per phase)
+    auto drag = [&](QPointF from, QPointF by, Qt::KeyboardModifiers mods) {
+        mouse(canvas, from, QEvent::MouseButtonPress, mods);
+        for (int k = 1; k <= 4; ++k)
+            mouse(canvas, from + by * (k / 4.0), QEvent::MouseMove, mods);
+        mouse(canvas, from + by, QEvent::MouseButtonRelease, mods);
+    };
+    const QPointF empty(4, 4); // canvas corner: outside the fitted scan
+
+    // ---- the current mode is always stated; a lone Shift tap switches it
+    const QString outerText = badgeText();
+    check(QStringLiteral("UX-03 the canvas states which boundary is edited"),
+          target() == QLatin1String("outer") && badge && badge->isVisible(), state());
+    tapShift();
+    const QString innerText = badgeText();
+    check(QStringLiteral("UX-03 Shift tap (real key events): Outer → Inner, shown on the canvas"),
+          target() == QLatin1String("inner") && innerText != outerText && badge->isVisible(), state());
+    tapShift();
+    check(QStringLiteral("UX-03 Shift tap again: Inner → Outer"),
+          target() == QLatin1String("outer") && badgeText() == outerText, state());
+
+    // ---- Shift used with something else never switches
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    mouse(canvas, empty, QEvent::MouseButtonPress, Qt::ShiftModifier);
+    mouse(canvas, empty, QEvent::MouseButtonRelease, Qt::ShiftModifier);
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    check(QStringLiteral("UX-03 Shift+click does not switch"), target() == QLatin1String("outer"), state());
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    key(Qt::Key_A, Qt::ShiftModifier, true, QStringLiteral("A"));
+    key(Qt::Key_A, Qt::ShiftModifier, false, QStringLiteral("A"));
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    check(QStringLiteral("UX-03 Shift+letter does not switch"), target() == QLatin1String("outer"), state());
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    key(Qt::Key_Right, Qt::ShiftModifier, true); // no handle selected: the "next scan" shortcut
+    key(Qt::Key_Right, Qt::ShiftModifier, false);
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    check(QStringLiteral("UX-03 Shift+→ (next scan shortcut) does not switch"),
+          target() == QLatin1String("outer"), state());
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    {
+        const QPointF local = canvas->mapToScene(QPointF(canvas->width() / 2, canvas->height() / 2));
+        QWheelEvent w(local, canvas->mapToGlobal(QPointF(canvas->width() / 2, canvas->height() / 2)),
+                      QPoint(), QPoint(0, 120), Qt::NoButton, Qt::ShiftModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(window_, &w);
+    }
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    check(QStringLiteral("UX-03 Shift+wheel does not switch"), target() == QLatin1String("outer"), state());
+    QMetaObject::invokeMethod(canvas, "fit");
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    waitFor([] { return false; }, 1200);
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    check(QStringLiteral("UX-03 Shift held over a second is not a tap"), target() == QLatin1String("outer"),
+          state());
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    {
+        QFocusEvent out(QEvent::FocusOut, Qt::ActiveWindowFocusReason);
+        QCoreApplication::sendEvent(window_, &out);
+        QFocusEvent in(QEvent::FocusIn, Qt::ActiveWindowFocusReason);
+        QCoreApplication::sendEvent(window_, &in);
+    }
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    check(QStringLiteral("UX-03 window losing focus while Shift is down: no switch"),
+          target() == QLatin1String("outer"), state());
+    canvas->forceActiveFocus();
+    // typing: a text field has the focus
+    QQuickItem* field = findItemIf([](QQuickItem* it) {
+        return it->isVisible() && it->isEnabled() &&
+               it->metaObject()->indexOfProperty("cursorPosition") >= 0 &&
+               it->metaObject()->indexOfProperty("readOnly") >= 0 && !it->property("readOnly").toBool();
+    });
+    if (field) {
+        field->forceActiveFocus();
+        QCoreApplication::processEvents();
+        const bool focused = window_->activeFocusItem() == field;
+        tapShift();
+        check(QStringLiteral("UX-03 Shift tap while typing in a text field: no switch"),
+              focused && target() == QLatin1String("outer"),
+              state() +
+                  QStringLiteral(", focus in %1").arg(QString::fromLatin1(field->metaObject()->className())));
+        canvas->forceActiveFocus();
+    } else {
+        skip(QStringLiteral("UX-03 Shift tap while typing in a text field: no switch"),
+             QStringLiteral("no editable text field visible in this layout"));
+    }
+    // a dialog is open
+    QMetaObject::invokeMethod(window_, "showSettings");
+    const bool dlg = waitFor(
+        [&] {
+            QVariant r;
+            QMetaObject::invokeMethod(window_, "dialogOpen", Q_RETURN_ARG(QVariant, r));
+            return r.toBool();
+        },
+        3000);
+    tapShift();
+    check(QStringLiteral("UX-03 Shift tap with a dialog open: no switch"),
+          dlg && target() == QLatin1String("outer"), state());
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    canvas->forceActiveFocus();
+    // switched off in Settings
+    app_->setSetting(QStringLiteral("shiftSwitchesBoundary"), false);
+    QCoreApplication::processEvents();
+    tapShift();
+    check(QStringLiteral("UX-03 Shift switching turned off: a tap does nothing"),
+          target() == QLatin1String("outer"), state());
+    app_->setSetting(QStringLiteral("shiftSwitchesBoundary"), true);
+    canvas->setProperty("tool", QStringLiteral("outer"));
+
+    // ---- rectangle: Shift-drag a corner keeps the rectangle about the opposite corner, one undo step
+    const fk::RectD b = fk::boundsOf(rec()->outer);
+    const fk::Quad rect = fk::rectQuad(b.x0, b.y0, b.x1, b.y1);
+    app_->commitShape(sid, true, fk::Shape::fromQuad(rect));
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    drag(at(rect.p[2]), QPointF(40, 25), Qt::ShiftModifier);
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    const fk::Quad r1 = rec()->outer.quad;
+    check(QStringLiteral("UX-03 Shift-drag does not switch the boundary"), target() == QLatin1String("outer"),
+          state());
+    check(QStringLiteral(
+              "UX-03 rectangle, Shift-drag corner: right angles, same proportions, opposite corner fixed"),
+          rightAngleError(r1) < 1e-9 && std::abs(sideRatio(r1) / sideRatio(rect) - 1) < 1e-9 &&
+              r1.p[0] == rect.p[0] && std::abs(fk::frameAngle(r1)) < 1e-9 &&
+              fk::norm(r1.p[2] - rect.p[2]) > 1,
+          quadText(r1));
+    app_->undo();
+    const bool undone = rec()->outer.quad == rect;
+    app_->redo();
+    check(QStringLiteral("UX-03 rectangle: one drag = one undo step; redo"),
+          undone && rec()->outer.quad == r1);
+
+    // ---- tilted rectangle: rotation kept
+    const auto sides = fk::quadSideLengths(rect);
+    const double tilt = 3.0 * M_PI / 180;
+    const fk::Quad tilted = tiltedRect(fk::centroid(rec()->outer), sides[0] * 0.9, sides[1] * 0.9, tilt);
+    app_->commitShape(sid, true, fk::Shape::fromQuad(tilted));
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    drag(at(tilted.p[1]), QPointF(-30, 20), Qt::ShiftModifier);
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    const fk::Quad t1 = rec()->outer.quad;
+    check(QStringLiteral(
+              "UX-03 tilted rectangle, Shift-drag corner: rotation, right angles and proportions kept"),
+          rightAngleError(t1) < 1e-9 && std::abs(sideRatio(t1) / sideRatio(tilted) - 1) < 1e-9 &&
+              std::abs(fk::frameAngle(t1) - fk::frameAngle(tilted)) < 1e-9 && t1.p[3] == tilted.p[3] &&
+              fk::norm(t1.p[1] - tilted.p[1]) > 1,
+          quadText(t1));
+    app_->undo();
+    const bool tUndone = rec()->outer.quad == tilted;
+    app_->redo();
+    check(QStringLiteral("UX-03 tilted rectangle: undo / redo"), tUndone && rec()->outer.quad == t1);
+    // free corner editing is kept: without Shift only the dragged corner moves
+    drag(at(t1.p[0]), QPointF(15, 10), Qt::NoModifier);
+    const fk::Quad t2 = rec()->outer.quad;
+    check(QStringLiteral("UX-03 drag without Shift: free corner (the other three unchanged)"),
+          t2.p[1] == t1.p[1] && t2.p[2] == t1.p[2] && t2.p[3] == t1.p[3] && fk::norm(t2.p[0] - t1.p[0]) > 1);
+    // Shift released during the drag: free from that moment, still no switch
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    const QPointF c3 = at(t2.p[3]);
+    mouse(canvas, c3, QEvent::MouseButtonPress, Qt::ShiftModifier);
+    mouse(canvas, c3 + QPointF(10, 5), QEvent::MouseMove, Qt::ShiftModifier);
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    mouse(canvas, c3 + QPointF(20, 10), QEvent::MouseMove, Qt::NoModifier);
+    mouse(canvas, c3 + QPointF(20, 10), QEvent::MouseButtonRelease, Qt::NoModifier);
+    const fk::Quad t3 = rec()->outer.quad;
+    check(QStringLiteral("UX-03 Shift released mid-drag: free corner from then on, no switch"),
+          t3.p[0] == t2.p[0] && t3.p[1] == t2.p[1] && t3.p[2] == t2.p[2] && fk::norm(t3.p[3] - t2.p[3]) > 1 &&
+              target() == QLatin1String("outer"),
+          state());
+    // Shift+→ with the handle selected nudges it by 10 px (not the next scan, not a switch)
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    key(Qt::Key_Right, Qt::ShiftModifier, true);
+    key(Qt::Key_Right, Qt::ShiftModifier, false);
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    const fk::Quad t4 = rec()->outer.quad;
+    check(QStringLiteral("UX-03 Shift+→ on a selected corner: 10 px nudge, no switch"),
+          std::abs(t4.p[3].x - t3.p[3].x - 10) < 1e-9 && t4.p[3].y == t3.p[3].y && t4.p[0] == t3.p[0] &&
+              target() == QLatin1String("outer"),
+          QStringLiteral("moved %1, %2 · ").arg(t4.p[3].x - t3.p[3].x).arg(t4.p[3].y - t3.p[3].y) + state());
+    // Shift pressed only during the drag: the constraint applies at once; releasing Shift afterwards is no
+    // tap
+    const QPointF c2 = at(t4.p[2]);
+    mouse(canvas, c2, QEvent::MouseButtonPress, Qt::NoModifier);
+    mouse(canvas, c2 + QPointF(10, 6), QEvent::MouseMove, Qt::NoModifier);
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    mouse(canvas, c2 + QPointF(30, 20), QEvent::MouseMove, Qt::ShiftModifier);
+    mouse(canvas, c2 + QPointF(30, 20), QEvent::MouseButtonRelease, Qt::ShiftModifier);
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    const fk::Quad t5 = rec()->outer.quad;
+    check(QStringLiteral(
+              "UX-03 Shift pressed during a drag: rectangle kept; releasing it after the drag: no switch"),
+          rightAngleError(t5) < 1e-9 && t5.p[0] == t4.p[0] && target() == QLatin1String("outer"),
+          quadText(t5) + QStringLiteral(" · ") + state());
+    // the window loses focus mid-drag: the drag is dropped, nothing changes
+    mouse(canvas, at(t5.p[2]), QEvent::MouseButtonPress, Qt::NoModifier);
+    mouse(canvas, at(t5.p[2]) + QPointF(25, 15), QEvent::MouseMove, Qt::NoModifier);
+    {
+        QFocusEvent out(QEvent::FocusOut, Qt::ActiveWindowFocusReason);
+        QCoreApplication::sendEvent(window_, &out);
+    }
+    mouse(canvas, at(t5.p[2]) + QPointF(25, 15), QEvent::MouseButtonRelease, Qt::NoModifier);
+    {
+        QFocusEvent in(QEvent::FocusIn, Qt::ActiveWindowFocusReason);
+        QCoreApplication::sendEvent(window_, &in);
+    }
+    canvas->forceActiveFocus();
+    app_->undo();
+    const bool lastStepWasTheDrag = rec()->outer.quad == t4;
+    app_->redo();
+    check(QStringLiteral("UX-03 focus lost mid-drag: the drag is dropped (no change, no undo step)"),
+          rec()->outer.quad == t5 && lastStepWasTheDrag);
+
+    // ---- circle: switched with the tool button, stays round whatever is dragged or nudged
+    app_->setInnerKind(itemId, QStringLiteral("ellipse"));
+    const fk::Ellipse e0 = rec()->inner.ellipse;
+    const bool toolBtn = click(findItem(QStringLiteral("toolInner")));
+    check(QStringLiteral("UX-03 tool button (mouse): Edit Inner"),
+          toolBtn && target() == QLatin1String("inner") && rec()->inner.kind == fk::ShapeKind::ellipse &&
+              fk::isCircle(e0),
+          state());
+    auto circleText = [&] {
+        const fk::Ellipse& e = rec()->inner.ellipse;
+        return QStringLiteral("rx %1, ry %2, centre %3, %4")
+            .arg(e.rx, 0, 'f', 4)
+            .arg(e.ry, 0, 'f', 4)
+            .arg(e.c.x)
+            .arg(e.c.y);
+    };
+    canvas->forceActiveFocus();
+    drag(at(fk::ellipseHandle(e0, true)), QPointF(30, 45), Qt::NoModifier);
+    const fk::Ellipse e1 = rec()->inner.ellipse;
+    check(QStringLiteral("UX-03 circle: radius drag (diagonal pointer) keeps rx = ry, centre fixed"),
+          e1.rx == e1.ry && e1.rx != e0.rx && e1.c == e0.c, circleText());
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    drag(at(fk::ellipseHandle(e1, false)), QPointF(-20, 10), Qt::ShiftModifier);
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    const fk::Ellipse e2 = rec()->inner.ellipse;
+    check(QStringLiteral("UX-03 circle: Shift-drag keeps rx = ry, no switch"),
+          e2.rx == e2.ry && e2.rx != e1.rx && target() == QLatin1String("inner"), circleText());
+    key(Qt::Key_Up, Qt::NoModifier, true);
+    key(Qt::Key_Up, Qt::NoModifier, false);
+    key(Qt::Key_Right, Qt::NoModifier, true); // across the ry axis: nothing changes
+    key(Qt::Key_Right, Qt::NoModifier, false);
+    const fk::Ellipse e3 = rec()->inner.ellipse;
+    check(QStringLiteral("UX-03 circle: arrow nudges keep rx = ry"),
+          e3.rx == e3.ry && std::abs(e3.rx - (e2.rx - 1)) < 1e-9, circleText());
+    app_->undo(); // the Up nudge (the Right nudge changed nothing and made no step)
+    const bool cu1 = rec()->inner.ellipse == e2;
+    app_->undo();
+    const bool cu2 = rec()->inner.ellipse == e1;
+    app_->redo();
+    app_->redo();
+    check(QStringLiteral("UX-03 circle: undo / redo step by step, always round"),
+          cu1 && cu2 && rec()->inner.ellipse == e3 && fk::isCircle(rec()->inner.ellipse), circleText());
+    key(Qt::Key_Shift, Qt::ShiftModifier, true);
+    drag(at(e3.c), QPointF(30, 8), Qt::ShiftModifier);
+    key(Qt::Key_Shift, Qt::NoModifier, false);
+    const fk::Ellipse e4 = rec()->inner.ellipse;
+    check(QStringLiteral("UX-03 Shift-drag of the centre moves along one axis"),
+          e4.c.y == e3.c.y && e4.c.x > e3.c.x && e4.rx == e3.rx && e4.ry == e3.ry, circleText());
+
+    // ---- the menu does the same (Windows/Linux in-window menu bar; the macOS menu bar is native)
+    if (window_->property("isMac").toBool()) {
+        skip(QStringLiteral("UX-03 menu: Print ▸ Switch Outer ↔ Inner (mouse)"),
+             QStringLiteral("native macOS menu bar: not reachable offscreen"));
+    } else {
+        QQuickItem* printMenu = findItemIf([](QQuickItem* it) {
+            QObject* m = it->property("menu").value<QObject*>();
+            return m && m->objectName() == QLatin1String("menuPrint");
+        });
+        click(printMenu);
+        waitFor(
+            [&] {
+                QQuickItem* i = findItem(QStringLiteral("menuSwitchBoundary"));
+                return i && i->isVisible();
+            },
+            2000);
+        QQuickItem* item = findItem(QStringLiteral("menuSwitchBoundary"));
+        const bool clicked = item && item->isVisible() && click(item);
+        waitFor([] { return false; }, 300);
+        check(QStringLiteral("UX-03 menu: Print ▸ Switch Outer ↔ Inner (mouse)"),
+              clicked && target() == QLatin1String("outer"), state());
+    }
+
+    // ---- saved and reopened: the same geometry; the export uses it
+    const fk::Shape outerSaved = rec()->outer, innerSaved = rec()->inner;
+    const QString proj = QDir(d).filePath(QStringLiteral("shapes.fkproj"));
+    const bool saved = app_->saveProjectAs(proj);
+    app_->newProject();
+    const bool opened = app_->openProject(QUrl::fromLocalFile(proj));
+    app_->waitIdle(300000);
+    const fk::ItemRecord* back = rec();
+    check(QStringLiteral("UX-03 saved and reopened: outer and round inner unchanged, still a circle"),
+          saved && opened && back && back->outer == outerSaved && back->inner == innerSaved &&
+              back->inner.ellipse.rx == back->inner.ellipse.ry);
+    if (back) {
+        const QString exportDir = app_->settings().value("exportFolder").toString();
+        const QStringList before = filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif"));
+        app_->setSetting(QStringLiteral("geometryMode"), QStringLiteral("crop"));
+        app_->exportImageAreas({itemId}, false);
+        app_->waitIdle(300000);
+        QStringList after = filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif"));
+        for (const auto& f : before)
+            after.removeAll(f);
+        fk::ImageInfo info;
+        bool read = false;
+        if (after.size() == 1) {
+            auto img = fk::readImageFile(toPath(after.first()), &info);
+            read = static_cast<bool>(img);
+        }
+        const fk::RectI want = fk::boundingRect(back->inner, scanSize);
+        check(
+            QStringLiteral("UX-03 the export uses the edited circle (pixel crop = its bounding box)"),
+            read && info.width == want.w && info.height == want.h,
+            QStringLiteral("%1×%2, expected %3×%4").arg(info.width).arg(info.height).arg(want.w).arg(want.h));
+    }
+    snapshot(QStringLiteral("U013-shapes"));
+    app_->setSetting(QStringLiteral("shiftSwitchesBoundary"), shiftDefault);
+    app_->newProject();
+}
+
 int SelfTest::scenarioMinIsWhite() {
     // FK-011: rows from the TIFF reader are already in normal polarity; the display converter inverts
     // MinIsWhite again, so Preview (proxy) and Full (rows) disagree.
@@ -1556,6 +1985,7 @@ int SelfTest::run() {
     runDataProtection();
     runPrivacy();
     runCountSetting();
+    runShapeEditing();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

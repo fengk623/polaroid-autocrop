@@ -227,7 +227,117 @@ Shape transformShape(const Shape& s, const Mat3& m) {
     r.rx = norm(ax);
     r.ry = norm(ay);
     r.angleRad = std::atan2(ax.y, ax.x);
+    // the two radii go through different arithmetic: a circle mapped by a rotation would drift apart by
+    // rounding (UX-03: "a circle must not turn into an ellipse")
+    if (isCircle(e) && isCircle(r)) r.ry = r.rx;
     return Shape::fromEllipse(r);
+}
+
+bool isCircle(const Ellipse& e) {
+    return std::abs(e.rx - e.ry) <= 1e-9 * std::max(std::abs(e.rx), std::abs(e.ry));
+}
+
+Vec2 ellipseHandle(const Ellipse& e, bool xAxis) {
+    const Vec2 ax{std::cos(e.angleRad), std::sin(e.angleRad)};
+    return xAxis ? e.c + ax * e.rx : e.c + perp(ax) * e.ry;
+}
+
+namespace {
+
+Vec2 axisLocked(Vec2 d) {
+    return std::abs(d.x) >= std::abs(d.y) ? Vec2{d.x, 0} : Vec2{0, d.y};
+}
+
+/// Shift-drag of corner i: the result is an exact rectangle with the start's mean rotation and side ratio,
+/// scaled about the fixed opposite corner so the dragged corner follows the pointer's projection on the
+/// diagonal.
+Quad constrainedCorner(const Quad& q, int i, Vec2 delta) {
+    const int f = (i + 2) % 4;
+    const Vec2 u = normalized((q.p[1] - q.p[0]) + (q.p[2] - q.p[3]));
+    Vec2 v = perp(u);
+    if (dot(v, (q.p[3] - q.p[0]) + (q.p[2] - q.p[1])) < 0) v = v * -1.0;
+    const auto [w0, h0] = quadSideLengths(q);
+    const std::array<Vec2, 4> local{Vec2{0, 0}, Vec2{w0, 0}, Vec2{w0, h0}, Vec2{0, h0}};
+    auto toScan = [&](int k, double s) {
+        const Vec2 l = local[k] - local[f];
+        return q.p[f] + (u * l.x + v * l.y) * s;
+    };
+    const Vec2 diag = toScan(i, 1.0) - q.p[f];
+    const Vec2 pointer = q.p[i] + delta;
+    double s = dot(pointer - q.p[f], diag) / dot(diag, diag);
+    s = std::max(s, kMinEditSize / std::max(1e-9, std::min(w0, h0)));
+    Quad r;
+    for (int k = 0; k < 4; ++k)
+        r.p[k] = k == f ? q.p[f] : toScan(k, s);
+    return r;
+}
+
+} // namespace
+
+std::optional<Shape> editShape(const Shape& start, const EditInput& in) {
+    Shape s = start;
+    const Vec2 d = in.constrain && (in.handle == EditHandle::move || in.handle == EditHandle::center)
+                       ? axisLocked(in.delta)
+                       : in.delta;
+    if (s.kind == ShapeKind::quad) {
+        Quad& q = s.quad;
+        const int i = ((in.index % 4) + 4) % 4;
+        switch (in.handle) {
+        case EditHandle::corner:
+            if (in.constrain)
+                q = constrainedCorner(start.quad, i, d);
+            else
+                q.p[i] = start.quad.p[i] + d;
+            break;
+        case EditHandle::edge: {
+            const int j = (i + 1) % 4;
+            const Vec2 n = perp(normalized(start.quad.p[j] - start.quad.p[i]));
+            const double m = dot(d, n);
+            q.p[i] = start.quad.p[i] + n * m;
+            q.p[j] = start.quad.p[j] + n * m;
+            break;
+        }
+        case EditHandle::move:
+        case EditHandle::center:
+            for (auto& p : q.p)
+                p = p + d;
+            break;
+        default:
+            return std::nullopt;
+        }
+        if (!isValid(s)) return std::nullopt;
+        return s;
+    }
+    Ellipse& e = s.ellipse;
+    const Ellipse& e0 = start.ellipse;
+    switch (in.handle) {
+    case EditHandle::move:
+    case EditHandle::center:
+        e.c = e0.c + d;
+        break;
+    case EditHandle::radiusX:
+    case EditHandle::radiusY: {
+        const bool xAxis = in.handle == EditHandle::radiusX;
+        const Vec2 ax{std::cos(e0.angleRad), std::sin(e0.angleRad)};
+        const Vec2 axis = xAxis ? ax : perp(ax);
+        const double r0 = xAxis ? e0.rx : e0.ry;
+        const double r = std::max(kMinEditSize, dot(ellipseHandle(e0, xAxis) + d - e0.c, axis));
+        if (isCircle(e0)) {
+            e.rx = e.ry = r; // a circle changes only its radius
+        } else if (in.constrain) {
+            const double k = r / r0;
+            e.rx = std::max(kMinEditSize, e0.rx * k);
+            e.ry = std::max(kMinEditSize, e0.ry * k);
+        } else {
+            (xAxis ? e.rx : e.ry) = r;
+        }
+        break;
+    }
+    default:
+        return std::nullopt;
+    }
+    if (!isValid(s)) return std::nullopt;
+    return s;
 }
 
 double area(const Shape& s) {

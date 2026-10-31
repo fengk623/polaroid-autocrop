@@ -36,8 +36,8 @@ Rectangle {
         Item { width: Theme.clusterGap - Theme.gap }
         ToolBtn { iconName: "select"; tip: qsTr("Select"); shortcutText: "V"; active: canvas.tool === "select"; onClicked: canvas.tool = "select" }
         ToolBtn { iconName: "hand"; tip: qsTr("Hand"); shortcutText: "H"; active: canvas.tool === "hand" || canvas.spaceHeld; onClicked: canvas.tool = "hand" }
-        ToolBtn { iconName: "outer"; tip: qsTr("Edit Outer"); shortcutText: "O"; active: canvas.tool === "outer"; onClicked: canvas.tool = "outer" }
-        ToolBtn { iconName: "inner"; tip: qsTr("Edit Inner"); shortcutText: "I"; active: canvas.tool === "inner"; onClicked: canvas.tool = "inner" }
+        ToolBtn { objectName: "toolOuter"; iconName: "outer"; tip: qsTr("Edit Outer"); shortcutText: "O"; active: canvas.tool === "outer"; onClicked: canvas.tool = "outer" }
+        ToolBtn { objectName: "toolInner"; iconName: "inner"; tip: qsTr("Edit Inner"); shortcutText: "I"; active: canvas.tool === "inner"; onClicked: canvas.tool = "inner" }
         Item { width: Theme.clusterGap - Theme.gap }
         Segmented {
             value: canvas.mode
