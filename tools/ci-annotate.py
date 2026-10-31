@@ -8,7 +8,8 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-PATTERN = re.compile(r"(error|Error|FAILED|fatal|undefined reference|unresolved external|LNK\d{4}|C\d{4}:)")
+# "FAIL <check>" is a self-test check that failed (the summary line only says "self-test FAILED")
+PATTERN = re.compile(r"(^FAIL\b|error|Error|FAILED|fatal|undefined reference|unresolved external|LNK\d{4}|C\d{4}:)")
 
 
 def emit(title, lines):
