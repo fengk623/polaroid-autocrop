@@ -483,7 +483,7 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
 - Not verified: a real trackpad (offscreen, a trackpad drag produces the same events as a mouse), macOS tap-to-drag,
   a real window on a 2× display.
 
-### 01:25–UNTIL — PR #18 opened and green, U017
+### 01:25–05:35 — PR #18 opened and green, U017
 - U016 committed (88a28a7), PR #18 opened (stacked on #17); all checks green, including the packaged self-test on
   Windows and macOS. PR #17 not merged yet.
 - U017 (branch `unit/U017-memory-budget`, stacked on U016), FK-005.
@@ -528,4 +528,19 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   Restored; build clean.
 - Self-test results: fixture 178 pass; polaroid_92 174 pass + 2 skips (one print); img20260702_0005 172 pass + 4
   FK-003 skips. FK-005: 9/9 on all three (the generated beds are made from each scan's first print).
-- BENCH
+- Batch measurements (`--scenario memory`, PERFORMANCE-BUDGET §3.1; corpus: 100 fkfixture scans, 300 dpi 8-bit):
+  steady cache 124 / 126 / 126 MB at 10 / 50 / 100 scans (budget 502 MB); with the budget off 2493 MB at 100.
+  - First runs showed RSS rising with the batch although the cache stayed put. Investigated before claiming
+    anything: (1) glibc keeps freed pages — `malloc_trim` at the end returned 450–780 MB; (2) memory still rising
+    per scan switch with nothing cached: the self-test runs before `app.exec()`, so deferred deletes (QML delegates
+    scrolled away) never ran [harness artifact, ≈ 1.3 MB per switch; flat once DeferredDelete is sent, a QML garbage
+    collection alone did not help] → the scenario sends them like the event loop (T22). A product change tried on
+    the way (collecting QML garbage after switching) did not help and was removed.
+  - Result: memory the app holds after the allocator returns its free pages 228 / 238 / 290 MB at 10 / 50 / 100
+    scans; what grows is the thumbnails (0.8 MB per scan, kept by design until the library's disk cache). Steady RSS
+    on glibc follows the run's peak (1078 MB at 50, 875 MB at 100), not the number of scans.
+  - CI (first run, runner budgets): macOS phys_footprint 95 → 94 MB from 5 to 20 scans (budget 448 MB; evicting);
+    Windows and Linux runners have 16 GB, so 20 scans fit their 1 GB budget (cache 681 MB kept) → the CI batch is
+    now sized for an 8 GB device on every runner (`FK_ASSUME_RAM_GB=8`).
+  - fkfixture hung on scan 41 of `--corpus 100 --seed 17` (a touching pair that cannot fit loops forever, T20) →
+    the corpus was completed in chunks with seeds 18–20.

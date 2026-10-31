@@ -226,7 +226,8 @@ jobs:
         if: failure() && steps.selftest.outcome == 'failure'
         run: python3 tools/ci-annotate.py build/selftest.log || python tools/ci-annotate.py build/selftest.log
       # FK-005 measurement (not a gate; the gates are the self-test's FK-005 checks): the same 20-scan corpus
-      # on every OS, batches of 5 and 20, memory after each stage (RSS, private bytes, accounted, cache)
+      # on every OS, batches of 5 and 20, memory after each stage (RSS, private bytes, accounted, cache); the
+      # budget is sized for an 8 GB device on every runner (FK_ASSUME_RAM_GB=8 → 512 MB) so the runs compare
       - name: Memory batch (FK-005)
         id: memory
         if: always() && steps.selftest.outcome == 'success'
@@ -240,7 +241,8 @@ jobs:
             *) APP=build/app/bin/FrameKeeper ;;
           esac
           for n in 5 20; do
-            FK_BENCH_SCANS=$n QT_QPA_PLATFORM=offscreen "$APP" --self-test "$PWD/build/memory/n$n" --scenario memory \
+            FK_ASSUME_RAM_GB=8 FK_BENCH_SCANS=$n QT_QPA_PLATFORM=offscreen "$APP" --self-test "$PWD/build/memory/n$n" \
+              --scenario memory \
               --scan "$PWD/build/memcorpus" > build/memory-n$n.log 2>&1
           done
           for n in 5 20; do [ -f build/memory/n$n/scenario-memory.json ] || { echo "::warning title=FK-005 memory::batch of $n produced no report"; tail -20 build/memory-n$n.log; }; done
