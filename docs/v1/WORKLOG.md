@@ -595,3 +595,20 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     every large size, missing ICNS entries); on the new icons it passes. Added to the CI docs job.
   - Small sizes compared enlarged (×8) against the old ones; the comparison sheets stay local.
 - Not verified: the taskbar / Start menu / Dock icon after installing over an older version (system icon caches).
+
+### 07:10–12:00 — PR #22 opened (U023), U026
+- U023 committed (041dda3), PR #22 opened (stacked on #21).
+- U026 (FK-012), independent of the library; version 0.7.0-alpha.10 by completion order.
+  - Found: PRD F05 A5 cites `test_dng` ("decodes with LibRaw … within 1 LSB") — no such test exists; nothing
+    outside our own code ever decoded our DNG [false evidence in a requirement doc] → corrected to the new check.
+  - Independent decode: `tools/dng-interop.py` generates a 16-bit fixture, exports both image areas as DNG and as
+    16-bit TIFF with `fkcli`, decodes the DNG with LibRaw (rawpy: linear gamma, no auto-brightness, camera white
+    balance, sRGB output, no flip) and compares it with the sRGB-linearised TIFF per channel (gain within 5 %,
+    correlation ≥ 0.995, error after the gain ≤ 1 %). Installing rawpy here was not allowed, so the check runs only
+    in CI (Core linux, venv); results are CI notices and get copied into the release notes.
+  - Relink of a DNG: TiffSource refused PhotometricInterpretation 34892 with a generic "unsupported" error; dropping
+    a DNG on the window therefore showed a technical message. Test first (`TiffRead.LinearDngIsRefusedWithGuidance`
+    red), then a specific message pointing to a 16-bit TIFF; the self-test checks relink and drag and drop, and that
+    no scan is imported. Keeping DNG relink unsupported for v1.0 is a proposal for the owner.
+- Not verified: opening our DNG in Lightroom / Photoshop / Capture One.
+

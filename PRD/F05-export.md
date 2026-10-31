@@ -30,6 +30,9 @@ whether frame pixels stay bit-identical (and why not), free space at target.
 - A2 16-bit source never silently becomes 8-bit; JPEG export of a 16-bit source requires `allow_depth_reduction`. (`test_export_depth`)
 - A3 Output carries the source ICC (byte-identical) unless a conversion was requested. (`test_export_icc`)
 - A4 DPI preserved (scaled for standard size). (`test_export_dpi`)
-- A5 Exported DNG passes the structural validator and decodes with LibRaw to values matching the TIFF within 1 LSB (linear). (`test_dng`)
+- A5 Exported DNG passes our structural verification (written tags re-read after every export) and decodes with an
+  independent decoder (LibRaw via rawpy, CI Core linux) to the TIFF export of the same image area: per channel gain
+  within 5 %, correlation ≥ 0.995, mean absolute error after the gain ≤ 1 % of full scale (`tools/dng-interop.py`;
+  U026 — the earlier "within 1 LSB, `test_dng`" was never implemented: LibRaw applies its own colour pipeline).
 - A6 Export of a 1600 DPI print streams with peak memory < 600 MB (no rotation) / < 1.2 GB (lossless 90° rotation). (`PERFORMANCE-BUDGET.md`)
 - A7 Name clash never overwrites. (`test_export_safety`)
