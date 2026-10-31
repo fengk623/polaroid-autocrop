@@ -98,9 +98,11 @@ struct EditVersion {
 };
 
 struct CompositeSettings {
-    MaskMode maskMode = MaskMode::hard_edge;
-    double featherPx = 0;
-    double preserveEdgePx = 0;
+    /// UX-08: this print's mask. `maskSet` false = a print from before 0.7.0-alpha.5: it keeps compositing
+    /// with the project's output settings (maskMode / featherPx / preserveEdgePx), as it did when it was set
+    /// up.
+    MaskChoice mask{};
+    bool maskSet = false;
     std::vector<MaskStroke> strokes;
     std::string lastOutput;
     std::string lastOutputAt;

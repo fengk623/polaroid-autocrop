@@ -124,6 +124,90 @@ TEST(Composite, UnchangedEditRoundTripIsBitExact) {
     }
 }
 
+TEST(NaturalBlend, UnchangedEditStaysBitExactWithEveryMask) {
+    // UX-08: the natural-blend default must not cost the archival round trip — an unchanged graded file
+    // composited with a feather or an inset still gives the scan's pixels exactly (8 and 16 bit, every
+    // upright)
+    for (int bits : {8, 16})
+        for (int upright : {0, 1, 2, 3}) {
+            auto f = makeFixture(fk::test::makePatternImage(320, 240, 3, bits, 9));
+            const Shape outer = Shape::fromQuad(rectQuad(10, 10, 300, 230));
+            const Shape inner = Shape::fromQuad(rectQuad(40.4, 30.6, 260.2, 200.7));
+            auto edit = exportRegion(
+                *f->src, exportReq(inner, outer.quad, f->dir / "edit.tif", GeometryMode::pixel_crop, upright),
+                {}, {});
+            ASSERT_TRUE(edit.ok()) << edit.error().message;
+            auto edited = readImageFile(edit->output);
+            ASSERT_TRUE(edited.ok());
+            auto direct = exportRegion(*f->src, exportReq(outer, outer.quad, f->dir / "direct.tif"), {}, {});
+            ASSERT_TRUE(direct.ok());
+            for (const MaskChoice& m :
+                 {naturalBlend(MaskMode::feather, true), naturalBlend(MaskMode::preserve_edge, true),
+                  MaskChoice{MaskMode::feather, 4.0, false}}) {
+                auto req = compositeReq(outer, inner, *edit, *edited, f->dir / "final.tif");
+                req.mask = resolveMask(m, 1200);
+                std::filesystem::remove(f->dir / "final.tif");
+                auto comp = compositeItem(*f->src, req, {}, {});
+                ASSERT_TRUE(comp.ok()) << comp.error().message;
+                EXPECT_EQ(comp->pixelSha256, direct->pixelSha256)
+                    << bits << "-bit, upright " << upright << ", " << maskModeName(m.mode) << " " << m.width;
+            }
+        }
+}
+
+TEST(NaturalBlend, PreviewAndFinalUseTheSameMask) {
+    // the composite preview (compositeToBuffer at full scale) and the written final are the same pixels for
+    // each mask: one conversion (resolveMask), one renderer
+    auto f = makeFixture(fk::test::makePatternImage(320, 240, 3, 16, 5));
+    const Shape outer = Shape::fromQuad(rectQuad(10, 10, 300, 230));
+    const Shape inner = Shape::fromQuad(rectQuad(40.4, 30.6, 260.2, 200.7));
+    auto edit = exportRegion(*f->src, exportReq(inner, outer.quad, f->dir / "edit.tif"), {}, {});
+    ASSERT_TRUE(edit.ok());
+    auto edited = readImageFile(edit->output);
+    ASSERT_TRUE(edited.ok());
+    for (int64_t y = 0; y < edited->height(); ++y) { // a warm grade
+        uint16_t* r = reinterpret_cast<uint16_t*>(edited->row(y));
+        for (int64_t i = 0; i < edited->width(); ++i)
+            r[i * 3] = static_cast<uint16_t>(std::min(65535.0, r[i * 3] * 1.08));
+    }
+    for (const MaskChoice& m :
+         {naturalBlend(MaskMode::feather, true), naturalBlend(MaskMode::preserve_edge, true),
+          MaskChoice{MaskMode::hard_edge, 0, false}}) {
+        auto req = compositeReq(outer, inner, *edit, *edited, f->dir / "final.tif");
+        req.mask = resolveMask(m, 1200);
+        std::filesystem::remove(f->dir / "final.tif");
+        auto comp = compositeItem(*f->src, req, {}, {});
+        ASSERT_TRUE(comp.ok()) << comp.error().message;
+        auto written = readImageFile(comp->output);
+        auto preview = compositeToBuffer(*f->src, req, 1.0, {});
+        ASSERT_TRUE(written.ok() && preview.ok());
+        ASSERT_EQ(written->size(), preview->size());
+        for (int64_t y = 0; y < written->height(); ++y)
+            ASSERT_EQ(std::memcmp(written->row(y), preview->row(y), written->rowBytes()), 0)
+                << maskModeName(m.mode) << " row " << y;
+    }
+}
+
+TEST(NaturalBlend, PresetsAreMillimetresWhenTheDpiIsKnown) {
+    // the same physical edge at every DPI; pixels only without a reliable DPI
+    const MaskChoice f = naturalBlend(MaskMode::feather, true);
+    EXPECT_TRUE(f.mm);
+    EXPECT_NEAR(resolveMask(f, 800).featherPx, kNaturalFeatherMm * 800 / 25.4, 1e-12);
+    EXPECT_NEAR(resolveMask(f, 1200).featherPx, kNaturalFeatherMm * 1200 / 25.4, 1e-12);
+    EXPECT_NEAR(resolveMask(f, 1600).featherPx, kNaturalFeatherMm * 1600 / 25.4, 1e-12);
+    EXPECT_EQ(resolveMask(f, 1200).preserveEdgePx, 0); // never both at once
+    const MaskChoice i = naturalBlend(MaskMode::preserve_edge, true);
+    EXPECT_NEAR(resolveMask(i, 1200).preserveEdgePx, kNaturalInsetMm * 1200 / 25.4, 1e-12);
+    EXPECT_EQ(resolveMask(i, 1200).featherPx, 0);
+    const MaskChoice px = naturalBlend(MaskMode::feather, false);
+    EXPECT_FALSE(px.mm);
+    EXPECT_EQ(resolveMask(px, 0).featherPx, kNaturalFeatherPx);
+    EXPECT_EQ(resolveMask(px, 1600).featherPx, kNaturalFeatherPx); // px stay px
+    const MaskChoice hard = naturalBlend(MaskMode::hard_edge, true);
+    EXPECT_EQ(hard.width, 0);
+    EXPECT_EQ(resolveMask(hard, 1200).featherPx + resolveMask(hard, 1200).preserveEdgePx, 0);
+}
+
 TEST(Composite, GradedPixelsOnlyInsideTheImageArea) {
     auto f = makeFixture(fk::test::makePatternImage(320, 240, 3, 16, 3));
     const Shape outer = Shape::fromQuad(rectQuad(10, 10, 300, 230));

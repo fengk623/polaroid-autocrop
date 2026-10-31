@@ -122,6 +122,13 @@ class AppController : public QObject {
     /// UX-04: turns the whole scan's view by `delta` quarter turns (clockwise positive). Every print follows;
     /// no boundary, file or export record changes; one undo step for the whole scan.
     Q_INVOKABLE void rotateScan(const QString& scanId, int delta);
+    /// UX-08: the print's mask. A mode comes with its natural-blend preset (mm when the DPI is reliable); the
+    /// width keeps the choice's unit. Undoable, saved per print; the preview and the final output use it.
+    Q_INVOKABLE void setItemMaskMode(const QString& itemId, const QString& mode);
+    Q_INVOKABLE void setItemMaskWidth(const QString& itemId, double width);
+    Q_INVOKABLE void resetItemMask(const QString& itemId);
+    /// Explicit batch: the listed prints take `fromItemId`'s mask. Returns how many changed.
+    Q_INVOKABLE int applyMaskToItems(const QString& fromItemId, const QStringList& itemIds);
     Q_INVOKABLE void setReviewed(const QString& itemId, bool reviewed);
     Q_INVOKABLE void setExcluded(const QString& itemId, bool excluded);
     Q_INVOKABLE void reviewAndNext();
@@ -184,6 +191,8 @@ class AppController : public QObject {
         std::vector<const fk::ItemRecord*> items;
     };
     CanvasScan canvasScan() const;
+    /// UX-08 (self-test): {preview, final} masks last used for the print (mode -1 = not made yet).
+    std::pair<fk::MaskParams, fk::MaskParams> masksUsed(const std::string& itemId) const;
     // test access (self-test): generations and the job runner
     quint64 itemGeneration(const std::string& itemId) const;
     /// Item generation the cached composite preview was computed for (0 = no preview).
@@ -245,6 +254,8 @@ class AppController : public QObject {
         int upright = 0;
         bool reviewed = false;
         quint64 seq = 0; ///< order across the print's and the scan's steps (one undo history)
+        fk::MaskChoice mask{};
+        bool maskSet = false;
     };
     struct UndoState {
         std::vector<Snapshot> undo, redo;
@@ -286,6 +297,11 @@ class AppController : public QObject {
     std::map<std::string, ScanRuntime> rt_;
     std::map<std::string, UndoState> undo_;
     std::map<std::string, ScanUndo> scanUndo_;
+    std::map<std::string, double> edgeChange_; ///< UX-08: last composite preview's edge change (ΔE00)
+    /// UX-08 (self-test): the mask the last composite preview and the last final output of a print were made
+    /// with
+    std::map<std::string, std::pair<fk::MaskParams, fk::MaskParams>> masksUsed_;
+    void setMask(const std::string& itemId, const fk::MaskChoice& m);
     quint64 undoSeq_ = 0;
     void afterScanRotation(const std::string& scanId);
     std::map<std::string, std::pair<fk::Shape, fk::Shape>> detected_; ///< itemId → detected outer/inner

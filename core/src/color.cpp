@@ -221,6 +221,46 @@ std::string sha256Hex(const void* data, size_t n) {
     return s.finishHex();
 }
 
+double deltaE2000(const float* x, const float* y) {
+    constexpr double kPi = 3.14159265358979323846;
+    const double L1 = x[0], A1 = x[1], B1 = x[2], L2 = y[0], A2 = y[1], B2 = y[2];
+    const double C1 = std::hypot(A1, B1), C2 = std::hypot(A2, B2), Cm = (C1 + C2) / 2;
+    const double Cm7 = std::pow(Cm, 7), k25 = 6103515625.0; // 25^7
+    const double G = 0.5 * (1 - std::sqrt(Cm7 / (Cm7 + k25)));
+    const double a1 = (1 + G) * A1, a2 = (1 + G) * A2;
+    const double C1p = std::hypot(a1, B1), C2p = std::hypot(a2, B2);
+    auto hue = [&](double bb, double aa) {
+        if (bb == 0 && aa == 0) return 0.0;
+        const double h = std::atan2(bb, aa) * 180 / kPi;
+        return h < 0 ? h + 360 : h;
+    };
+    const double h1 = hue(B1, a1), h2 = hue(B2, a2);
+    const double dL = L2 - L1, dC = C2p - C1p;
+    double dh = 0;
+    if (C1p * C2p != 0) {
+        dh = h2 - h1;
+        if (dh > 180) dh -= 360;
+        if (dh < -180) dh += 360;
+    }
+    const double dH = 2 * std::sqrt(C1p * C2p) * std::sin(dh / 2 * kPi / 180);
+    const double Lm = (L1 + L2) / 2, Cpm = (C1p + C2p) / 2;
+    double hm = h1 + h2;
+    if (C1p * C2p != 0) {
+        if (std::abs(h1 - h2) > 180) hm += hm < 360 ? 360 : -360;
+        hm /= 2;
+    }
+    const double T = 1 - 0.17 * std::cos((hm - 30) * kPi / 180) + 0.24 * std::cos(2 * hm * kPi / 180) +
+                     0.32 * std::cos((3 * hm + 6) * kPi / 180) - 0.20 * std::cos((4 * hm - 63) * kPi / 180);
+    const double dTheta = 30 * std::exp(-std::pow((hm - 275) / 25, 2));
+    const double Cpm7 = std::pow(Cpm, 7);
+    const double Rc = 2 * std::sqrt(Cpm7 / (Cpm7 + k25));
+    const double Sl = 1 + 0.015 * std::pow(Lm - 50, 2) / std::sqrt(20 + std::pow(Lm - 50, 2));
+    const double Sc = 1 + 0.045 * Cpm, Sh = 1 + 0.015 * Cpm * T;
+    const double Rt = -std::sin(2 * dTheta * kPi / 180) * Rc;
+    return std::sqrt(std::pow(dL / Sl, 2) + std::pow(dC / Sc, 2) + std::pow(dH / Sh, 2) +
+                     Rt * (dC / Sc) * (dH / Sh));
+}
+
 void srgbToLab(const float* rgb, float* lab) {
     auto lin = [](float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); };
     const float r = lin(rgb[0]), g = lin(rgb[1]), b = lin(rgb[2]);

@@ -1261,3 +1261,31 @@ TEST(ScanRotation, ExportTurnsNeverAddTheViewToThePrintsUpright) {
     s.rotation = 0;
     EXPECT_EQ(exportTurns(s, it, false), 0);
 }
+
+TEST(MaskChoice, SavedPerPrintAndOlderPrintsKeepTheProjectSetting) {
+    // UX-08: each print keeps its own mask (mode, width, unit); prints from older projects have none (they
+    // keep compositing with the project's output settings)
+    TempDir dir;
+    Project p = sampleProject(dir / "scan.tif");
+    p.scans[0].items[0].composite.mask = naturalBlend(MaskMode::feather, true);
+    p.scans[0].items[0].composite.maskSet = true;
+    p.scans[0].items[1].composite.mask = {MaskMode::preserve_edge, 2.5, false};
+    p.scans[0].items[1].composite.maskSet = true;
+    const auto file = dir / "mask.fkproj";
+    ASSERT_TRUE(saveProject(p, file).ok());
+    auto q = loadProject(file);
+    ASSERT_TRUE(q.ok()) << q.error().message;
+    EXPECT_TRUE(q->scans[0].items[0].composite.maskSet);
+    EXPECT_EQ(q->scans[0].items[0].composite.mask, naturalBlend(MaskMode::feather, true));
+    EXPECT_EQ(q->scans[0].items[1].composite.mask, (MaskChoice{MaskMode::preserve_edge, 2.5, false}));
+    // a 0.7.0-alpha.4 file: "maskMode"/"featherPx" placeholders, no "mask"
+    p.scans[0].items[0].composite.maskSet = false;
+    p.scans[0].items[1].composite.maskSet = false;
+    std::string js = projectToJson(p);
+    js = std::regex_replace(js, std::regex(R"("mask"\s*:\s*null)"),
+                            R"("maskMode": "hard_edge", "featherPx": 0)");
+    auto old = projectFromJson(js);
+    ASSERT_TRUE(old.ok()) << old.error().message;
+    EXPECT_FALSE(old->scans[0].items[0].composite.maskSet);
+    EXPECT_FALSE(old->scans[0].items[1].composite.maskSet);
+}

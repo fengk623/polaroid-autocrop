@@ -1,6 +1,7 @@
 // Compositing graded images back into the real scanned frame (RFC-0007, ADR-0010) and synthetic
 // frames (RFC-0008).
 #include "fk/composite.hpp"
+#include "fk/color.hpp"
 
 #include "output_stage.hpp"
 #include "pixel_ops.hpp"
@@ -249,6 +250,52 @@ struct Renderer {
 };
 
 } // namespace
+
+double edgeChange(const ImageBuffer& composite, const ImageBuffer& scanOnly, const Shape& inner, Vec2 origin,
+                  double scale, double pxPerMm) {
+    if (composite.size() != scanOnly.size() || composite.channels() != scanOnly.channels() || scale <= 0)
+        return 0;
+    const int ch = composite.channels();
+    const double lo = 0.2 * pxPerMm, hi = 0.6 * pxPerMm;
+    std::vector<double> d;
+    for (int64_t v = 0; v < composite.height(); ++v)
+        for (int64_t u = 0; u < composite.width(); ++u) {
+            const Vec2 p = origin + Vec2{(u + 0.5) / scale, (v + 0.5) / scale};
+            const double dist = signedDistance(inner, p);
+            if (dist < lo || dist > hi) continue;
+            float a[3], b[3], la[3], lb[3];
+            for (int c = 0; c < 3; ++c) {
+                a[c] = composite.samplef(u, v, std::min(c, ch - 1));
+                b[c] = scanOnly.samplef(u, v, std::min(c, ch - 1));
+            }
+            srgbToLab(a, la);
+            srgbToLab(b, lb);
+            d.push_back(deltaE2000(la, lb));
+        }
+    if (d.empty()) return 0;
+    std::nth_element(d.begin(), d.begin() + static_cast<std::ptrdiff_t>(d.size() / 2), d.end());
+    return d[d.size() / 2];
+}
+
+MaskChoice naturalBlend(MaskMode mode, bool dpiReliable) {
+    switch (mode) {
+    case MaskMode::feather:
+        return {mode, dpiReliable ? kNaturalFeatherMm : kNaturalFeatherPx, dpiReliable};
+    case MaskMode::preserve_edge:
+        return {mode, dpiReliable ? kNaturalInsetMm : kNaturalInsetPx, dpiReliable};
+    default:
+        return {MaskMode::hard_edge, 0, false};
+    }
+}
+
+MaskParams resolveMask(const MaskChoice& c, double dpi) {
+    MaskParams p;
+    p.mode = c.mode;
+    const double px = std::max(0.0, c.mm ? c.width * (dpi > 0 ? dpi : 300.0) / 25.4 : c.width);
+    if (c.mode == MaskMode::feather) p.featherPx = px;
+    if (c.mode == MaskMode::preserve_edge) p.preserveEdgePx = px;
+    return p;
+}
 
 Result<ExportReport> compositeItem(ImageSource& scan, const CompositeRequest& req, const CancelToken& cancel,
                                    const ProgressFn& progress) {

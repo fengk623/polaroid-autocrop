@@ -82,5 +82,7 @@ std::string sha256Hex(const void* data, size_t n);
 
 /// sRGB-encoded [0,1] → approximate CIELAB (D65), used only for detection distances.
 void srgbToLab(const float* rgb, float* lab);
+/// CIEDE2000 colour difference of two CIELAB colours (Sharma, Wu, Dalal 2005). UX-08 edge measurements.
+double deltaE2000(const float* lab1, const float* lab2);
 
 } // namespace fk

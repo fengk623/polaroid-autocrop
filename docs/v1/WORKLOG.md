@@ -419,3 +419,33 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   tagged scan); 14 UX-04 checks pass on all three. polaroid_92 failed "four orientations" at first (4 prints, one
   upright): the print fills that scan, so the "backing" copied from the scan border was its own white frame and the
   bed was white-on-white [test flaw] → a dark lid for scans filled by their print (≥ 60 % of the area).
+
+### 22:30–00:15 — PR #16 opened and green, PR #15 and #16 merged, U015
+- U014 committed (a535c93), PR #16 opened; all checks green. The owner merged PR #15 at 22:20 and PR #16 at 22:41.
+- U015 (branch `unit/U015-mask-defaults`, stacked on U014), UX-08.
+  - Measured before choosing: new `fkcli maskeval` composites each detected image area back exactly as the final
+    output, with synthetic grades, and measures frame contamination, ungraded rim and the seam at 50 %. First
+    version classified frame vs picture by colour: white picture content near the edge counted as "frame" and
+    inflated every number [weak metric] → the real-scan GT window edge decides (colour only without GT). ΔE00 moved
+    into the core and checked against the published CIEDE2000 test pairs.
+  - Result on the owner's 4 scans / 7 prints (826 and 1200 dpi): worst-case seam at 50 % hard edge 6.61, feather
+    0.03 mm (the suggested trial value) 4.71, 0.05 mm 3.64 (every print better than hard: 26–56 %), 0.08 mm 3.86;
+    rim at 0.05 mm ≤ 0.33 px; preserve edge best at 0.02 mm (3.96). Chosen: feather 0.05 mm natural default,
+    preserve 0.02 mm preset, px fallbacks 2.4 / 0.9. Remaining seam = true frame pixels inside the detected image
+    area (detection error); a mask cannot move the edge outward. Unchanged files: seam 0.
+  - Model: per-print `composite.mask` (mode, width, unit); prints of older projects keep the project setting;
+    `resolveMask` shared by preview and final; explicit batch; strong-edge hint from the preview (`edgeChange`).
+  - Self-test first run: the "strong grade" (gains only) gave ΔE00 2 on a dark print [test flaw: gains do not change
+    near-black] → a red offset; normal 1.49, strong 16.47. A snapshot showed the mask controls widened the right
+    rail (caption and buttons on one row) → caption on its own line, buttons in a Flow. (The rail's other rows also
+    overflow at 300 px — FK-009, U024.)
+- Tests: ctest 206/206 (+ `NaturalBlend.*` ×3, `MaskChoice.*`, `DeltaE2000.*`); self-test `runMaskDefaults`.
+- Mutations (each caught): mm widths treated as px (core test + self-test; the first self-test run predated the
+  independent px expectation and passed [weak check] → expectation computed without `resolveMask`, rerun caught
+  it); preview using the project setting instead of the print's mask; no default for new prints; hint never shown;
+  batch applied to every print; mask not saved. Restored; no markers left.
+- Self-test results: fixture 157 pass; polaroid_92 153 pass + 2 UX-08 skipped (one print: no batch, no second
+  print for the strong grade — the strong-grade check was first silently left out on single-print scans, now
+  recorded as skipped); img20260702_0005 151 pass + 4 FK-003 skips. UX-08: 11 / 9 / 11 pass.
+- Not verified: 100 % / 200 % visual review by the owner (review sheets from `maskeval --crops` stay local); no 1600
+  dpi or round real samples; GT is a draft.

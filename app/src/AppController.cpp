@@ -243,6 +243,8 @@ void AppController::loadSettings() {
                                {"expectedCount", 4},
                                {"autoCount", true},             // UX-01: new scans are counted automatically
                                {"shiftSwitchesBoundary", true}, // UX-03: a Shift tap switches Outer/Inner
+                               // UX-08: the mask new prints get (natural blend preset; hard_edge = archival)
+                               {"newPrintMask", "feather"},
                                {"safetyMargin", 1.0},
                                {"finalMode", "real"},
                                {"finalFormat", "tif"},
@@ -293,6 +295,37 @@ const QStringList kOutputKeys = {
     "finalBits",    "frameMode",    "frameUnit",     "frameTop",       "frameRight",       "frameBottom",
     "frameLeft",    "frameRatioW",  "frameRatioH",   "frameMinMargin", "frameColorSource", "frameColor",
     "maskMode",     "featherPx",    "preserveEdgePx"};
+} // namespace
+
+namespace {
+/// UX-08: the scan's DPI for mask widths in mm (measured when the scanner scaled its output) and whether it
+/// can be trusted (no `dpi_unknown`).
+double scanDpi(const fk::ScanRecord& s) {
+    return s.dpiUsed > 0 ? s.dpiUsed : s.info.dpiX;
+}
+bool dpiReliable(const fk::ScanRecord& s) {
+    return scanDpi(s) > 0 &&
+           std::find(s.warnings.begin(), s.warnings.end(), std::string("dpi_unknown")) == s.warnings.end();
+}
+fk::MaskMode maskModeOf(const QString& m) {
+    return m == QLatin1String("feather")         ? fk::MaskMode::feather
+           : m == QLatin1String("preserve_edge") ? fk::MaskMode::preserve_edge
+                                                 : fk::MaskMode::hard_edge;
+}
+/// A print's mask: its own (UX-08), or — prints set up before 0.7.0-alpha.5 — the project's output settings
+/// in px, exactly what they were composited with before.
+fk::MaskChoice maskChoiceOf(const fk::ItemRecord& it, const QVariantMap& st) {
+    if (it.composite.maskSet) return it.composite.mask;
+    const fk::MaskMode m = maskModeOf(st.value("maskMode").toString());
+    const double w = m == fk::MaskMode::feather         ? st.value("featherPx").toDouble()
+                     : m == fk::MaskMode::preserve_edge ? st.value("preserveEdgePx").toDouble()
+                                                        : 0.0;
+    return {m, w, false};
+}
+/// The one conversion used by the composite preview and the final output.
+fk::MaskParams maskParamsOf(const fk::ItemRecord& it, const fk::ScanRecord& s, const QVariantMap& st) {
+    return fk::resolveMask(maskChoiceOf(it, st), scanDpi(s));
+}
 } // namespace
 
 void AppController::syncOutputSettings() {
@@ -946,8 +979,14 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
             s->items.clear();
             ++scanGen_[scanId];
             int idx = 1;
+            // UX-08: new prints get the default mask for new prints (natural blend unless set otherwise),
+            // in mm when the DPI is reliable
+            const fk::MaskChoice newMask =
+                fk::naturalBlend(maskModeOf(settings_.value("newPrintMask").toString()), dpiReliable(*s));
             for (const auto& d : res->det.items) {
                 fk::ItemRecord it = fk::itemFromDetection(d, idx++);
+                it.composite.mask = newMask;
+                it.composite.maskSet = true;
                 detected_[it.itemId] = {it.outer, it.inner};
                 s->items.push_back(it);
             }
@@ -1212,7 +1251,8 @@ void AppController::stepScan(int delta) {
 // ---- edits / undo --------------------------------------------------------------------------------------
 
 AppController::Snapshot AppController::snap(const fk::ItemRecord& it) const {
-    return {it.outer, it.inner, it.outerSource, it.innerSource, it.upright, it.reviewed};
+    return {it.outer,    it.inner, it.outerSource,    it.innerSource,      it.upright,
+            it.reviewed, 0,        it.composite.mask, it.composite.maskSet};
 }
 
 void AppController::restore(fk::ItemRecord& it, const Snapshot& s) {
@@ -1222,6 +1262,8 @@ void AppController::restore(fk::ItemRecord& it, const Snapshot& s) {
     it.innerSource = s.innerSource;
     it.upright = s.upright;
     it.reviewed = s.reviewed;
+    it.composite.mask = s.mask;
+    it.composite.maskSet = s.maskSet;
 }
 
 void AppController::pushUndo(fk::ItemRecord& it) {
@@ -1450,6 +1492,61 @@ void AppController::rotateUpright(const QString& itemId, int delta) {
     touch(false);
 }
 
+// ---- UX-08: per-print mask ----------------------------------------------------------------------------
+
+void AppController::setMask(const std::string& itemId, const fk::MaskChoice& m) {
+    if (readOnly_) return;
+    fk::ItemRecord* it = findItemMut(itemId);
+    if (!it || (it->composite.maskSet && it->composite.mask == m)) return;
+    pushUndo(*it);
+    it->composite.mask = m;
+    it->composite.maskSet = true;
+    invalidateItem(itemId); // the composite preview was computed with the old mask
+    edgeChange_.erase(itemId);
+    touch(false);
+    Q_EMIT geometryChanged(toQ(itemId));
+}
+
+void AppController::setItemMaskMode(const QString& itemId, const QString& mode) {
+    const fk::ScanRecord* s = scanOf(toStd(itemId));
+    if (!s) return;
+    // a mode comes with its natural-blend preset (hard edge: 0 px, the archival exact path)
+    setMask(toStd(itemId), fk::naturalBlend(maskModeOf(mode), dpiReliable(*s)));
+}
+
+void AppController::setItemMaskWidth(const QString& itemId, double width) {
+    const fk::ItemRecord* it = item(toStd(itemId));
+    if (!it) return;
+    fk::MaskChoice m = maskChoiceOf(*it, settings_);
+    if (m.mode == fk::MaskMode::hard_edge) return;
+    m.width = std::clamp(width, 0.0, m.mm ? 1.0 : 50.0);
+    setMask(it->itemId, m);
+}
+
+void AppController::resetItemMask(const QString& itemId) {
+    const fk::ItemRecord* it = item(toStd(itemId));
+    const fk::ScanRecord* s = scanOf(toStd(itemId));
+    if (!it || !s) return;
+    setMask(it->itemId, fk::naturalBlend(maskChoiceOf(*it, settings_).mode, dpiReliable(*s)));
+}
+
+int AppController::applyMaskToItems(const QString& fromItemId, const QStringList& itemIds) {
+    // explicit batch (UX-08): the chosen prints take this print's mask; a width in mm stays in mm, so it
+    // means the same physical edge on scans of other DPIs; on a scan without a reliable DPI a mm width is
+    // converted at 300 dpi (resolveMask) — the right rail shows the resulting px
+    const fk::ItemRecord* from = item(toStd(fromItemId));
+    if (!from) return 0;
+    const fk::MaskChoice m = maskChoiceOf(*from, settings_);
+    int n = 0;
+    for (const auto& id : itemIds) {
+        if (id == fromItemId || !item(toStd(id))) continue;
+        setMask(toStd(id), m);
+        ++n;
+    }
+    if (n > 0) notify(tr("Mask applied to %n print(s).", nullptr, n));
+    return n;
+}
+
 void AppController::setReviewed(const QString& itemId, bool reviewed) {
     fk::ItemRecord* it = findItemMut(toStd(itemId));
     if (!it || it->reviewed == reviewed) return;
@@ -1655,6 +1752,23 @@ QVariantMap AppController::currentItem() const {
     m["reviewed"] = it->reviewed;
     m["excluded"] = it->excluded;
     m["upright"] = it->upright * 90;
+    {
+        // UX-08: the print's mask as chosen, and what it means in px on this scan
+        const fk::MaskChoice mc = maskChoiceOf(*it, settings_);
+        const fk::MaskParams mp = fk::resolveMask(mc, scanDpi(*s));
+        const auto e = edgeChange_.find(it->itemId);
+        m["mask"] =
+            QVariantMap{{"mode", QString::fromLatin1(fk::maskModeName(mc.mode))},
+                        {"width", mc.width},
+                        {"unit", mc.mm ? QStringLiteral("mm") : QStringLiteral("px")},
+                        {"px", mc.mode == fk::MaskMode::feather ? mp.featherPx : mp.preserveEdgePx},
+                        {"dpi", scanDpi(*s)},
+                        {"dpiReliable", dpiReliable(*s)},
+                        {"own", it->composite.maskSet}, // false: an older print using the project setting
+                        {"isDefault", mc == fk::naturalBlend(mc.mode, dpiReliable(*s))},
+                        {"edgeChange", e == edgeChange_.end() ? 0.0 : e->second},
+                        {"strongEdgeChange", e != edgeChange_.end() && e->second > fk::kStrongEdgeChange}};
+    }
     m["outer"] = shapeToVariant(it->outer);
     m["inner"] = shapeToVariant(it->inner);
     m["outerSource"] = sourceName(it->outerSource);
@@ -1812,6 +1926,8 @@ void AppController::requestCompositePreview(const QString& itemId) {
     const QVariantMap st = settings_;
     auto out = std::make_shared<QImage>();
     auto err = std::make_shared<QString>();
+    auto change = std::make_shared<double>(0.0);
+    auto maskUsed = std::make_shared<fk::MaskParams>();
     const JobSnapshot snap = snapshotFor(s->scanId, id);
     // coalesce: a newer request supersedes the one still in flight for this print
     if (auto f = previewJob_.find(id); f != previewJob_.end()) jobs_->cancel(f->second);
@@ -1863,13 +1979,8 @@ void AppController::requestCompositePreview(const QString& itemId) {
             }
             req.editedIcc = *prof;
             if (!relinkAdjust(evCopy, *sc, *edited, ei, true, true, req.adjust, *err)) return;
-            req.mask.mode = st.value("maskMode").toString() == QLatin1String("feather")
-                                ? fk::MaskMode::feather
-                            : st.value("maskMode").toString() == QLatin1String("preserve_edge")
-                                ? fk::MaskMode::preserve_edge
-                                : fk::MaskMode::hard_edge;
-            req.mask.featherPx = st.value("featherPx").toDouble();
-            req.mask.preserveEdgePx = st.value("preserveEdgePx").toDouble();
+            req.mask = maskParamsOf(itemCopy, scanCopy, st); // the same as the final output (UX-08)
+            *maskUsed = req.mask;
             req.strokes = itemCopy.composite.strokes;
             const fk::RectI b = fk::boundingRect(itemCopy.outer);
             const double scale = std::min(1.0, 2400.0 / static_cast<double>(std::max(b.w, b.h)));
@@ -1878,6 +1989,16 @@ void AppController::requestCompositePreview(const QString& itemId) {
                 *err = errText(buf.error());
                 return;
             }
+            // UX-08: how strongly the grade changes the picture at the edge (the same view without the
+            // grade); above kStrongEdgeChange the mask alone cannot promise a seamless edge — the user is
+            // asked to check
+            fk::CompositeRequest plain = req;
+            plain.mask = {fk::MaskMode::preserve_edge, 0, 1e12};
+            plain.strokes.clear();
+            if (auto scanOnly = fk::compositeToBuffer(**src, plain, scale, ctx.cancel))
+                *change = fk::edgeChange(*buf, *scanOnly, itemCopy.inner,
+                                         {static_cast<double>(b.x), static_cast<double>(b.y)}, scale,
+                                         scanDpi(scanCopy) > 0 ? scanDpi(scanCopy) / 25.4 : 300.0 / 25.4);
             fk::ImageInfo info = (*src)->info();
             info.channels = buf->channels();
             info.bitsPerSample = buf->bits();
@@ -1890,7 +2011,7 @@ void AppController::requestCompositePreview(const QString& itemId) {
                                 reinterpret_cast<uint32_t*>(img.scanLine(static_cast<int>(y))));
             *out = std::move(img);
         },
-        [this, out, err, id, snap](const JobOutcome& o) -> JobDone {
+        [this, out, err, change, maskUsed, id, snap](const JobOutcome& o) -> JobDone {
             if (auto f = previewJob_.find(id); f != previewJob_.end() && sameProject(snap))
                 previewJob_.erase(f);
             if (o.cancelled) return JobApply::applied;
@@ -1903,10 +2024,20 @@ void AppController::requestCompositePreview(const QString& itemId) {
             if (out->isNull()) return {JobApply::failed, tr("Composite preview failed")};
             compositePreviews_[id] = *out;
             previewGen_[id] = snap.item;
+            edgeChange_[id] = *change;
+            masksUsed_[id].first = *maskUsed;
             Q_EMIT compositePreviewReady(toQ(id));
             Q_EMIT currentChanged();
             return JobApply::applied;
         });
+}
+
+std::pair<fk::MaskParams, fk::MaskParams> AppController::masksUsed(const std::string& itemId) const {
+    auto f = masksUsed_.find(itemId);
+    if (f != masksUsed_.end()) return f->second;
+    fk::MaskParams none;
+    none.mode = static_cast<fk::MaskMode>(-1);
+    return {none, none};
 }
 
 QImage AppController::compositePreview(const std::string& itemId) const {
@@ -2059,6 +2190,7 @@ struct ExportOutcome {
     std::optional<fk::Sidecar> record; ///< export record kept in the project (UX-07)
     std::string fullPath;
     std::string regradedSha256; ///< FK-007: graded file graded again (same picture) — new hash to record
+    std::optional<fk::MaskParams> mask; ///< UX-08: the mask a real-frame final output was composited with
 };
 
 } // namespace
@@ -2899,12 +3031,8 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                         fail(why);
                         continue;
                     }
-                    const QString mm = st.value("maskMode").toString();
-                    req.mask.mode = mm == QLatin1String("feather")         ? fk::MaskMode::feather
-                                    : mm == QLatin1String("preserve_edge") ? fk::MaskMode::preserve_edge
-                                                                           : fk::MaskMode::hard_edge;
-                    req.mask.featherPx = st.value("featherPx").toDouble();
-                    req.mask.preserveEdgePx = st.value("preserveEdgePx").toDouble();
+                    req.mask = maskParamsOf(w.item, w.scan, st); // the same as the preview (UX-08)
+                    o.mask = req.mask;
                     req.strokes = w.item.composite.strokes;
                     req.outputMode = st.value("geometryMode").toString() == QLatin1String("straighten")
                                          ? fk::GeometryMode::straightened
@@ -3013,6 +3141,7 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                     notify(o.error, QStringLiteral("error"));
                     continue;
                 }
+                if (o.mask) masksUsed_[o.itemId].second = *o.mask;
                 if (fk::ItemRecord* it = sameProj ? findItemMut(o.itemId) : nullptr) {
                     it->finalExport = o.fullPath;
                     it->composite.lastOutput = o.fullPath;
