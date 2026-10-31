@@ -34,6 +34,6 @@ changes). A failing check is shown; the user decides.
 ## Acceptance
 - A1 Each matching path selects the right item on fixtures (XMP kept, XMP stripped + sidecar, only file name, renamed). (`test_relink`)
 - A2 A graded (curves + saturation) version passes the content check; a different picture fails. (`test_relink.Signature`)
-- A3 Wrong-aspect files are never placed automatically. (`test_relink.Aspect`)
+- A3 Wrong-aspect files are never placed automatically. (`Relink.CheckEditedFlagsGeometryAndContent`, `Composite.SizeAndAspectChecks`)
 - A4 A Linear DNG given back is refused with guidance, also when dropped, and never imported as a scan.
   (`TiffRead.LinearDngIsRefusedWithGuidance`; self-test "FK-012 a Linear DNG given back …")

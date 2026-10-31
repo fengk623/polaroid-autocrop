@@ -4,26 +4,33 @@
 | Layer | Tool | Location | Runs in |
 | --- | --- | --- | --- |
 | Unit (core) | GoogleTest | `tests/core/` | every CI job (Linux, macOS, Windows) |
-| Contract | GoogleTest + JSON fixtures | `tests/contract/` | every CI job |
-| C ABI | C11 test | `tests/core/test_c_abi.c` | every CI job |
-| Integration | `fkcli` scripts | `tests/integration/*.cmake` (CTest) | every CI job |
+| Contract | GoogleTest: compile-time API signatures and enum values, stable names (`ApiContract.*`); JSON via the `Project.*` / `ExportRecords.*` round trips | `tests/core/test_api_contract.cpp` (U027) | every CI job |
+| Claims | `tools/check-claims.py`: tests, files, CI jobs and API names the specifications mention exist (or are marked planned) | — | CI docs job |
+| C ABI | C11 test | not built (the C ABI is planned, ADR-0007) | every CI job |
+| Integration | `fkcli` scripts | `tests/eval_corpus.cmake`, `tests/realeval_fixture.cmake` (CTest) | every CI job |
 | Detection eval | `fkfixture` + `fkcli eval` | CTest label `eval` | every CI job (small corpus), nightly (large) |
-| UI | Qt Quick Test, offscreen snapshots, `--self-test` | `tests/app/` | Linux + macOS + Windows CI |
+| UI | `--self-test` (real controllers, injected input, offscreen; scenarios `relink`, `count`, `upright`, `miniswhite`, `memory`, `text`) | `app/src/SelfTest.cpp` (no Qt Quick Test suite is built) | Linux + macOS + Windows CI |
 | Real windows | manual / computer-use capture | `docs/HUMAN-VERIFICATION.md` | before release |
-| Performance | `fkcli perf` | `tools/perf/` | nightly + before release |
+| Performance | `fkcli perf` | `fkcli perf`, self-test `--scenario memory`, `tools/memory-summary.py` | nightly + before release |
 
-CTest labels = minimal gates: `geometry`, `io`, `color`, `detect`, `export`, `relink`, `composite`,
-`project`, `cache`, `jobs`, `contract`, `metadata`, `eval`, `app`, `perf`.
+CTest labels in use: `core`, `geometry`, `io`, `color`, `metadata`, `export`, `detection`, `composite`,
+`relink`, `project`, `eval` (from `tests/CMakeLists.txt`; `cache`, `jobs`, `contract`, `app` and `perf` labels
+are not built — the contract test runs under `core`, the app is tested by its self-test).
 
 ## 2. Gates
 - While editing module X: `ctest -L X` (plus `contract` if an interface changed).
 - Before merging to `main`: `tools/run-tests.sh` (all labels except `perf`) on Linux, and CI on all OSes.
 - Bug fix: regression test committed red first (or shown red in the commit message with the command output), then fix.
-- `tools/run-tests.sh` prints executed / skipped / failed / duration per label and exits non-zero on any
-  skip not listed in `tests/allowed-skips.txt` (empty by default).
+- Outcomes are counted apart and nothing but a pass counts as a pass (FK-013): `tools/run-tests.sh`
+  (`tools/test_report.py`) prints passed / failed / skipped / not started / blocked and exits non-zero on a
+  failure, on a test CTest could not start (missing program, missing permission — the review environment's "4 not
+  started for lack of permission" would fail here), and on any skip not listed in `tests/allowed-skips.txt`
+  (empty by default; an entry whose reason says "blocked:" is reported as blocked, never as passed). The app
+  self-test ends with "self-test results: N passed, N failed, N skipped, N known issues (N no longer reproduce),
+  N not applicable" and writes the same `summary` into `report.json`.
 
 ## 3. Fixtures
-- Tiny committed fixtures: `tests/data/tiny/` (≤ 64 KB each; hand-made edge cases).
+- Tiny committed fixtures: none yet (planned: ≤ 64 KB each, hand-made edge cases); tests generate their images.
 - Generated fixtures: `fkfixture` writes into a per-test temp dir; seeds fixed in tests; nothing generated is committed.
 - Real scans: optional via `FK_PRIVATE_SCANS_DIR`, read-only; tests that need them are labelled `private`
   and never run in CI.

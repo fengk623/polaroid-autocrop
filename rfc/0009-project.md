@@ -1,6 +1,6 @@
 # RFC-0009 — Project and templates
 
-Status: Accepted · Module: `core/project` · ADR-0005 · PRD F09, F11 · Tests: `tests/core/test_project.cpp`, `test_templates.cpp`
+Status: Accepted · Module: `core/src/project.cpp` · ADR-0005 · PRD F09, F11 · Tests: `tests/core/test_project.cpp`
 
 - In-memory model: `Project { id, name, schema, settings, scans[] }`, `Scan { id, path, relPath,
   fingerprint, info, detection params, items[] }`, `Item { id, index, label, filmType, outer, inner,

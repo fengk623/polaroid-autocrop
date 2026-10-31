@@ -26,6 +26,9 @@ class SelfTest : public QObject {
              QObject* parent = nullptr);
     /// Runs synchronously (spinning the event loop); returns the process exit code.
     int run();
+    /// FK-013: outcomes counted apart — "N passed, N failed, N skipped, N known issues (N no longer
+    /// reproduce), N not applicable". A skip or a known issue is never counted as passed.
+    QString summary() const;
     /// `--scenario <name>`: reproduces reported user flows and records what actually happens (observations,
     /// not assertions) in <dir>/scenario-<name>.json plus snapshots. Names: "relink", "count", "upright",
     /// "miniswhite", "memory".

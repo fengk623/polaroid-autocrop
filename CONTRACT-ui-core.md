@@ -46,4 +46,4 @@ Messages come from core `Error.message` (English) mapped through the translation
 Raw `detail` goes to logs only.
 
 ## 6. Versioning
-Breaking changes bump the contract version; additions do not. Each change: this file + API-SPEC + RFC in one commit; `tests/app/tst_contract.qml` pins model role names.
+Breaking changes bump the contract version; additions do not. Each change: this file + API-SPEC + RFC in one commit; a QML test pinning the model role names is not built (planned); the self-test reads the roles it uses.

@@ -1,6 +1,6 @@
 # F01 — Import, scan inspection, damaged files
 
-RFC: `rfc/0003-image-io.md`, `rfc/0009-project.md` · Tests: `tests/core/test_tiff_io.cpp`, `tests/core/test_source_untouched.cpp`
+RFC: `rfc/0003-image-io.md`, `rfc/0009-project.md` · Tests: `tests/core/test_tiff_io.cpp`, `tests/core/test_export.cpp` (`Export.SourceFileUntouched`), `tests/core/test_composite.cpp` (`Composite.NeverOverwritesAndSourceUntouched`)
 
 ## Problem
 Scans are huge, varied TIFFs. The user must be able to bring in one file, many files or a folder, and
@@ -24,7 +24,7 @@ Scanner control; RAW camera files; PDF.
 ## Acceptance
 - A1 Importing 8/16-bit RGB and grey TIFFs with each compression above succeeds and shows correct size/depth/ICC/DPI/compression. (`test_tiff_io`)
 - A2 BigTIFF imports. (`test_tiff_io (TiffRead.BigTiff)`)
-- A3 A truncated TIFF is reported as damaged with a reason and does not stop a batch. (`test_tiff_io (TiffRead.TruncatedFileIsReportedDamaged)`, `test_batch.ContinueOnError`)
-- A4 Source file SHA-256 is identical before and after import, detection, export, composite and project save. (`test_source_untouched`)
+- A3 A truncated TIFF is reported as damaged with a reason and does not stop a batch. (`TiffRead.TruncatedFileIsReportedDamaged`; self-test `runTaskSafety` TS4: a failing job ends as failed and is reported — that the rest of a batch completes is not tested separately, not built)
+- A4 Source file SHA-256 is identical before and after import, detection, export, composite and project save. (`Export.SourceFileUntouched`, `Composite.NeverOverwritesAndSourceUntouched`; project save and detection read only — a single end-to-end hash test over every step is not built)
 - A5 Unsupported photometrics give an explicit error code, never a crash. (`test_tiff_io (TiffRead.UnsupportedAndMissing)`)
 - A6 Paths with Chinese, Japanese, spaces and emoji work on Windows (wide-char API) and macOS. (`test_tiff_io` TiffRead.UnicodePaths)

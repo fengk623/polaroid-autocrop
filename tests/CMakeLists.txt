@@ -27,6 +27,8 @@ target_include_directories(test_detection PRIVATE ${PROJECT_SOURCE_DIR}/core/src
 fk_add_gtest(test_composite composite core/test_composite.cpp)
 fk_add_gtest(test_relink relink core/test_relink.cpp)
 fk_add_gtest(test_project project core/test_project.cpp)
+# FK-013 (U027): API-SPEC-core.md and the headers agree (compile-time signatures, stable names)
+fk_add_gtest(test_api_contract core core/test_api_contract.cpp)
 
 # Known issues (Stage A): a test that states the v1.0 behaviour and fails on the current code was registered with
 # WILL_FAIL until the fixing unit moved it into the regular suite (docs/v1/TRACEABILITY.md). All three core known

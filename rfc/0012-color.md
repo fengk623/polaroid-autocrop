@@ -1,6 +1,6 @@
 # RFC-0012 — Colour
 
-Status: Accepted · Module: `core/color` · ADR-0003 · PRD F12 · Tests: `tests/core/test_color.cpp`
+Status: Accepted · Module: `core/src/color.cpp` · ADR-0003 · PRD F12 · Tests: `tests/core/test_color.cpp`
 
 - `Profile` (RAII over `cmsHPROFILE`): `fromIcc(bytes)`, built-ins `sRGB()`, `adobeRGB1998()` (generated
   from published primaries, γ 563/256), `proPhoto()` (D50, γ 1.8), `gray22()`, `linearRec709()`; `description()`, `sha256()`.
