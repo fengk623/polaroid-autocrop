@@ -143,8 +143,10 @@ double ScanCanvas::zoomPercent() const {
 void ScanCanvas::onScanImage(const QString& scanId) {
     if (!app_ || scanId != app_->currentScanId()) return;
     const bool newScan = scanId != scanId_;
+    const bool had = hasImage();
     scanId_ = scanId;
     rebuildPyramid();
+    if (had != hasImage()) Q_EMIT badgeChanged();
     if (newScan) {
         detail_ = QImage();
         handle_.reset();

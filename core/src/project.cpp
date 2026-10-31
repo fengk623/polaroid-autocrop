@@ -437,6 +437,7 @@ json scanJson(const ScanRecord& s) {
                 {"detection",
                  {{"at", s.detectedAt},
                   {"expectedCount", s.expectedCount},
+                  {"autoCount", s.autoCount},
                   {"dpiUsed", s.dpiUsed},
                   {"proxyScale", s.proxyScale},
                   {"warnings", s.warnings}}},
@@ -465,6 +466,7 @@ ScanRecord scanFrom(const json& j) {
     const auto& d = j.value("detection", json::object());
     s.detectedAt = d.value("at", "");
     s.expectedCount = d.value("expectedCount", 4);
+    s.autoCount = d.value("autoCount", false);
     s.dpiUsed = d.value("dpiUsed", 0.0);
     s.proxyScale = d.value("proxyScale", 1);
     s.warnings = d.value("warnings", std::vector<std::string>{});
@@ -505,11 +507,15 @@ std::string projectToJson(const Project& p) {
     j["createdAt"] = p.createdAt;
     j["modifiedAt"] = p.modifiedAt;
     j["app"] = {{"name", product::kName}, {"version", product::kVersion}};
-    j["settings"] = {
-        {"expectedCount", p.settings.expectedCount}, {"safetyMarginPx", p.settings.safetyMarginPx},
-        {"exportFolder", p.settings.exportFolder},   {"exportFormat", p.settings.exportFormat},
-        {"exportBits", p.settings.exportBits},       {"exportCompression", p.settings.exportCompression},
-        {"colorPolicy", p.settings.colorPolicy},     {"privacy", p.settings.privacy}};
+    j["settings"] = {{"expectedCount", p.settings.expectedCount},
+                     {"autoCount", p.settings.autoCount},
+                     {"safetyMarginPx", p.settings.safetyMarginPx},
+                     {"exportFolder", p.settings.exportFolder},
+                     {"exportFormat", p.settings.exportFormat},
+                     {"exportBits", p.settings.exportBits},
+                     {"exportCompression", p.settings.exportCompression},
+                     {"colorPolicy", p.settings.colorPolicy},
+                     {"privacy", p.settings.privacy}};
     if (!p.settings.outputJson.empty()) {
         try {
             j["settings"]["output"] = json::parse(p.settings.outputJson);
@@ -575,6 +581,7 @@ Result<Project> projectFromJson(const std::string& text, OpenMode* mode) {
         if (j.contains("settings")) {
             const auto& s = j["settings"];
             p.settings.expectedCount = s.value("expectedCount", 4);
+            p.settings.autoCount = s.value("autoCount", true);
             p.settings.safetyMarginPx = s.value("safetyMarginPx", 1.0);
             p.settings.exportFolder = s.value("exportFolder", "");
             p.settings.exportFormat = s.value("exportFormat", "tif");
@@ -717,6 +724,21 @@ void resolveScanPaths(Project& p, const std::filesystem::path& projectDir) {
             }
         }
         s.missing = true;
+    }
+}
+
+void updateCountWarning(ScanRecord& s) {
+    auto isCount = [](const std::string& w) { return w.rfind("count_mismatch", 0) == 0; };
+    s.warnings.erase(std::remove_if(s.warnings.begin(), s.warnings.end(), isCount), s.warnings.end());
+    for (auto& it : s.items)
+        it.reasons.erase(std::remove(it.reasons.begin(), it.reasons.end(), "count_mismatch"),
+                         it.reasons.end());
+    if (s.autoCount || (s.items.empty() && s.detectedAt.empty())) return;
+    if (static_cast<int>(s.items.size()) != s.expectedCount) {
+        s.warnings.push_back("count_mismatch: found " + std::to_string(s.items.size()) + ", expected " +
+                             std::to_string(s.expectedCount));
+        for (auto& it : s.items)
+            it.reasons.push_back("count_mismatch");
     }
 }
 

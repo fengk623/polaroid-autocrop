@@ -26,6 +26,11 @@
 #include <cstring>
 #include <functional>
 
+// Exported by Qt GUI for input injection (declared, like this, by Qt Test's qtestmouse.h).
+Q_GUI_EXPORT void qt_handleMouseEvent(QWindow* window, const QPointF& local, const QPointF& global,
+                                      Qt::MouseButtons state, Qt::MouseButton button, QEvent::Type type,
+                                      Qt::KeyboardModifiers mods, int timestamp);
+
 namespace fkapp {
 
 SelfTest::SelfTest(AppController* app, QQuickWindow* window, QString outDir, QString scan, QObject* parent)
@@ -37,6 +42,11 @@ void SelfTest::check(const QString& name, bool ok, const QString& detail) {
     qInfo().noquote() << (ok ? "PASS" : "FAIL") << name << detail;
 }
 
+void SelfTest::skip(const QString& name, const QString& why) {
+    checks_.append(QJsonObject{{"name", name}, {"ok", true}, {"skipped", true}, {"detail", why}});
+    qInfo().noquote() << "SKIP" << name << why;
+}
+
 void SelfTest::snapshot(const QString& name) {
     QCoreApplication::processEvents();
     const QImage img = window_->grabWindow();
@@ -44,6 +54,36 @@ void SelfTest::snapshot(const QString& name) {
     const bool ok = !img.isNull() && img.save(path);
     check(QStringLiteral("snapshot %1").arg(name), ok,
           QStringLiteral("%1×%2").arg(img.width()).arg(img.height()));
+}
+
+QQuickItem* SelfTest::findItem(const QString& objectName) const {
+    // visual tree search (QML items are not always QObject children of their visual parent)
+    std::function<QQuickItem*(QQuickItem*)> find = [&](QQuickItem* it) -> QQuickItem* {
+        if (!it) return nullptr;
+        if (it->objectName() == objectName) return it;
+        for (QQuickItem* c : it->childItems())
+            if (QQuickItem* f = find(c)) return f;
+        return nullptr;
+    };
+    return find(window_->contentItem());
+}
+
+bool SelfTest::click(QQuickItem* item, QPointF local) {
+    if (!item || !item->isVisible()) return false;
+    if (local.x() < 0) local = QPointF(item->width() / 2, item->height() / 2);
+    const QPointF at = item->mapToScene(local);
+    if (!QRectF(0, 0, window_->width(), window_->height()).contains(at)) return false;
+    const QPointF global = item->mapToGlobal(local);
+    // the same injection Qt Test uses: through the window system interface, so the click is delivered,
+    // grabbed and released exactly like a user's (a QMouseEvent sent to the window is not grabbed)
+    static int timestamp = 0;
+    timestamp += 1000; // apart enough never to be a double click
+    qt_handleMouseEvent(window_, at, global, Qt::LeftButton, Qt::LeftButton, QEvent::MouseButtonPress,
+                        Qt::NoModifier, timestamp);
+    qt_handleMouseEvent(window_, at, global, Qt::NoButton, Qt::LeftButton, QEvent::MouseButtonRelease,
+                        Qt::NoModifier, timestamp + 50);
+    QCoreApplication::processEvents();
+    return true;
 }
 
 QObject* SelfTest::findCanvas() const {
@@ -127,6 +167,71 @@ double meanDifference(const QString& a, const QString& b) {
             for (int c = 0; c < ia->channels(); ++c)
                 sum += std::abs(static_cast<double>(ia->sample16(x, y, c)) - ib->sample16(x, y, c));
     return sum / (static_cast<double>(ia->width()) * ia->height() * ia->channels() * 65535.0);
+}
+/// UX-01: a single-print scan derived from the test scan (the other prints painted over with the scan's
+/// background colour, reduced to about 300 dpi) and a blank scan of that background colour.
+bool writeCountScans(const QString& src, const std::vector<fk::Shape>& outers, const QString& single,
+                     const QString& blank) {
+    fk::ImageInfo info;
+    auto img = fk::readImageFile(toPath(src), &info);
+    if (!img || outers.empty()) return false;
+    const double dpi = info.dpiX > 0 ? info.dpiX : 300.0;
+    const int64_t k = std::max<int64_t>(1, std::llround(dpi / 300.0));
+    const int64_t w = img->width() / k, h = img->height() / k;
+    const int ch = img->channels();
+    // background: per-channel median of a 2 % border band
+    std::vector<uint16_t> bg(static_cast<size_t>(ch));
+    const int64_t band = std::max<int64_t>(4, std::min(img->width(), img->height()) / 50);
+    for (int c = 0; c < ch; ++c) {
+        std::vector<uint16_t> v;
+        for (int64_t y = 0; y < img->height(); y += 3)
+            for (int64_t x = 0; x < img->width(); x += 3)
+                if (x < band || y < band || x >= img->width() - band || y >= img->height() - band)
+                    v.push_back(img->sample16(x, y, c));
+        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2), v.end());
+        bg[static_cast<size_t>(c)] = v[v.size() / 2];
+    }
+    const double margin = 2.0 / 25.4 * dpi; // 2 mm around each painted-over print
+    uint32_t rng = 7;
+    // keepFirst: the test scan with only its first print; otherwise a blank A4 scanner bed at 300 dpi (A4,
+    // not the test scan's size: a scan cropped to one print would turn into a card-sized "print" of frame
+    // colour)
+    auto write = [&](const QString& dst, bool keepFirst) {
+        const int64_t ow = keepFirst ? w : 2551, oh = keepFirst ? h : 3508;
+        auto out = fk::ImageBuffer::create(ow, oh, ch, img->bits());
+        if (!out) return false;
+        for (int64_t y = 0; y < oh; ++y)
+            for (int64_t x = 0; x < ow; ++x) {
+                const fk::Vec2 p{(x + 0.5) * k, (y + 0.5) * k};
+                bool paint = !keepFirst;
+                if (keepFirst && fk::signedDistance(outers.front(), p) < -1.0)
+                    for (size_t i = 1; i < outers.size() && !paint; ++i)
+                        paint = fk::signedDistance(outers[i], p) > -margin;
+                rng = rng * 1664525u + 1013904223u;
+                const int n = static_cast<int>((rng >> 16) % 3) - 1; // ±1 level of scanner noise
+                for (int c = 0; c < ch; ++c) {
+                    int v = paint ? bg[static_cast<size_t>(c)] : img->sample16(x * k, y * k, c);
+                    if (paint) v = std::clamp(v + n * (img->bits() == 8 ? 257 : 64), 0, 65535);
+                    if (img->bits() == 8) {
+                        out->row(y)[x * ch + c] = static_cast<uint8_t>(v / 257);
+                    } else {
+                        const uint16_t u = static_cast<uint16_t>(v);
+                        std::memcpy(out->row(y) + (x * ch + c) * 2, &u, 2);
+                    }
+                }
+            }
+        fk::WriteOptions opt;
+        opt.bits = img->bits();
+        opt.icc = info.icc;
+        opt.dpiX = opt.dpiY = keepFirst ? dpi / static_cast<double>(k) : 300.0;
+        QFile::remove(dst);
+        auto sink = fk::createSink(toPath(dst), opt);
+        if (!sink || !(*sink)->begin({ow, oh}, ch, img->bits())) return false;
+        for (int64_t y = 0; y < oh; ++y)
+            if (!(*sink)->writeRows(out->row(y), 1, out->rowBytes())) return false;
+        return static_cast<bool>((*sink)->finish());
+    };
+    return write(single, true) && write(blank, false);
 }
 QStringList filesMatching(const QString& dir, const QString& pattern) {
     QStringList out;
@@ -303,28 +408,6 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
         return rows;
     };
 
-    // UX-01: changing the expected count keeps the warning computed at detection time
-    {
-        const QStringList w = app_->currentScan().value("warnings").toStringList();
-        const bool hadMismatch =
-            std::any_of(w.begin(), w.end(), [](const QString& x) { return x.startsWith("count_mismatch"); });
-        const int prints = app_->currentScan().value("itemCount").toInt();
-        const QVariant before = app_->settings().value("expectedCount");
-        app_->setSetting(QStringLiteral("expectedCount"), prints > 0 ? prints : 1);
-        QCoreApplication::processEvents();
-        const QStringList w2 = app_->currentScan().value("warnings").toStringList();
-        const bool still = std::any_of(w2.begin(), w2.end(),
-                                       [](const QString& x) { return x.startsWith("count_mismatch"); });
-        if (!hadMismatch)
-            knownNotApplicable(QStringLiteral("UX-01"),
-                               QStringLiteral("count warning stays after the count is corrected"),
-                               QStringLiteral("no count warning on this scan: %1").arg(w.join(';')));
-        else
-            known(QStringLiteral("UX-01"), QStringLiteral("count warning stays after the count is corrected"),
-                  still, QStringLiteral("before %1, after %2").arg(w.join(';'), w2.join(';')));
-        app_->setSetting(QStringLiteral("expectedCount"), before);
-    }
-
     const QStringList edits = filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif"));
     if (edits.isEmpty()) {
         known(QStringLiteral("UX-07"), QStringLiteral("setup: exported image areas"), false,
@@ -480,8 +563,18 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
 
     // FK-003 (U006): the export was converted to Adobe RGB, the editor dropped the profile. The export's
     // profile is offered (identified by its hash), the user confirms it, the choice is stored with the
-    // project and the output converts once — colours as in the scan.
-    {
+    // project and the output converts once — colours as in the scan. An untagged scan cannot be converted
+    // (the export is refused until a profile is assigned): the precondition is missing, not the behaviour.
+    if (app_->project().scans.empty() || app_->project().scans.front().info.iccDescription.empty() &&
+                                             app_->project().scans.front().iccSha256.empty()) {
+        for (const char* n : {"graded file without a profile: the export's profile is offered, confirmation "
+                              "required",
+                              "graded file without a profile is not relinked before the choice",
+                              "chosen profile stored with the relink and the project",
+                              "output converts the chosen profile once: colours as in the scan"})
+            skip(QString::fromUtf8(n), QStringLiteral("untagged scan: converting the export to Adobe RGB is "
+                                                      "refused until a profile is assigned"));
+    } else {
         const QVariant policy = app_->settings().value("colorPolicy");
         app_->setSetting(QStringLiteral("colorPolicy"), QStringLiteral("convert_adobe"));
         const QStringList before = filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif"));
@@ -755,18 +848,26 @@ void SelfTest::runDataProtection() {
           !savedOk && app_->projectPath() == pathBefore && app_->dirty(),
           QStringLiteral("path %1").arg(app_->projectPath()));
 
-    // FK-008 recovery snapshot: written while unsaved, offered after a crash, recovered unsaved
+    // FK-008 recovery snapshot: written while unsaved, offered after a crash, recovered unsaved. Only this
+    // project's snapshot counts: on a slow scan the 3 s timer also wrote snapshots of earlier phases'
+    // projects, which programmatic replacements leave behind like a crash would.
     app_->writeRecovery();
-    const int ownHidden = static_cast<int>(app_->recoverySnapshots().size());
+    const QString ownId = toQ(app_->project().projectId);
+    auto ownSnapshot = [&] {
+        for (const QVariant& v : app_->recoverySnapshots())
+            if (QFileInfo(v.toMap().value("file").toString()).completeBaseName() == ownId)
+                return v.toMap().value("file").toString();
+        return QString();
+    };
+    const bool hiddenWhileOpen = ownSnapshot().isEmpty();
     app_->newProject(); // what a crash looks like to the next session: the snapshot is still there
-    const QVariantList snaps = app_->recoverySnapshots();
-    const bool recovered =
-        !snaps.isEmpty() && app_->recoverSnapshot(snaps.first().toMap().value("file").toString());
+    const QString snap = ownSnapshot();
+    const bool recovered = !snap.isEmpty() && app_->recoverSnapshot(snap);
     app_->waitIdle(300000);
     check(QStringLiteral("FK-008 unsaved work is recovered from the snapshot (unsaved, same path)"),
-          ownHidden == 0 && recovered && scans() == 1 && app_->dirty() && app_->projectPath() == saved,
-          QStringLiteral("snapshots %1, recovered %2, scans %3, path %4")
-              .arg(snaps.size())
+          hiddenWhileOpen && recovered && scans() == 1 && app_->dirty() && app_->projectPath() == saved,
+          QStringLiteral("hidden while open %1, recovered %2, scans %3, path %4")
+              .arg(hiddenWhileOpen)
               .arg(recovered)
               .arg(scans())
               .arg(app_->projectPath()));
@@ -774,8 +875,8 @@ void SelfTest::runDataProtection() {
     ask(QStringLiteral("new"), QString());
     answer(QStringLiteral("dontsave"));
     check(QStringLiteral("FK-008 \"Don't save\" discards the snapshot"),
-          scans() == 0 && app_->recoverySnapshots().isEmpty(),
-          QStringLiteral("scans %1, snapshots %2").arg(scans()).arg(app_->recoverySnapshots().size()));
+          scans() == 0 && ownSnapshot().isEmpty(),
+          QStringLiteral("scans %1, own snapshot %2").arg(scans()).arg(ownSnapshot()));
 
     // output parameters travel with the project
     app_->openProject(saved);
@@ -905,6 +1006,184 @@ void SelfTest::runPrivacy() {
     app_->setSetting(QStringLiteral("exportFormat"), format);
     app_->setSetting(QStringLiteral("exportBits"), bits);
     app_->setSetting(QStringLiteral("exportFolder"), folder);
+    app_->newProject();
+}
+
+void SelfTest::runCountSetting() {
+    const QString d = QDir(dir_).filePath(QStringLiteral("count"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    auto hasWarning = [](const QVariantMap& scan, const QString& prefix) {
+        const QStringList w = scan.value("warnings").toStringList();
+        return std::any_of(w.begin(), w.end(), [&](const QString& x) { return x.startsWith(prefix); });
+    };
+    auto scanText = [](const QVariantMap& scan) {
+        return QStringLiteral("auto %1, expected %2, found %3, warnings [%4]")
+            .arg(scan.value("autoCount").toBool())
+            .arg(scan.value("expectedCount").toInt())
+            .arg(scan.value("itemCount").toInt())
+            .arg(scan.value("warnings").toStringList().join(QStringLiteral("; ")));
+    };
+    // a modal dialog (also while its closing transition runs) would take the mouse input
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    snapshot(QStringLiteral("U011-before"));
+    QQuickItem* autoCheck = findItem(QStringLiteral("autoCountCheck"));
+    QQuickItem* spin = findItem(QStringLiteral("countSpin"));
+    auto uiText = [&] {
+        return QStringLiteral("check %1, number %2 (%3)")
+            .arg(autoCheck ? autoCheck->property("checked").toBool() : false)
+            .arg(spin ? spin->property("value").toInt() : -1)
+            .arg(spin && spin->isEnabled() ? QStringLiteral("enabled") : QStringLiteral("greyed out"));
+    };
+    check(QStringLiteral("UX-01 left rail has the count switch and number"), autoCheck && spin);
+    if (!autoCheck || !spin) return;
+    const bool defaultAuto = app_->settings().value("autoCount").toBool();
+    const int defaultCount = app_->settings().value("expectedCount").toInt();
+
+    // the default: new scans are counted automatically; no warning made from the default count of 4
+    app_->newProject();
+    QCoreApplication::processEvents();
+    QObject* canvas = findCanvas();
+    check(QStringLiteral("new project: the canvas no longer shows the previous scan"),
+          canvas && !canvas->property("hasImage").toBool());
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    QCoreApplication::processEvents();
+    const QString multiId = app_->currentScanId();
+    const int found = app_->currentScan().value("itemCount").toInt();
+    check(QStringLiteral("UX-01 new scans are counted automatically by default"),
+          defaultAuto && app_->currentScan().value("autoCount").toBool() &&
+              !hasWarning(app_->currentScan(), QStringLiteral("count_mismatch")),
+          scanText(app_->currentScan()));
+    check(QStringLiteral("UX-01 automatic: number greyed out, showing the prints found"),
+          autoCheck->property("checked").toBool() && !spin->isEnabled() &&
+              spin->property("value").toInt() == found,
+          uiText());
+
+    // a mixed batch: the same scan with one print, and a blank scan
+    std::vector<fk::Shape> outers;
+    for (const auto& sc : app_->project().scans)
+        for (const auto& it : sc.items)
+            outers.push_back(it.outer);
+    const QString single = QDir(d).filePath(QStringLiteral("single.tif"));
+    const QString blank = QDir(d).filePath(QStringLiteral("blank.tif"));
+    const bool made = writeCountScans(scan_, outers, single, blank);
+    check(QStringLiteral("UX-01 setup: single-print and blank scans"), made);
+    if (!made) return;
+    app_->importScans({single, blank});
+    app_->waitIdle(300000);
+    QString singleId, blankId;
+    for (const auto& sc : app_->project().scans) {
+        if (QFileInfo(toQ(sc.path)).fileName() == QLatin1String("single.tif")) singleId = toQ(sc.scanId);
+        if (QFileInfo(toQ(sc.path)).fileName() == QLatin1String("blank.tif")) blankId = toQ(sc.scanId);
+    }
+    auto scanOf = [&](const QString& id) {
+        app_->selectScan(id);
+        QCoreApplication::processEvents();
+        return app_->currentScan();
+    };
+    const QVariantMap s1 = scanOf(singleId), s0 = scanOf(blankId);
+    check(QStringLiteral("UX-01 automatic: a single print, no count warning"),
+          s1.value("itemCount").toInt() == 1 && !hasWarning(s1, QStringLiteral("count_mismatch")) &&
+              !hasWarning(s1, QStringLiteral("possible_missed")),
+          scanText(s1));
+    check(QStringLiteral("UX-01 automatic: a blank scan says no prints were found, no count warning"),
+          s0.value("itemCount").toInt() == 0 && hasWarning(s0, QStringLiteral("no_prints_found")) &&
+              !hasWarning(s0, QStringLiteral("count_mismatch")),
+          scanText(s0));
+    check(QStringLiteral("UX-01 blank scan: number shows 0 found"),
+          !spin->isEnabled() && spin->property("value").toInt() == 0, uiText());
+
+    // per-scan override with the mouse: the blank scan gets the kept manual count, the warning appears at
+    // once and only on that scan
+    const bool clicked = click(autoCheck);
+    const QVariantMap s0m = app_->currentScan();
+    check(QStringLiteral("UX-01 switch off (mouse): manual count, warning at once without detecting"),
+          clicked && !s0m.value("autoCount").toBool() && s0m.value("expectedCount").toInt() == defaultCount &&
+              hasWarning(s0m, QStringLiteral("count_mismatch")) && spin->isEnabled() &&
+              spin->property("value").toInt() == defaultCount && app_->counts().value("scans").toInt() == 3,
+          scanText(s0m) + QStringLiteral(" · ") + uiText());
+    check(QStringLiteral("UX-01 the other scans keep their own setting"),
+          scanOf(multiId).value("autoCount").toBool() && scanOf(singleId).value("autoCount").toBool() &&
+              !hasWarning(scanOf(multiId), QStringLiteral("count_mismatch")),
+          scanText(scanOf(multiId)));
+
+    // the multi-print scan: manual, then the number corrected with the − / + buttons
+    scanOf(multiId);
+    click(autoCheck);
+    const bool mismatchAtDefault = hasWarning(app_->currentScan(), QStringLiteral("count_mismatch"));
+    check(QStringLiteral("UX-01 manual count differing from the prints found is flagged"),
+          mismatchAtDefault == (found != defaultCount), scanText(app_->currentScan()));
+    auto indicator = [&](const char* which) -> QQuickItem* {
+        QObject* button = spin->property(which).value<QObject*>();
+        return button ? button->property("indicator").value<QQuickItem*>() : nullptr;
+    };
+    QQuickItem* down = indicator("down");
+    QQuickItem* up = indicator("up");
+    for (int i = 0; i < 12 && spin->property("value").toInt() != found; ++i)
+        click(spin->property("value").toInt() > found ? down : up);
+    QCoreApplication::processEvents();
+    check(QStringLiteral("UX-01 corrected manual count (mouse): the warning goes"),
+          app_->currentScan().value("expectedCount").toInt() == found &&
+              !hasWarning(app_->currentScan(), QStringLiteral("count_mismatch")),
+          scanText(app_->currentScan()) + QStringLiteral(" · ") + uiText());
+    click(up); // one more than found: flagged again
+    check(QStringLiteral("UX-01 manual count changed again: the warning follows"),
+          hasWarning(app_->currentScan(),
+                     QStringLiteral("count_mismatch: found %1, expected %2").arg(found).arg(found + 1)),
+          scanText(app_->currentScan()));
+    click(autoCheck); // automatic again
+    check(QStringLiteral("UX-01 switch on (mouse): no count warning, the manual value is kept"),
+          app_->currentScan().value("autoCount").toBool() &&
+              !hasWarning(app_->currentScan(), QStringLiteral("count_mismatch")) &&
+              app_->currentScan().value("expectedCount").toInt() == found + 1 && !spin->isEnabled() &&
+              spin->property("value").toInt() == found,
+          scanText(app_->currentScan()) + QStringLiteral(" · ") + uiText());
+    click(autoCheck); // manual again: the kept value comes back
+    check(QStringLiteral("UX-01 switch off again: the last manual value is back"),
+          spin->property("value").toInt() == found + 1 &&
+              hasWarning(app_->currentScan(), QStringLiteral("count_mismatch")),
+          uiText());
+    snapshot(QStringLiteral("U011-manual-count"));
+
+    // saved and reopened: every scan keeps its own setting and warning
+    const QString proj = QDir(d).filePath(QStringLiteral("count.fkproj"));
+    const bool saved = app_->saveProjectAs(proj);
+    app_->newProject();
+    const bool opened = app_->openProject(QUrl::fromLocalFile(proj));
+    app_->waitIdle(300000);
+    const QVariantMap m = scanOf(multiId), one = scanOf(singleId), none = scanOf(blankId);
+    check(QStringLiteral("UX-01 saved and reopened: each scan keeps its count setting"),
+          saved && opened && !m.value("autoCount").toBool() &&
+              m.value("expectedCount").toInt() == found + 1 &&
+              hasWarning(m, QStringLiteral("count_mismatch")) && one.value("autoCount").toBool() &&
+              !hasWarning(one, QStringLiteral("count_mismatch")) && !none.value("autoCount").toBool() &&
+              none.value("expectedCount").toInt() == defaultCount &&
+              hasWarning(none, QStringLiteral("count_mismatch")),
+          scanText(m) + QStringLiteral(" | ") + scanText(one) + QStringLiteral(" | ") + scanText(none));
+    scanOf(blankId);
+    check(QStringLiteral("UX-01 reopened: the controls show the scan's setting"),
+          !autoCheck->property("checked").toBool() && spin->isEnabled() &&
+              spin->property("value").toInt() == defaultCount,
+          uiText());
+
+    // the global default switched off: new scans get the default manual count
+    app_->setSetting(QStringLiteral("autoCount"), false);
+    app_->setSetting(QStringLiteral("expectedCount"), 2);
+    const QString single2 = QDir(d).filePath(QStringLiteral("single-2.tif"));
+    QFile::copy(single, single2);
+    app_->importScans({single2});
+    app_->waitIdle(300000);
+    QVariantMap s2;
+    for (const auto& sc : app_->project().scans)
+        if (QFileInfo(toQ(sc.path)).fileName() == QLatin1String("single-2.tif")) s2 = scanOf(toQ(sc.scanId));
+    check(QStringLiteral("UX-01 default off: new scans use the default manual count"),
+          !s2.value("autoCount").toBool() && s2.value("expectedCount").toInt() == 2 &&
+              hasWarning(s2, QStringLiteral("count_mismatch: found 1, expected 2")),
+          scanText(s2));
+    app_->setSetting(QStringLiteral("autoCount"), defaultAuto);
+    app_->setSetting(QStringLiteral("expectedCount"), defaultCount);
     app_->newProject();
 }
 
@@ -1060,21 +1339,26 @@ int SelfTest::scenarioRelink() {
 }
 
 int SelfTest::scenarioCount() {
-    // detection with the default expected count, then the user changes the count without detecting again
+    // UX-01 (U011): detection with the default automatic count, then the scan switched to a manual count and
+    // the count corrected, without detecting again
     app_->importScans({scan_});
     app_->waitIdle(300000);
-    auto warnings = [&] {
-        return QJsonArray::fromStringList(app_->currentScan().value("warnings").toStringList());
+    auto state = [&] {
+        const QVariantMap s = app_->currentScan();
+        return QJsonObject{{"autoCount", s.value("autoCount").toBool()},
+                           {"expectedCount", s.value("expectedCount").toInt()},
+                           {"prints", s.value("itemCount").toInt()},
+                           {"warnings", QJsonArray::fromStringList(s.value("warnings").toStringList())}};
     };
-    observe(QStringLiteral("C1 after detection"),
-            {{"expectedSetting", app_->settings().value("expectedCount").toInt()},
-             {"prints", app_->counts().value("prints").toInt()},
-             {"warnings", warnings()}});
-    app_->setSetting(QStringLiteral("expectedCount"), app_->counts().value("prints").toInt());
+    observe(QStringLiteral("C1 after detection (default: automatic)"), state());
+    snapshot(QStringLiteral("C1-left-rail"));
+    const QString id = app_->currentScanId();
+    app_->setScanCount(id, false, app_->currentScan().value("expectedCount").toInt());
+    observe(QStringLiteral("C2 switched to manual (the kept count), no new detection"), state());
+    app_->setScanCount(id, false, app_->currentScan().value("itemCount").toInt());
     QCoreApplication::processEvents();
-    observe(QStringLiteral("C2 count set to the detected number, no new detection"),
-            {{"expectedSetting", app_->settings().value("expectedCount").toInt()}, {"warnings", warnings()}});
-    snapshot(QStringLiteral("C2-left-rail"));
+    observe(QStringLiteral("C3 count set to the detected number, no new detection"), state());
+    snapshot(QStringLiteral("C3-left-rail"));
     return 0;
 }
 
@@ -1271,6 +1555,7 @@ int SelfTest::run() {
     runKnownIssues(exportDir);
     runDataProtection();
     runPrivacy();
+    runCountSetting();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

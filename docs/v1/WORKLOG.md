@@ -187,7 +187,7 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     is bit-exact"; remaining known issues UX-01, FK-010, FK-002 (+FK-011 scenario) still reproduced. Relink scenario:
     R1 unique (hash), R2 ambiguous with 1 candidate, R3/R4 unique (name + picture), R6/R6b none (choose the print).
 
-### 16:20–17:05 — PR #5 merged, PR #6, U004 fix, U005
+### 16:15–16:35 — PR #5 merged, PR #6, U004 fix, U005
 - Owner merged PR #5 (U003). PR #6 (U004) opened against main (stacked on U003); all checks green on `76428d0`.
 - Owner asked whether a PR can be merged once all checks pass: yes — docs/repo, core ×3, app ×3 and both test
   packages green ("Publish release" is skipped on PRs by design).
@@ -209,7 +209,7 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   save/reopen, still bit-exact). Real scans: polaroid_92 47 PASS / UX-01 known / FK-010 n/a; img20260702_0005 all
   pass, UX-01 and FK-010 n/a. Relink scenario R7 (turned 180°) snapshot checked.
 
-### 17:05–17:50 — PR #6/#7 merged, U006
+### 16:35–16:50 — PR #6/#7 merged, U006
 - Owner merged PR #6 (U004) and PR #7 (U005).
 - U006 (branch `unit/U006-missing-icc`), FK-003. Root cause: `req.editedIcc = ei.icc` — a graded file without a
   profile was composited as if in the scan's colour space; an unreadable profile failed only at output. Core:
@@ -227,7 +227,7 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   Core suite 163/163. Self-test (fixture, sRGB scan, export converted to Adobe RGB, profile dropped): 4 FK-003 checks
   pass, final vs full print mean difference 0.00000; all other checks pass.
 
-### 17:50–18:50 — PR #8 merged, U007
+### 16:50–17:10 — PR #8 merged, U007
 - Owner merged PR #8 (U006).
 - U007 (branch `unit/U007-source-identity`), FK-007. Root cause: `resolveScanPaths` trusted any file at the recorded
   path; output jobs never checked the scan; a relinked graded file was read without comparing its hash. Core:
@@ -245,7 +245,7 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
 - Tests: core `SourceIdentity.*` ×5 pass; core suite 167/167. Self-test (fixture, on a copy of the scan): all pass incl.
   6 FK-007 checks; the original scan file is never modified.
 
-### 18:50–19:30 — PR #9 green, U008
+### 17:10–17:25 — PR #9 green, U008
 - PR #9 (U007): all checks green incl. both test packages; waiting for the owner's merge.
 - U008 (branch `unit/U008-data-protection`), FK-001 + FK-008; RFC-0017 (save semantics; manual save stays).
   Root causes: only the window's close asked about unsaved changes (New/Open/drop replaced the project directly);
@@ -264,7 +264,7 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   suite 171 pass. Self-test (fixture): 11 FK-001/FK-008 checks pass, all others pass. Read-only/disk-full simulated by
   an unwritable path (the container runs as root, so permission-based read-only cannot be simulated reliably).
 
-### 19:30–20:10 — PR #10 green, U009
+### 17:25–17:40 — PR #10 green, U009
 - PR #10 (U008): all checks green incl. test packages; waiting for the owner's merge (after #9).
 - U009 (branch `unit/U009-privacy`), FK-004. Root cause: `buildXmp` copied `dc:creator` from the source XMP for every
   preset; `applyPrivacy` cleared only the TIFF Artist/HostComputer. Fix: the filtered `MetadataSet` carries its
@@ -279,7 +279,7 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   creator) → 3 failures, restored (no MUTATION markers). Core suite 173/173. Self-test: 2 FK-004 checks on a copy of
   the scan carrying identity (preview lists identity only when kept; TIFF/PNG/JPEG exports carry none).
 
-### 20:10–21:00 — PR #11 green, U010
+### 17:40–17:55 — PR #11 green, U010
 - PR #11 (U009) all checks green. PRs #9, #10, #11 wait for the owner's merge, in order.
 - U010 (branch `unit/U010-export-plan`), UX-02 export part + FK-010. Root cause FK-010: the app computed
   "bit-identical" as `crop && format != jpg`, ignoring the output depth, and set `allowDepthReduction = true` for every
@@ -291,3 +291,40 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
 - Tests: core `ExportPlan.*` ×3 — matrix of 96 combinations (first run read DNG back with the image reader, which
   does not decode Linear DNG [failed] — now libtiff tags), consent, round area per format; core suite 176 pass.
   Self-test (fixture): default straightening labelled (2.81°, Lanczos-3); FK-010 known issue → 2 checks; all pass.
+
+### 17:55–19:30 — PR #12 green, U011
+- PR #12 (U010): all checks green incl. test packages. PRs #9–#12 wait for the owner's merge, in order.
+- Correction: the headers of the six entries before this one (now 16:15…17:55) had been estimated instead of read
+  from the clock and ran to 21:00, past the actual time; corrected from the commit times (`git log`) and the PRs'
+  `merged_at`. Contents unchanged.
+- U011 (branch `unit/U011-auto-count`), UX-01. Root cause: the expected count was compared only during detection
+  (`detect.cpp`), and the left-rail number edited the global default, never the scan, so a corrected count left the
+  stored warning; with no automatic mode every single-print scan was compared with the default 4.
+- Core: `DetectParams.expectedCount = 0` = automatic; `ScanRecord.autoCount` + kept manual `expectedCount`,
+  `ProjectSettings.autoCount` (default on; scans of older projects stay manual); `updateCountWarning` re-derives
+  `count_mismatch` without detecting. Hints kept when automatic: `no_prints_found`, `too_many_candidates`, new
+  `possible_missed: N`. Design measured on the corpus (`fkcli eval`, 24 scans, 3 with missed low-visibility prints):
+  leftover mask components of 25–60 % of the smallest image area catch 1 of 3; a 1 mm grid of faint differences
+  first compared with the detection's background model, which also fits the faint prints (synthetic test: ΔE
+  1.1–1.4 < 1.5, not found [failed]) → background fitted to the 5 mm border band only: 3 of 3 flagged; the first
+  version without a shape test flagged an uneven background on a complete scan (fill 0.57) → fill ≥ 0.7: 0 false.
+  Owner's 4 real scans (`fkcli detect`, automatic): no `possible_missed`. `eval --enforce` gains both gates.
+- App: left-rail "Count prints automatically" + number (greyed, "Prints found", while automatic), Settings default,
+  `setScanCount`, notifications and warning texts (zh_CN). Settings read back from INI keep the default's type.
+  New project now clears the canvas (seen in a self-test snapshot: the previous project's scan stayed visible).
+- Self-test: UX-01 known issue → 17 checks with mouse clicks on the switch and −/+. First attempt sent QMouseEvent to
+  the window: the CheckBox was pressed but never toggled [failed]; then a modal "project damaged" dialog left open by
+  the data-protection phase took the input [failed] → clicks injected the way Qt Test does (`qt_handleMouseEvent`,
+  exported by Qt GUI), all dialogs closed first. Owner's polaroid_92 (first run): 2 FK-008 checks failed — the U008
+  check counted every recovery snapshot, and on a slow scan the 3 s timer had also saved earlier phases' projects
+  (test flaw, app correct) → the checks follow this project's snapshot only; the blank scan derived from a
+  single-print scan was card-sized and correctly detected as one print → blank scans are A4.
+- Owner's img20260702_0005 (untagged 800 dpi 4-up, first run with the U006 checks on this scan): 2 FK-003 checks
+  failed — exporting with "convert to Adobe RGB" is (correctly) refused for an untagged scan, so the check had no
+  export to relink. Precondition missing, behaviour correct → the self-test records such checks as `skipped` with
+  the reason (never as passed; `check-report.py` lists them); FK-003 stays covered on tagged scans (fixture,
+  polaroid_92).
+- Tests: core suite 184/184 (`CountSetting.*` ×4, `Detection.*` +4); mutations — no-op `updateCountWarning` → 2
+  failures; count compared when automatic + no `possible_missed` → 3 failures; restored (no MUTATION markers).
+  Self-test: fixture 92 pass; owner's polaroid_92 90 pass; img20260702_0005 86 pass + 4 skipped (FK-003, untagged).
+  Scenario `count`: C1 automatic, no warning (3 prints); C2 manual 4 → "found 3, expected 4"; C3 manual 3 → none.

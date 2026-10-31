@@ -9,13 +9,14 @@ All files: UTF-8 JSON, LF, 2-space indent, keys in lower camelCase. Unknown keys
   "schema": "fk.project/1",
   "projectId": "uuid", "name": "Summer 2026", "createdAt": "ISO-8601", "modifiedAt": "ISO-8601",
   "app": {"name": "FrameKeeper", "version": "0.5.0"},
-  "settings": {"expectedCount": 4, "safetyMarginPx": 1.0, "exportDefaults": {}, "colorPolicy": "keep"},
+  "settings": {"expectedCount": 4, "autoCount": true, "safetyMarginPx": 1.0, "exportDefaults": {},
+               "colorPolicy": "keep"},
   "scans": [{
     "scanId": "uuid", "path": "/abs/path/scan01.tif", "relPath": "../scans/scan01.tif",
     "fingerprint": {"size": 0, "mtime": "ISO-8601", "quickSha256": "hex", "fullSha256": null},
     "info": {"width": 0, "height": 0, "channels": 3, "bits": 16, "compression": "lzw",
              "dpiX": 1600, "dpiY": 1600, "iccDescription": "…", "iccSha256": "hex"},
-    "detection": {"at": "ISO-8601", "params": {}, "warnings": [], "proxyScale": 7.0},
+    "detection": {"at": "ISO-8601", "expectedCount": 4, "autoCount": true, "warnings": [], "proxyScale": 7.0},
     "items": [{
       "itemId": "uuid", "index": 1, "label": "P01", "filmType": "polaroid_600",
       "outer": {"kind": "quad", "points": [[x,y],[x,y],[x,y],[x,y]], "source": "auto", "cornerRadiusPx": 0},
@@ -64,6 +65,12 @@ Manual alignments (since 0.6.0-alpha.4, RFC-0006 §New alignment): a record with
 places a graded file on a print that has no export in this project. It has no `exportedAt`; `file` is the graded
 file; its geometry is the print's current Inner (pixel crop or straightened); `version` is the print's next version
 and a matching `edits[]` entry has an empty `path`. `origin` is absent on export records (absent = export).
+`detection.autoCount` and `settings.autoCount` (since 0.7.0-alpha.1, UX-01, RFC-0004 §Print count): the scan is
+counted automatically (no count warning); `detection.expectedCount` is the manual count, kept while automatic.
+`settings.autoCount`/`expectedCount` are the defaults for scans added to the project. Absent in older projects:
+their scans keep the manual count they were detected with (`autoCount` false); the project default for new scans
+is automatic. Earlier versions ignore both keys (and drop them on save): they show the stored warnings and use
+`expectedCount` when detecting again.
 Save: write `name.fkproj.tmp-<rand>` → flush+fsync → rename over `name.fkproj`; previous file copied to
 `name.fkproj.bak` first. Load failure → offer `.bak`.
 

@@ -185,12 +185,32 @@ Rectangle {
                 Section {
                     title: qsTr("Detection")
                     note: App.currentScan.dpiUsed > 0 ? qsTr("%1 dpi").arg(Math.round(App.currentScan.dpiUsed)) : ""
+                    // UX-01: the current scan's count (or, without a scan, the default for new scans).
+                    // Automatic: the number is greyed out and shows the prints found; the manual value is kept.
+                    FkCheck {
+                        id: autoCountCheck
+                        objectName: "autoCountCheck"
+                        readonly property bool hasScan: App.currentScanId.length > 0
+                        text: qsTr("Count prints automatically")
+                        checked: hasScan ? App.currentScan.autoCount === true : App.settings.autoCount === true
+                        onToggled: {
+                            if (hasScan) App.setScanCount(App.currentScanId, checked, App.currentScan.expectedCount)
+                            else App.setSetting("autoCount", checked)
+                        }
+                    }
                     FieldRow {
-                        label: qsTr("Prints per scan")
+                        label: autoCountCheck.checked && autoCountCheck.hasScan ? qsTr("Prints found") : qsTr("Prints per scan")
                         FkSpin {
-                            from: 1; to: 12
-                            value: App.settings.expectedCount
-                            onValueModified: App.setSetting("expectedCount", value)
+                            id: countSpin
+                            objectName: "countSpin"
+                            enabled: !autoCountCheck.checked
+                            from: autoCountCheck.checked ? 0 : 1; to: 12
+                            value: autoCountCheck.checked && autoCountCheck.hasScan ? (App.currentScan.itemCount || 0)
+                                 : autoCountCheck.hasScan ? App.currentScan.expectedCount : App.settings.expectedCount
+                            onValueModified: {
+                                if (autoCountCheck.hasScan) App.setScanCount(App.currentScanId, false, value)
+                                else App.setSetting("expectedCount", value)
+                            }
                         }
                     }
                     FieldRow {

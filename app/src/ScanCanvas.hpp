@@ -30,6 +30,7 @@ class ScanCanvas : public QQuickPaintedItem {
     Q_PROPERTY(bool atFit READ atFit NOTIFY viewChanged)
     Q_PROPERTY(QString badge READ badge NOTIFY badgeChanged)
     Q_PROPERTY(QString status READ status NOTIFY badgeChanged)
+    Q_PROPERTY(bool hasImage READ hasImage NOTIFY badgeChanged) ///< a scan is shown
     Q_PROPERTY(bool spaceHeld READ spaceHeld WRITE setSpaceHeld NOTIFY toolChanged)
     Q_PROPERTY(QRectF navigatorView READ navigatorView NOTIFY viewChanged)
     Q_PROPERTY(QColor surroundColor READ surroundColor WRITE setSurroundColor NOTIFY appChanged)
@@ -54,6 +55,7 @@ class ScanCanvas : public QQuickPaintedItem {
     double zoomPercent() const;
     bool atFit() const { return atFit_; }
     QString badge() const { return badge_; }
+    bool hasImage() const { return !pyramid_.empty(); }
     QString status() const { return status_; }
     bool spaceHeld() const { return space_; }
     void setSpaceHeld(bool v);

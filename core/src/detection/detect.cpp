@@ -103,6 +103,14 @@ Background modelBackground(const LabImage& lab) {
     return bg;
 }
 
+/// Objects of at least this fraction of the smallest image area (Instax Mini, 46 × 62 mm) that are not
+/// prints are reported as possible missed prints (UX-01): dust, scratches and labels are much smaller.
+constexpr double kPossibleMissFraction = 0.25;
+/// Mean colour difference (ΔE, 1 mm cells) above which a print-sized area is a faint object, and how much
+/// of its bounding rectangle it must fill (cards and image areas fill ≥ 0.8; background unevenness ≤ 0.6).
+constexpr double kFaintDeltaE = 1.5;
+constexpr double kFaintRectangularity = 0.7;
+
 struct Candidate {
     cv::RotRect rect; ///< proxy coordinates
     double rectangularity = 0;
@@ -116,6 +124,101 @@ struct Candidate {
     Shape innerLocal{}; ///< in rect-local coords (proxy px)
     std::vector<std::string> reasons;
 };
+
+bool insideRect(const cv::RotRect& r, Vec2 p) {
+    const Vec2 d = p - r.c;
+    const double s = d.x * std::cos(r.angle) + d.y * std::sin(r.angle);
+    const double t = -d.x * std::sin(r.angle) + d.y * std::cos(r.angle);
+    return std::abs(s) <= r.w / 2 && std::abs(t) <= r.h / 2;
+}
+
+/// UX-01: print-sized objects that differ from the background only faintly (a black frame and a dark picture
+/// on a black background) stay below the detection threshold. They are counted on a 1 mm grid, where scanner
+/// noise averages out, against a background surface fitted to the scan's border only (the detection's
+/// background model also fits faint objects, which hides them). Only compact, card-like areas count: an
+/// uneven background is irregular.
+int countFaintObjects(const LabImage& lab, double mmpp, double minAreaPx,
+                      const std::vector<Candidate>& cands) {
+    const int64_t cell = std::max<int64_t>(1, std::lround(1.0 / mmpp));
+    const int64_t gw = lab.w / cell, gh = lab.h / cell;
+    if (gw < 16 || gh < 16) return 0;
+    std::vector<std::array<float, 3>> mean(static_cast<size_t>(gw * gh));
+    std::vector<uint8_t> covered(mean.size(), 0);
+    const double n = static_cast<double>(cell * cell);
+    for (int64_t gy = 0; gy < gh; ++gy)
+        for (int64_t gx = 0; gx < gw; ++gx) {
+            const Vec2 c{(gx + 0.5) * cell, (gy + 0.5) * cell};
+            const size_t i = static_cast<size_t>(gy * gw + gx);
+            covered[i] = std::any_of(cands.begin(), cands.end(),
+                                     [&](const Candidate& k) { return insideRect(k.rect, c); });
+            double sum[3] = {0, 0, 0};
+            for (int64_t y = gy * cell; y < (gy + 1) * cell; ++y)
+                for (int64_t x = gx * cell; x < (gx + 1) * cell; ++x) {
+                    const float* p = lab.at(x, y);
+                    for (int k = 0; k < 3; ++k)
+                        sum[k] += p[k];
+                }
+            for (int k = 0; k < 3; ++k)
+                mean[i][k] = static_cast<float>(sum[k] / n);
+        }
+    // background surface from the border cells (5 mm band), refitted once without outliers
+    const int64_t band = 5;
+    auto uv = [&](int64_t gx, int64_t gy) {
+        return std::pair<double, double>{2.0 * (gx + 0.5) / gw - 1.0, 2.0 * (gy + 0.5) / gh - 1.0};
+    };
+    std::array<std::array<double, 6>, 3> poly{};
+    auto residual = [&](int64_t gx, int64_t gy) {
+        const auto [u, v] = uv(gx, gy);
+        const auto& m = mean[static_cast<size_t>(gy * gw + gx)];
+        double d2 = 0;
+        for (int k = 0; k < 3; ++k) {
+            const double d = m[k] - cv::evalPoly2(poly[k], u, v);
+            d2 += d * d;
+        }
+        return std::sqrt(d2);
+    };
+    double sigma = 0;
+    for (int iter = 0; iter < 2; ++iter) {
+        std::array<std::vector<std::array<double, 3>>, 3> samples;
+        std::vector<double> res;
+        for (int64_t gy = 0; gy < gh; ++gy)
+            for (int64_t gx = 0; gx < gw; ++gx) {
+                if (gx >= band && gy >= band && gx < gw - band && gy < gh - band) continue;
+                if (covered[static_cast<size_t>(gy * gw + gx)]) continue;
+                if (iter > 0 && residual(gx, gy) > std::max(3.0 * sigma, 1.0)) continue;
+                const auto [u, v] = uv(gx, gy);
+                const auto& m = mean[static_cast<size_t>(gy * gw + gx)];
+                for (int k = 0; k < 3; ++k)
+                    samples[k].push_back({u, v, m[k]});
+            }
+        if (samples[0].size() < 50) return 0;
+        for (int k = 0; k < 3; ++k)
+            poly[k] = cv::fitPoly2(samples[k]);
+        for (int64_t gy = 0; gy < gh; ++gy)
+            for (int64_t gx = 0; gx < gw; ++gx)
+                if (!(gx >= band && gy >= band && gx < gw - band && gy < gh - band) &&
+                    !covered[static_cast<size_t>(gy * gw + gx)])
+                    res.push_back(residual(gx, gy));
+        sigma = cv::madSigma(res, cv::median(res)) + cv::median(res);
+    }
+    const double thr = std::max(kFaintDeltaE, 4.0 * sigma);
+    cv::Mask m(gw, gh);
+    for (int64_t gy = 0; gy < gh; ++gy)
+        for (int64_t gx = 0; gx < gw; ++gx)
+            m.at(gx, gy) = !covered[static_cast<size_t>(gy * gw + gx)] && residual(gx, gy) > thr ? 1 : 0;
+    cv::openMask(m, 2); // dust, scratches and handwriting are thinner than 5 mm
+    cv::closeMask(m, 2);
+    std::vector<int32_t> labels;
+    const auto comps = cv::connectedComponents(m, labels);
+    const double minCells = minAreaPx / static_cast<double>(cell * cell);
+    int found = 0;
+    for (const auto& c : comps) {
+        if (static_cast<double>(c.area) < minCells) continue;
+        const cv::RotRect r = cv::minAreaRect(cv::convexHull(c.boundaryCorners));
+        if (static_cast<double>(c.area) >= kFaintRectangularity * r.area()) ++found;
+    }
+    return found;
+}
 
 // rect-local (s,t) → proxy coords
 Vec2 localToProxy(const cv::RotRect& r, double s, double t) {
@@ -901,6 +1004,7 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
     if (proxy.width < 16 || proxy.height < 16) return makeError(Errc::invalid_argument, "Scan is too small");
 
     std::vector<Candidate> cands;
+    std::vector<cv::Component> leftovers; // see kPossibleMissFraction
     cv::Mask finalMask(0, 0);
     if (params.tmpl) {
         for (const auto& slot : params.tmpl->slots) {
@@ -1001,8 +1105,14 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
             maxCardLongMm = std::max(maxCardLongMm, std::max(t.widthMm, t.heightMm));
             minCardShortMm = std::min(minCardShortMm, std::min(t.widthMm, t.heightMm));
         }
+        // UX-01 (automatic count): objects too large for dust but too small for a print may be prints whose
+        // frame matches the background; they are counted once the candidates are final.
+        const double missArea = kPossibleMissFraction * minCard / (mmpp * mmpp);
         for (auto& comp : comps) {
-            if (comp.area < minArea) continue;
+            if (comp.area < minArea) {
+                if (comp.area >= missArea) leftovers.push_back(comp);
+                continue;
+            }
             const auto hull = cv::convexHull(comp.boundaryCorners);
             cv::RotRect r = cv::minAreaRect(hull);
             Candidate c;
@@ -1073,6 +1183,15 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
             res.warnings.push_back("too_many_candidates");
             cands.resize(params.maxCount);
         }
+        // UX-01: objects that may be prints the detection left out (shown also when counting automatically)
+        int missed = countFaintObjects(lab, mmpp, minArea, cands);
+        for (const auto& comp : leftovers) {
+            const Vec2 p{(comp.x0 + comp.x1) / 2.0, (comp.y0 + comp.y1) / 2.0};
+            if (std::none_of(cands.begin(), cands.end(),
+                             [&](const Candidate& c) { return insideRect(c.rect, p); }))
+                ++missed;
+        }
+        if (missed > 0) res.warnings.push_back("possible_missed: " + std::to_string(missed));
         // Inner detection, film type and orientation per candidate.
         for (auto& c : cands) {
             // expand by one proxy pixel: partially covered edge pixels may have been below the threshold
@@ -1209,12 +1328,13 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
         it.confidence = std::min(it.outerConfidence, it.innerConfidence);
     }
     orderReading(res.items);
-    if (static_cast<int>(res.items.size()) != params.expectedCount) {
+    if (params.expectedCount > 0 && static_cast<int>(res.items.size()) != params.expectedCount) {
         res.warnings.push_back("count_mismatch: found " + std::to_string(res.items.size()) + ", expected " +
                                std::to_string(params.expectedCount));
         for (auto& it : res.items)
             it.reasons.push_back("count_mismatch");
     }
+    if (res.items.empty()) res.warnings.push_back("no_prints_found");
     report(progress, 1.0, "detect");
     return res;
 }

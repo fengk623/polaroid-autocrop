@@ -17,6 +17,9 @@ Status: Accepted · Module: `app/` · PRD F04, F15 · Contract: `CONTRACT-ui-cor
 - Platform layer `platform/{macos,windows}`: display ICC, memory-pressure notifications, file reveal, menu flavour.
 - Self-test mode `FrameKeeper --self-test <dir>`: offscreen QPA + software backend, loads a generated fixture,
   runs detect/export/composite through the UI controllers, captures window snapshots, writes a JSON report.
+  Interaction checks click controls with real input events (injected through Qt GUI as Qt Test does, since
+  0.7.0-alpha.1). A check whose precondition the scan lacks (e.g. a colour conversion on an untagged scan) is
+  recorded as `"skipped": true` with the reason, never as passed; `tools/release/check-report.py` lists them.
 
 ## Implementation notes (v0.5.0)
 

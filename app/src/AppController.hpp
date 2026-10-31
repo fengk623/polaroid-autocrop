@@ -100,6 +100,9 @@ class AppController : public QObject {
     Q_INVOKABLE void removeScan(const QString& scanId);
     Q_INVOKABLE void detectScan(const QString& scanId, const QString& templateName = {});
     Q_INVOKABLE void detectSelectedScans(const QString& templateName = {});
+    /// UX-01: the scan's count — automatic (no count warning) or the expected number of prints (1–12, kept
+    /// while automatic). Updates the count warning at once; does not detect again.
+    Q_INVOKABLE void setScanCount(const QString& scanId, bool autoCount, int expectedCount);
     Q_INVOKABLE void relocateMissing(const QVariant& folderUrl);
 
     // ---- selection ----

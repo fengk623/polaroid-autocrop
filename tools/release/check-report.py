@@ -17,8 +17,13 @@ def main() -> int:
     if not r.get("ok"):
         problems.append("self-test did not pass")
     known = [k for k in r.get("knownIssues", []) if k.get("status") == "reproduced"]
+    checks = r.get("checks", [])
+    skipped = [c for c in checks if c.get("skipped")]
     print(f"{path}: version {r.get('version')}, commit {r.get('commit')}, build {r.get('build')}, "
-          f"{len(r.get('checks', []))} checks, {len(known)} known issues reproduced")
+          f"{len(checks) - len(skipped)} checks, {len(skipped)} skipped (precondition not met), "
+          f"{len(known)} known issues reproduced")
+    for c in skipped:
+        print(f"  skipped: {c.get('name')} - {c.get('detail')}")
     for p in problems:
         print(f"::error::{p}")
     return 1 if problems else 0

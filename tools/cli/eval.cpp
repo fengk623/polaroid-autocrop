@@ -135,7 +135,8 @@ int cmdEval(const std::vector<std::string>& argv) {
     constexpr double kVisibleDeltaE = 4.0;
     int prints = 0, visiblePrints = 0, cutsDetected = 0, missedVisible = 0, missedLowVis = 0, typeOk = 0,
         uprightOk = 0, bad = 0, badFlagged = 0, falseLow = 0, visibleScans = 0, visibleScansCountOk = 0,
-        countOk = 0, lowVisDetected = 0, lowVisFlagged = 0;
+        countOk = 0, lowVisDetected = 0, lowVisFlagged = 0, missedScans = 0, missedScansFlagged = 0,
+        falsePossibleMissed = 0;
     double maxCut = 0;
     std::vector<double> slacks, innerErrs, seconds;
     json perScan = json::array();
@@ -176,6 +177,7 @@ int cmdEval(const std::vector<std::string>& argv) {
                 {"seconds", secs},
                 {"warnings", det->warnings}};
         json pj = json::array();
+        int scanMissed = 0;
         std::vector<bool> used(det->items.size(), false);
         for (const auto& g : gt) {
             ++prints;
@@ -201,6 +203,7 @@ int cmdEval(const std::vector<std::string>& argv) {
             if (best >= 0 && bd > 0.25 * size && fk::signedDistance(det->items[best].outer, gc) < 0)
                 best = -1;
             if (best < 0) {
+                ++scanMissed;
                 if (visible)
                     ++missedVisible;
                 else
@@ -272,6 +275,17 @@ int cmdEval(const std::vector<std::string>& argv) {
         }
         sj["prints"] = pj;
         perScan.push_back(sj);
+        // UX-01: with the count automatic, a scan with missed prints must still say so; a complete scan not
+        const bool autoFlag =
+            std::any_of(det->warnings.begin(), det->warnings.end(), [](const std::string& w) {
+                return w.rfind("possible_missed", 0) == 0 || w == "no_prints_found";
+            });
+        if (scanMissed > 0) {
+            ++missedScans;
+            if (autoFlag) ++missedScansFlagged;
+        } else if (autoFlag) {
+            ++falsePossibleMissed;
+        }
         if (!overlays.empty()) {
             std::vector<std::vector<fk::Vec2>> gtb;
             for (auto& g : gt)
@@ -310,6 +324,9 @@ int cmdEval(const std::vector<std::string>& argv) {
         {"bad_prints", bad},
         {"low_confidence_recall", bad ? static_cast<double>(badFlagged) / bad : 1.0},
         {"false_low_confidence", falseLow},
+        {"missed_scans", missedScans},
+        {"missed_scans_flagged_automatic", missedScansFlagged},
+        {"false_possible_missed", falsePossibleMissed},
         {"seconds_median", pct(seconds, 0.5)}};
     std::cout << summary.dump(2) << std::endl;
     if (a.has("json")) {
@@ -323,6 +340,8 @@ int cmdEval(const std::vector<std::string>& argv) {
             if (!ok) failed.push_back(what);
         };
         need(cutsDetected == 0, "cuts_on_detected == 0");
+        need(missedScansFlagged == missedScans, "scans with missed prints flagged without a count (UX-01)");
+        need(falsePossibleMissed == 0, "false_possible_missed == 0");
         need(missedVisible == 0, "missed_visible == 0");
         need(lowVisFlagged == lowVisDetected || bad == badFlagged, "low-visibility detections flagged");
         need(summary["outer_slack_median_px"].get<double>() <= 3.0, "outer slack median <= 3");

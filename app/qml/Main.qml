@@ -71,10 +71,18 @@ ApplicationWindow {
                       "instax_mini": qsTr("Instax Mini"), "instax_square": qsTr("Instax Square"), "instax_wide": qsTr("Instax Wide") })[id] || qsTr("Unknown size")
         }
         function warningText(w) {
-            if (w.indexOf("count_mismatch") === 0) return qsTr("Print count differs from the expected number.")
+            if (w.indexOf("count_mismatch") === 0) {
+                const m = /found (\d+), expected (\d+)/.exec(w)
+                return m ? qsTr("Found %1 prints, %2 expected.").arg(m[1]).arg(m[2])
+                         : qsTr("Print count differs from the expected number.")
+            }
+            if (w.indexOf("possible_missed") === 0)
+                return qsTr("%1 more objects may be prints that were not found. Check the scan; a template or a contrasting background helps.").arg(w.split(": ")[1] || "")
+            if (w === "no_prints_found")
+                return qsTr("No prints found. If the scan has prints, their frames may match the background: use a template or scan on a contrasting background.")
             if (w.indexOf("dpi_rescaled") === 0) return qsTr("Scanner output was scaled; resolution measured from the prints (%1).").arg(w.split(": ")[1] || "")
             if (w === "dpi_unknown") return qsTr("The scan has no resolution; sizes are estimated.")
-            if (w === "too_many_candidates") return qsTr("More objects than the maximum of 12 prints.")
+            if (w === "too_many_candidates") return qsTr("More than 12 objects were found; only the 12 largest are kept as prints.")
             return w
         }
         function statusText(c) {
@@ -395,6 +403,9 @@ ApplicationWindow {
         if (snaps.length) recoveryDialog.show(snaps)
     }
     function showSettings() { settingsDialog.open() }
-    function closeDialogs() { relinkDialog.close(); exportDialog.close(); finalDialog.close() }
+    function closeDialogs() {
+        relinkDialog.close(); exportDialog.close(); finalDialog.close(); settingsDialog.close(); aboutDialog.close()
+        nameDialog.close(); redetectConfirm.close(); replaceConfirm.close(); backupDialog.close(); recoveryDialog.close()
+    }
     function showAbout() { aboutDialog.open() }
 }
