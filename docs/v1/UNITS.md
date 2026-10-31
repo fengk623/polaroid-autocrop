@@ -241,6 +241,7 @@
 - 顺序：不依赖图库，在 U024 之后完成，版本号 v0.7.0-alpha.14（原计划 v0.9.0-beta.2）。
 - 发现（`tools/check-claims.py` 首次运行 89 处）：PRD/RFC/测试计划/验收矩阵引用了从未存在的测试与目录（`test_dng`、`test_roundtrip`、`test_export_*`、`test_templates`、`test_jobs`、`test_batch`、`test_cache`、`test_diagnostics`、`test_source_untouched`、`tests/app/*`、`tests/contract/`、`tests/core/test_c_abi.c`、`tests/data/` 等）；ARCHITECTURE 仍写“Qt 应用未实现”；API 规格声明了不存在的 C ABI（`fk/fk_c.h`）、`DiskCache`、`JobQueue`、`Capabilities`，ADR-0007 与移动端文档称有 `core-mobile-lite` CI 作业（不存在）；API 规格中 7 个签名与头文件不符（`openTiff`、`findMatch`、`checkEdited`、`makeTemplate`、`fingerprint`、`boundingRect`、`nextFreeVersionPath`）。
 - 实现：`tools/check-claims.py`（CI 文档任务）——规范文档中反引号里的测试程序、测试、自检章节、场景、文件路径与 CI 作业必须存在，API 规格声明的名称必须在 core 中存在；未实现的内容必须在同一行注明 planned / 未实现 等。`tests/core/test_api_contract.cpp`——API 规格列出的枚举值、常量与函数签名在编译时检查，稳定名称运行时检查。逐条改正文档：引用改为真实测试，未实现的标注“未构建（计划）”；ARCHITECTURE 实现状态重写；API 规格改为与头文件一致并标出计划部分；验收矩阵每行绑定真实测试与诚实状态；移动端只保留方向，未构建前不称已验证。测试报告：CTest 报告分开 通过/失败/跳过/未启动/阻塞（未启动与未登记的跳过都使报告失败，不计通过）；应用自检结尾输出 通过/失败/跳过/已知问题/不适用 计数，并写入 report.json。
+- 补充（提交 PR 前，U028 工作中发现）：`测试程序.名称` 形式的引用第一版只核对了测试程序，PRD F06/F07/F11/F12/F13 另有 14 个不存在的测试（如 `test_project.RoundTrip`）→ 检查收紧，14 处改为真实测试或标注计划；`ApiContract.StableNames` 首次运行失败——测试把 MinIsWhite 的稳定名称写错（应为 `miniswhite`），已改正。
 - 测试：在文档中插入 7 种虚构引用（测试、测试组、测试程序、文件、自检章节、场景、CI 作业），检查全部发现；`tools/test_report.py` 用含失败/跳过/未启动的 JUnit 样例验证分类与退出码。
 - 分支 `unit/U027-contracts`（基于 U024）· PR #27 · 不单独发布。
 ### U028 版本冻结与可追溯发行包（FK-014）

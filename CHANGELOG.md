@@ -10,7 +10,8 @@ All notable changes. Versions follow `VERSION`; release notes with measurements 
   never existed (`test_dng`, `test_roundtrip`, `test_export_*`, `test_templates`, `test_jobs`, `tests/app/*`, …), a
   C ABI, disk cache, job queue, capability profiles and a `core-mobile-lite` CI job that were never built, an
   architecture page saying the Qt app did not exist, seven API signatures that differed from the headers. All
-  corrected or marked planned; the acceptance matrix now names real tests with honest status.
+  corrected or marked planned; the acceptance matrix now names real tests with honest status. A second pass
+  (references written as `test_program.Name`) found 14 more in PRDs F06/F07/F11/F12/F13.
 - `tests/core/test_api_contract.cpp`: the spec's enum values, constants and function signatures are checked at
   compile time, stable names at run time.
 - Test reports: CTest outcomes passed / failed / skipped / not started / blocked (not started and unlisted skips

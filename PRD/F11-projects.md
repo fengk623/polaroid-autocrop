@@ -14,8 +14,9 @@ RFC: `rfc/0009-project.md`, ADR-0005, `docs/project-format.md` · Tests: `tests/
 - Project panel shows: project file size, cache size, size of referenced external files, estimated packaged size.
 
 ## Acceptance
-- A1 Save/load round trip is lossless for every field. (`test_project.RoundTrip`)
-- A2 Simulated write failure leaves the previous project intact. (`test_project.WriteFailure`)
-- A3 Migration tests for every schema version. (`test_project.Migration`)
-- A4 Future version opens read-only. (`test_project.FutureVersion`)
-- A5 Project file for a 4-print scan stays < 200 KB. (`test_project.Size`)
+- A1 Save/load round trip is lossless for every field. (`Project.SaveLoadRoundTripIsLossless`)
+- A2 Simulated write failure leaves the previous project intact. (`Project.WriteFailureLeavesNothingAndReportsError`, `DataProtection.AnInterruptedSaveLeavesTheProjectIntact`)
+- A3 Migration tests for every schema version. (Only `fk.project/1` exists, so there is no migration step; a test
+  with files written by earlier releases is not built yet — planned, U028.)
+- A4 A newer schema opens read-only. (`Project.NewerSchemaOpensReadOnly`)
+- A5 Project file for a 4-print scan stays < 200 KB. (Not tested yet — a size test is planned.)

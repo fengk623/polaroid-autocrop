@@ -16,10 +16,10 @@ RFC: `rfc/0012-color.md`, ADR-0003, `docs/color-pipeline.md` · Tests: `tests/co
   window moves to another screen, screens change, or the monitor's ICC changes (FK-011, U025).
 
 ## Acceptance
-- A1 Known Lab/RGB values convert correctly between sRGB, Adobe RGB, ProPhoto and a scanner-style profile (ΔE00 < 0.5). (`test_color.KnownValues`)
-- A2 Assign vs convert produce the documented different results. (`test_color.AssignVsConvert`)
-- A3 16-bit path keeps 16-bit precision (no 8-bit intermediate). (`test_color.Precision16`)
-- A4 Composite with a graded file in another space leaves frame pixels unchanged. (`test_composite.ForeignIcc`)
+- A1 Known Lab/RGB values convert correctly between sRGB, Adobe RGB, ProPhoto and a scanner-style profile (ΔE00 < 0.5). (`Color.KnownValuesSrgbToAdobe`, `Color.SrgbToLabWhiteAndBlack`; ProPhoto and a scanner-style profile: not tested yet, planned)
+- A2 Assign vs convert produce the documented different results. (`Export.IccPoliciesKeepAssignConvertUntagged`)
+- A3 16-bit path keeps 16-bit precision (no 8-bit intermediate). (`Color.IdentityTransformIsExactAt16Bit`, `Color.Sixteen_bit_precision_survives_roundtrip_conversion`)
+- A4 Composite with a graded file in another space leaves frame pixels unchanged. (`GradedProfile.*` for how the graded file is read; frame pixels: `Composite.GradedPixelsOnlyInsideTheImageArea` with a graded file in the scan's space — a composite test with a graded file in another space is not built yet, planned)
 - A5 (FK-011) MinIsWhite 8/16-bit: Preview and Full show the same brightness. (scenario `miniswhite`, CI)
 - A6 (FK-011) Another display profile: the proxy is converted again exactly, Preview and Full agree, the 100 %
   patch and the composite preview are made again, thumbnails follow, a result made for the previous profile is

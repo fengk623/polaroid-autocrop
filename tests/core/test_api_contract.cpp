@@ -162,7 +162,7 @@ TEST(ApiContract, StableNames) {
     EXPECT_STREQ(fk::exportTargetName(fk::ExportTarget::image_area), "image_area");
     EXPECT_STREQ(fk::privacyPresetName(fk::PrivacyPreset::remove_identity), "remove_identity");
     EXPECT_STREQ(fk::fileFormatName(fk::FileFormat::dng), "dng");
-    EXPECT_STREQ(fk::photometricName(fk::Photometric::min_is_white), "min_is_white");
+    EXPECT_STREQ(fk::photometricName(fk::Photometric::min_is_white), "miniswhite");
     EXPECT_STREQ(fk::compressionName(fk::Compression::deflate), "deflate");
 }
 

@@ -38,12 +38,13 @@ TICK = re.compile(r"`([^`\n]+)`")
 
 
 def collect_tests():
-    programs, suites, cases = set(), set(), set()
+    programs, suites, cases = {}, set(), set()
     for f in (ROOT / "tests").rglob("*.cpp"):
-        programs.add(f.stem)
+        names = programs.setdefault(f.stem, set())
         for m in re.finditer(r"\bTEST(?:_F|_P)?\(\s*(\w+)\s*,\s*(\w+)\s*\)", f.read_text(encoding="utf-8")):
             suites.add(m.group(1))
             cases.add(f"{m.group(1)}.{m.group(2)}")
+            names |= {m.group(1), m.group(2)}
     selftest = set()
     for f in (ROOT / "app" / "src").glob("SelfTest.*"):
         selftest |= set(re.findall(r"\b((?:run|scenario)[A-Z]\w*)\s*\(", f.read_text(encoding="utf-8")))
@@ -77,9 +78,13 @@ def check_references(problems):
                     if ref.removesuffix(".cpp") not in programs:
                         why = "no such test program"
                 elif re.fullmatch(r"(?:test|tst)_\w+\.\w+", ref):
+                    # `test_project.RoundTrip`: the program, and a suite or test of that name in it (the first
+                    # version checked only the program, and PRD F11 named four tests that never existed)
                     program, case = ref.split(".", 1)
                     if program not in programs:
                         why = "no such test program"
+                    elif case not in programs[program]:
+                        why = f"no suite or test {case} in {program}"
                 elif m := re.fullmatch(r"([A-Z]\w+)\.(\*|[A-Z]\w*)", ref):
                     suite, case = m.groups()
                     # only suites that look like gtest suites (a known one, or a CamelCase.CamelCase pair)
