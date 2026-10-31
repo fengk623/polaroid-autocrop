@@ -449,3 +449,36 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   recorded as skipped); img20260702_0005 151 pass + 4 FK-003 skips. UX-08: 11 / 9 / 11 pass.
 - Not verified: 100 % / 200 % visual review by the owner (review sheets from `maskeval --crops` stay local); no 1600
   dpi or round real samples; GT is a draft.
+
+### 00:15–01:25 — PR #17 opened and green, U016
+- U015 committed (35beda9), PR #17 opened; all checks green, including the packaged self-test on Windows and macOS.
+  Not merged yet at the time of writing; U016 is stacked on it.
+- U016 (branch `unit/U016-scrub-fields`, stacked on U015), UX-09.
+  - Scope: `NumField.scrubbable`, used only by the mask width (feather / inset). UX-09 asks for a consistency review
+    before the behaviour spreads to other value controls, so the other fields keep their current behaviour.
+  - Field: a press does nothing until the pointer moves 4 logical px (a click is never a drag, no text selection);
+    then 2 logical px per step, Shift ×10, Alt ×0.1, clamped to the range; the value shows live and is reported at
+    most every 100 ms. Release commits; Esc (or losing the grab / focus) cancels and restores. Double-click (or Enter
+    with the focus) opens keyboard input with a validator: Enter or focus loss commits, Esc cancels.
+  - Undo: `beginMaskEdit` records the mask at the start, `setItemMaskWidthLive` changes it without an undo step,
+    `endMaskEdit(commit)` pushes one step holding the start state, or restores it on cancel.
+  - Preview jobs: the first self-test of a 0.6 s drag showed up to 4 composite previews running at once [backlog] →
+    one preview per print in flight; a new request cancels it and is remembered; when the cancelled job stops the
+    preview is recomputed from the current state. The re-request was first queued as an event and raced with the
+    test's wait for idle → started directly from the job's completion callback.
+  - HiDPI: the run with `QT_SCALE_FACTOR=2` showed the badge "Preview" at 100 %: the canvas compared the logical
+    zoom with the proxy scale, so on a 2× display the full-resolution patch was never requested at 100 % [bug, older
+    than this unit] → zoom × device pixel ratio in the detail request, the badge and the level choice.
+- Tests: ctest unchanged (core untouched); self-test `runScrubFields` 11 checks with real mouse and key events
+  (drag right/left, a 3 px move, both range ends, Esc during a drag, double-click + letters refused, Enter, Esc
+  while typing, focus loss, arrow keys, preview jobs during a drag) + snapshot `U016-scrub`. The UX-08 typing check
+  now double-clicks the field first.
+- Mutations (each → the self-test fails at the targeted check): no drag threshold ("a 3 px move is not a drag");
+  every move committed as its own step (first caught only by the Esc check [weak check] → "one undo step" now also
+  asserts nothing else is left to undo on a fresh print; rerun caught at that check); Esc not restoring; field not
+  read-only outside keyboard input (UX-08 typing check); preview backlog ("never more than 2 at once"); no validator
+  ("letters are refused", "Esc cancels keyboard input"). Restored; no markers left.
+- Self-test results: fixture 169 pass (also 169 with `QT_SCALE_FACTOR=2`); polaroid_92 165 pass + 2 UX-08 skips
+  (one print); img20260702_0005 163 pass + 4 FK-003 skips (untagged scan). UX-09: 11 / 11 pass on all four runs.
+- Not verified: a real trackpad (offscreen, a trackpad drag produces the same events as a mouse), macOS tap-to-drag,
+  a real window on a 2× display.

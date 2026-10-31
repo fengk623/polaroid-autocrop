@@ -69,6 +69,11 @@ class SelfTest : public QObject {
     /// explicit batch), preview and final with the same mask, edge-change hint, saved, older projects
     /// unchanged.
     void runMaskDefaults();
+    /// UX-09 (U016): drag-to-adjust and double-click input on the mask width (real mouse and keys):
+    /// thresholds, bounds, Esc, invalid characters, Enter / focus loss, one undo step per drag, no preview
+    /// backlog.
+    void runScrubFields();
+    void doubleClick(QQuickItem* item, QPointF local = QPointF(-1, -1));
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.
     void key(int key, Qt::KeyboardModifiers mods, bool press, const QString& text = {});

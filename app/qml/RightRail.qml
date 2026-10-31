@@ -447,7 +447,13 @@ Rectangle {
                                 step: rail.mk.unit === "mm" ? 0.01 : 0.5
                                 decimals: rail.mk.unit === "mm" ? 2 : 1
                                 value: rail.mk.width || 0
+                                // UX-09: drag left/right to adjust, double-click to type
+                                scrubbable: true
                                 onCommitted: (v) => App.setItemMaskWidth(rail.it.id, v)
+                                onScrubStarted: App.beginMaskEdit(rail.it.id)
+                                onScrubbed: (v) => App.setItemMaskWidthLive(rail.it.id, v)
+                                onScrubFinished: (v) => { App.setItemMaskWidthLive(rail.it.id, v); App.endMaskEdit(rail.it.id, true) }
+                                onScrubCancelled: App.endMaskEdit(rail.it.id, false)
                             }
                         }
                         Text {

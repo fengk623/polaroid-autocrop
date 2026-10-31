@@ -3,6 +3,12 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.6 — U016: drag to adjust, double-click to type (UX-09)
+- The mask width can be adjusted by dragging left/right on the value (past a 4 px threshold; Shift ×10, Alt ×0.1)
+  and typed after a double-click (Enter / focus loss commits, Esc cancels, invalid characters refused); one drag is
+  one undo step; at most one composite preview per print runs while dragging. Also fixed: on 2× displays the canvas
+  showed the preview proxy at 100 %. Notes: docs/release-notes/v0.7.0-alpha.6.md.
+
 ## 0.7.0-alpha.5 — U015: natural-blend mask by default, saved per print (UX-08)
 - New prints composite with a natural blend: a 0.05 mm feather inside the image area (converted with the scan's
   DPI; px without one), chosen with the new `fkcli maskeval` on real scans (worst-case seam at 50 %: 6.61 → 3.64
