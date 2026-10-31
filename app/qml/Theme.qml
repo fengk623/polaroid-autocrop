@@ -48,6 +48,8 @@ QtObject {
     readonly property int rightRailMax: 420
     readonly property int minWindowW: 1100
     readonly property int minWindowH: 700
+    readonly property int edgeStrip: 8        // §4.1 Edge strips (UX-10): drawn width
+    readonly property int edgeStripReach: 6   // §4.1 Edge strips: extra hit area over a neighbour's empty inset
 
     // §4.3 type
     readonly property int fontDialogTitle: 15

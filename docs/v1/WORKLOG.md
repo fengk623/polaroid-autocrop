@@ -621,3 +621,25 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     no scan is imported. Keeping DNG relink unsupported for v1.0 is a proposal for the owner.
 - Not verified: opening our DNG in Lightroom / Photoshop / Capture One.
 
+
+### 07:30–08:30 — PR #23 opened and green (U026), U022
+- U026: PR #23 (stacked on #22). CI green after four rounds (see U026 above). Self-test with the U026 build: fixture
+  188 pass; polaroid_92 184 pass + 2 skips (UX-08, one print); img20260702_0005 181 pass + 5 skips (untagged scan:
+  the four profile-choice checks and the FK-012 DNG check, which needs a profile to export a DNG).
+- U022 (UX-10), independent of the library; version 0.7.0-alpha.11 by completion order. Reference: the owner's
+  Lightroom screenshot (thin strips with a small triangle on the window edges).
+  - Layout: an upper row (left strip · left rail · centre column · right rail · right strip) above a full-width
+    filmstrip and the bottom strip. `EdgeStrip.qml`: 8 px, chevron pointing where a click moves the panel, tooltip
+    Hide/Show with the shortcut, keyboard focus (Space/Enter), hit area 6 px over an empty neighbouring inset; no
+    reach where a scroll bar is next to the strip (right strip with the right rail open: the rail's scroll bar; bottom
+    strip with the filmstrip folded: the rails' scroll bars end above it). ◧/◨ left the top bar; View menu and
+    shortcuts unchanged; Reset Layout now also shows every panel.
+  - Self-test `runLayout` first run: 2 failures, both test flaws — (1) the grip drag moved relative to the grip, which
+    moves while the rail widens, so 4 × −10 px compounded to the 420 px maximum [test flaw] → fixed scene positions;
+    (2) the window-size check found the top bar wider than its column at 1100×700 (zoom + ends at x 1027, column at
+    791: compare, overlays and zoom run under the right rail) [existing defect, reproduced] → recorded as a
+    known-issue (UX-06), to be fixed when U021 reorganises the top bar; the regular check keeps the top bar at 1440
+    and 1920. The detail text printed the tip after unfolding (looked unchanged) [report flaw] → prints the folded
+    tip.
+  - `scenarioUpright` compared fixed pixel rectangles (260,60 …) for the canvas and the filmstrip; with the new
+    layout they come from the items.

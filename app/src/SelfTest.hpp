@@ -86,6 +86,10 @@ class SelfTest : public QObject {
     /// FK-012 (U026): a Linear DNG export given back (relink, drag and drop) is refused with guidance and
     /// never imported as a scan.
     void runFormats();
+    /// UX-10 (U022): edge strips fold and unfold each panel (mouse, keyboard, shortcuts), the filmstrip spans
+    /// the window, the canvas refits the whole scan and clicks still land on the print under the pointer
+    /// after folding and resizing; widths and folded state are stored; Reset Layout.
+    void runLayout();
     void doubleClick(QQuickItem* item, QPointF local = QPointF(-1, -1));
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.

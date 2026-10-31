@@ -66,7 +66,11 @@ ApplicationWindow {
             const on = !(App.settings.showLeftRail || App.settings.showRightRail || App.settings.showFilmstrip)
             App.setSetting("showLeftRail", on); App.setSetting("showRightRail", on); App.setSetting("showFilmstrip", on)
         }
-        function resetLayout() { App.setSetting("leftRailWidth", Theme.leftRailDefault); App.setSetting("rightRailWidth", Theme.rightRailDefault) }
+        // UX-10: default widths and every panel shown
+        function resetLayout() {
+            App.setSetting("leftRailWidth", Theme.leftRailDefault); App.setSetting("rightRailWidth", Theme.rightRailDefault)
+            App.setSetting("showLeftRail", true); App.setSetting("showRightRail", true); App.setSetting("showFilmstrip", true)
+        }
         function filmTypeName(id) {
             return ({ "polaroid_600": qsTr("Polaroid 600 / i-Type / SX-70"), "polaroid_round": qsTr("Polaroid round frame"),
                       "instax_mini": qsTr("Instax Mini"), "instax_square": qsTr("Instax Square"), "instax_wide": qsTr("Instax Wide") })[id] || qsTr("Unknown size")
@@ -158,45 +162,91 @@ ApplicationWindow {
     }
 
     // ---------------------------------------------------------------- layout
-    RowLayout {
+    // UX-10 (ui-reference §4.1): left rail · centre column (top bar, canvas) · right rail above a filmstrip that
+    // spans the whole window; each panel folds with a strip on the window edge outside it (also View menu and
+    // shortcuts). The canvas refits when its size changes at fit.
+    ColumnLayout {
         anchors.fill: parent
         spacing: 0
-        LeftRail {
-            id: leftRail
-            visible: App.settings.showLeftRail
-            cmd: cmd
-            Layout.preferredWidth: App.settings.leftRailWidth
-            Layout.fillHeight: true
-        }
-        RailGrip { visible: leftRail.visible; target: "leftRailWidth"; minW: Theme.leftRailMin; maxW: Theme.leftRailMax; defW: Theme.leftRailDefault; sign: 1 }
-        ColumnLayout {
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
-            TopBar { Layout.fillWidth: true; canvas: canvasArea.canvas; cmd: cmd }
-            CanvasArea {
-                id: canvasArea
+            EdgeStrip {
+                objectName: "edgeLeft"
+                edge: "left"
+                open: leftRail.visible
+                showText: qsTr("Show Left Rail"); hideText: qsTr("Hide Left Rail")
+                shortcutText: win.isMac ? "⌥⌘1" : "Ctrl+Alt+1"
+                Layout.fillHeight: true
+                onToggled: cmd.toggleLeft()
+            }
+            LeftRail {
+                id: leftRail
+                objectName: "leftRail"
+                visible: App.settings.showLeftRail
                 cmd: cmd
+                Layout.preferredWidth: App.settings.leftRailWidth
+                Layout.fillHeight: true
+            }
+            RailGrip { visible: leftRail.visible; target: "leftRailWidth"; minW: Theme.leftRailMin; maxW: Theme.leftRailMax; defW: Theme.leftRailDefault; sign: 1 }
+            ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Toasts {
-                    id: toasts
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 16
-                    width: Math.min(parent.width - 40, 600)
+                spacing: 0
+                TopBar { objectName: "topBar"; Layout.fillWidth: true; canvas: canvasArea.canvas; cmd: cmd }
+                CanvasArea {
+                    id: canvasArea
+                    cmd: cmd
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Toasts {
+                        id: toasts
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 16
+                        width: Math.min(parent.width - 40, 600)
+                    }
                 }
             }
-            Filmstrip { visible: App.settings.showFilmstrip; Layout.fillWidth: true; cmd: cmd; canvas: canvasArea.canvas }
+            RailGrip { visible: rightRail.visible; target: "rightRailWidth"; minW: Theme.rightRailMin; maxW: Theme.rightRailMax; defW: Theme.rightRailDefault; sign: -1 }
+            RightRail {
+                id: rightRail
+                objectName: "rightRail"
+                visible: App.settings.showRightRail
+                cmd: cmd
+                canvas: canvasArea.canvas
+                Layout.preferredWidth: App.settings.rightRailWidth
+                Layout.fillHeight: true
+            }
+            EdgeStrip {
+                objectName: "edgeRight"
+                edge: "right"
+                open: rightRail.visible
+                reach: open ? 0 : Theme.edgeStripReach // the right rail's scroll bar is next to the strip
+                showText: qsTr("Show Right Rail"); hideText: qsTr("Hide Right Rail")
+                shortcutText: win.isMac ? "⌥⌘2" : "Ctrl+Alt+2"
+                Layout.fillHeight: true
+                onToggled: cmd.toggleRight()
+            }
         }
-        RailGrip { visible: rightRail.visible; target: "rightRailWidth"; minW: Theme.rightRailMin; maxW: Theme.rightRailMax; defW: Theme.rightRailDefault; sign: -1 }
-        RightRail {
-            id: rightRail
-            visible: App.settings.showRightRail
+        Filmstrip {
+            id: filmstrip
+            objectName: "filmstrip"
+            visible: App.settings.showFilmstrip
+            Layout.fillWidth: true
             cmd: cmd
             canvas: canvasArea.canvas
-            Layout.preferredWidth: App.settings.rightRailWidth
-            Layout.fillHeight: true
+        }
+        EdgeStrip {
+            objectName: "edgeBottom"
+            edge: "bottom"
+            open: filmstrip.visible
+            reach: open ? Theme.edgeStripReach : 0 // folded: the rails' scroll bars end right above it
+            showText: qsTr("Show Filmstrip"); hideText: qsTr("Hide Filmstrip")
+            shortcutText: win.isMac ? "⌥⌘3" : "Ctrl+Alt+3"
+            Layout.fillWidth: true
+            onToggled: cmd.toggleFilmstrip()
         }
     }
 
@@ -429,6 +479,7 @@ ApplicationWindow {
         if (snaps.length) recoveryDialog.show(snaps)
     }
     function showSettings() { settingsDialog.open() }
+    readonly property var commands: cmd // self-test: the same commands as the menus
     readonly property var modalDialogs: [relinkDialog, exportDialog, finalDialog, settingsDialog, aboutDialog,
                                          nameDialog, redetectConfirm, replaceConfirm, backupDialog, recoveryDialog]
     function closeDialogs() {

@@ -721,7 +721,8 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
             check(QStringLiteral("FK-010 16→8-bit export is not announced as bit-identical"),
                   !item.value("frameBitExact").toBool() &&
                       item.value("exportPlan").toMap().value("reducesDepth").toBool() &&
-                      item.value("notExactReason").toString().contains(QLatin1String("8 bits")),
+                      (item.value("notExactReason").toString().contains(QLatin1String("8 bits")) ||
+                       item.value("notExactReason").toString().contains(QStringLiteral("降为 8 位"))),
                   item.value("notExactReason").toString());
             const QString id = app_->currentItemId();
             const QStringList before = filesMatching(exportDir, QStringLiteral("*_EDIT_v*.tif"));
@@ -958,9 +959,10 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
         QStringList notes; // what the user is told: the refusals must say why
         auto nc = connect(app_, &AppController::notification, this,
                           [&](const QString& text, const QString&) { notes << text; });
-        auto told = [&](const QString& what) {
+        // the message in English or in Chinese (the self-test also runs with the Chinese interface)
+        auto told = [&](const QString& what, const QString& zh) {
             return std::any_of(notes.begin(), notes.end(),
-                               [&](const QString& n) { return n.contains(what); });
+                               [&](const QString& n) { return n.contains(what) || n.contains(zh); });
         };
         app_->newProject();
         app_->importScans({scanCopy});
@@ -1007,7 +1009,8 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
         app_->exportFinal({id}, {});
         app_->waitIdle(300000);
         check(QStringLiteral("graded file replaced by another picture: no output, the user is told why"),
-              replaced && finals() == f1 && told(QStringLiteral("replaced by a different picture")),
+              replaced && finals() == f1 &&
+                  told(QStringLiteral("replaced by a different picture"), QStringLiteral("换成了另一张画面")),
               QStringLiteral("finals +%1; %2")
                   .arg(finals() - f1)
                   .arg(notes.isEmpty() ? QString() : notes.last()));
@@ -1031,7 +1034,7 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
         app_->waitIdle(300000);
         check(QStringLiteral("scan changed in the middle: export refused, the user is told why"),
               tampered && filesMatching(exp, QStringLiteral("*_EDIT_v*.tif")).size() == before.size() &&
-                  told(QStringLiteral("changed since it was imported")),
+                  told(QStringLiteral("changed since it was imported"), QStringLiteral("导入后已被改动")),
               QStringLiteral("exports +%1; %2")
                   .arg(filesMatching(exp, QStringLiteral("*_EDIT_v*.tif")).size() - before.size())
                   .arg(notes.isEmpty() ? QString() : notes.last()));
@@ -3301,6 +3304,370 @@ int SelfTest::scenarioMinIsWhite() {
     return allOk_ ? 0 : 1;
 }
 
+void SelfTest::runLayout() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    const QVariantMap saved = app_->settings();
+    const QStringList keys{QStringLiteral("showLeftRail"), QStringLiteral("showRightRail"),
+                           QStringLiteral("showFilmstrip"), QStringLiteral("leftRailWidth"),
+                           QStringLiteral("rightRailWidth")};
+    auto settle = [] { waitFor([] { return false; }, 250); };
+    auto restore = [&] {
+        for (const auto& k : keys)
+            app_->setSetting(k, saved.value(k));
+        window_->resize(1440, 900);
+        settle();
+    };
+    for (const auto& k :
+         {QStringLiteral("showLeftRail"), QStringLiteral("showRightRail"), QStringLiteral("showFilmstrip")})
+        app_->setSetting(k, true);
+    app_->setSetting(QStringLiteral("leftRailWidth"), 254);
+    app_->setSetting(QStringLiteral("rightRailWidth"), 300);
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    window_->resize(1440, 900);
+    settle();
+
+    QQuickItem* left = findItem(QStringLiteral("leftRail"));
+    QQuickItem* right = findItem(QStringLiteral("rightRail"));
+    QQuickItem* film = findItem(QStringLiteral("filmstrip"));
+    QQuickItem* top = findItem(QStringLiteral("topBar"));
+    QQuickItem* eL = findItem(QStringLiteral("edgeLeft"));
+    QQuickItem* eR = findItem(QStringLiteral("edgeRight"));
+    QQuickItem* eB = findItem(QStringLiteral("edgeBottom"));
+    auto* canvas = qobject_cast<QQuickItem*>(findCanvas());
+    auto* area = window_->property("contentItem").value<QQuickItem*>(); // below an in-window menu bar
+    const bool present = left && right && film && top && eL && eR && eB && canvas && area;
+    check(QStringLiteral("UX-10 setup: rails, filmstrip, top bar, edge strips and canvas"), present);
+    if (!present) {
+        restore();
+        return;
+    }
+    canvas->setProperty("mode", QStringLiteral("scan"));
+    canvas->setProperty("tool", QStringLiteral("select"));
+    auto rect = [](QQuickItem* it) { return it->mapRectToScene(QRectF(0, 0, it->width(), it->height())); };
+    auto near = [](double a, double b) { return std::abs(a - b) < 0.75; };
+    auto r2s = [](const QRectF& r) {
+        return QStringLiteral("%1,%2 %3×%4").arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height());
+    };
+    // the whole scan inside the canvas, touching it (less the fit padding) on one axis
+    auto wholeAtFit = [&](QString* why = nullptr) {
+        const QVariantMap sc = app_->currentScan();
+        QPointF a, b;
+        QMetaObject::invokeMethod(canvas, "mapFromScan", Q_RETURN_ARG(QPointF, a), Q_ARG(double, 0.0),
+                                  Q_ARG(double, 0.0));
+        QMetaObject::invokeMethod(canvas, "mapFromScan", Q_RETURN_ARG(QPointF, b),
+                                  Q_ARG(double, sc.value("width").toDouble()),
+                                  Q_ARG(double, sc.value("height").toDouble()));
+        const QRectF s = QRectF(a, b).normalized();
+        const double w = canvas->width(), h = canvas->height();
+        const bool inside =
+            s.left() >= -0.5 && s.top() >= -0.5 && s.right() <= w + 0.5 && s.bottom() <= h + 0.5;
+        const bool fills = s.width() >= w - 2 * 16 - 1 || s.height() >= h - 2 * 16 - 1;
+        if (why)
+            *why = QStringLiteral("scan at %1 in a %2×%3 canvas, atFit %4")
+                       .arg(r2s(s))
+                       .arg(w)
+                       .arg(h)
+                       .arg(canvas->property("atFit").toBool());
+        return canvas->property("atFit").toBool() && inside && fills;
+    };
+    // a print other than the current one: clicking its middle must select it
+    auto clickOtherPrint = [&](QString* why) {
+        const QString cur = app_->currentItemId();
+        const QString scanId = app_->currentScanId();
+        for (const auto& sc : app_->project().scans) {
+            if (toQ(sc.scanId) != scanId) continue;
+            for (const auto& it : sc.items) {
+                if (toQ(it.itemId) == cur) continue;
+                const fk::Vec2 c = fk::centroid(it.outer);
+                QPointF at;
+                QMetaObject::invokeMethod(canvas, "mapFromScan", Q_RETURN_ARG(QPointF, at),
+                                          Q_ARG(double, c.x), Q_ARG(double, c.y));
+                click(canvas, at);
+                settle();
+                *why = QStringLiteral("clicked %1 at %2,%3; current %4")
+                           .arg(toQ(it.itemId))
+                           .arg(at.x())
+                           .arg(at.y())
+                           .arg(app_->currentItemId());
+                return app_->currentItemId() == toQ(it.itemId);
+            }
+        }
+        *why = QStringLiteral("only one print on this scan");
+        return false;
+    };
+    const int prints = app_->currentScan().value("itemCount").toInt();
+
+    // ---- structure: full-width filmstrip under rails and canvas; strips on the window's edges
+    auto structure = [&](QString* why) {
+        const QRectF a = rect(area), f = rect(film), l = rect(left), r = rect(right), c = rect(canvas);
+        const QRectF sl = rect(eL), sr = rect(eR), sb = rect(eB);
+        const double floor = film->isVisible() ? f.top() : sb.top();
+        const bool fullWidth = !film->isVisible() || (near(f.left(), a.left()) && near(f.right(), a.right()));
+        const bool above = (!left->isVisible() || l.bottom() <= floor + 0.5) &&
+                           (!right->isVisible() || r.bottom() <= floor + 0.5) && c.bottom() <= floor + 0.5;
+        const bool edges = near(sl.left(), a.left()) && near(sr.right(), a.right()) &&
+                           near(sb.bottom(), a.bottom()) && near(sb.left(), a.left()) &&
+                           near(sb.right(), a.right()) && sl.bottom() <= sb.top() + 0.5 &&
+                           sr.bottom() <= sb.top() + 0.5;
+        *why = QStringLiteral(
+                   "window %1 · filmstrip %2 · left %3 · right %4 · canvas %5 · strips L %6 R %7 B %8")
+                   .arg(r2s(a), r2s(f), r2s(l), r2s(r), r2s(c), r2s(sl), r2s(sr), r2s(sb));
+        return fullWidth && above && edges;
+    };
+    QString why;
+    check(QStringLiteral("UX-10 the filmstrip spans the whole window; the rails and the canvas end above it; "
+                         "edge strips on the left, right and bottom window edges"),
+          structure(&why), why);
+    snapshot(QStringLiteral("U022-layout"));
+    check(QStringLiteral(
+              "UX-10 the top bar no longer carries fold buttons (edge strips, View menu, shortcuts)"),
+          findItemIf([](QQuickItem* it) {
+              const QString n = it->property("iconName").toString();
+              return it->isVisible() && (n == QLatin1String("foldLeft") || n == QLatin1String("foldRight"));
+          }) == nullptr);
+
+    // ---- each panel folds and unfolds with its strip (mouse); the strip stays put; the canvas refits
+    struct Panel {
+        QString name, key;
+        QQuickItem* strip;
+        QQuickItem* panel;
+        bool vertical; // a side rail (the canvas grows in width)
+    };
+    const std::vector<Panel> panels{
+        {QStringLiteral("left rail"), QStringLiteral("showLeftRail"), eL, left, true},
+        {QStringLiteral("right rail"), QStringLiteral("showRightRail"), eR, right, true},
+        {QStringLiteral("filmstrip"), QStringLiteral("showFilmstrip"), eB, film, false}};
+    for (const auto& p : panels) {
+        QMetaObject::invokeMethod(canvas, "fit");
+        settle();
+        const QSizeF before = canvas->size();
+        const QRectF stripBefore = rect(p.strip);
+        const QString tipOpen = p.strip->property("tip").toString();
+        click(p.strip);
+        settle();
+        const QSizeF folded = canvas->size();
+        const QString tipFolded = p.strip->property("tip").toString();
+        QString fitWhy;
+        const bool foldOk =
+            !p.panel->isVisible() && !app_->settings().value(p.key).toBool() && p.strip->isVisible() &&
+            rect(p.strip) == stripBefore &&
+            (p.vertical ? folded.width() > before.width() + 100 : folded.height() > before.height() + 100) &&
+            tipFolded != tipOpen && wholeAtFit(&fitWhy);
+        click(p.strip);
+        settle();
+        const bool unfoldOk = p.panel->isVisible() && app_->settings().value(p.key).toBool() &&
+                              canvas->size() == before && rect(p.strip) == stripBefore && wholeAtFit();
+        check(QStringLiteral(
+                  "UX-10 the %1 folds and unfolds with its edge strip (mouse); the strip stays on the "
+                  "edge; the canvas grows and refits the whole scan")
+                  .arg(p.name),
+              foldOk && unfoldOk,
+              QStringLiteral("canvas %1×%2 → %3×%4 → %5×%6; tip \"%7\" → \"%8\"; %9")
+                  .arg(before.width())
+                  .arg(before.height())
+                  .arg(folded.width())
+                  .arg(folded.height())
+                  .arg(canvas->width())
+                  .arg(canvas->height())
+                  .arg(tipOpen, tipFolded, fitWhy));
+    }
+
+    // ---- the hit area reaches past the drawn strip where the neighbour has an empty inset
+    {
+        const int reachL = eL->property("hitWidth").toInt(), reachB = eB->property("hitWidth").toInt();
+        click(eL, QPointF(reachL - 2, eL->height() / 2)); // over the left rail's inset
+        const bool l = !left->isVisible();
+        click(eL);
+        click(eB, QPointF(eB->width() / 2, eB->height() - reachB + 2)); // over the filmstrip's margin
+        const bool b = !film->isVisible();
+        click(eB);
+        settle();
+        check(
+            QStringLiteral("UX-10 the strips answer clicks beyond their drawn width (left and bottom: %1 px)")
+                .arg(reachL),
+            l && b && left->isVisible() && film->isVisible() && reachL >= 12 && reachB >= 12,
+            QStringLiteral("left %1, bottom %2").arg(l).arg(b));
+    }
+
+    // ---- all three folded: strips still on the edges, the canvas takes the rest, clicks land on prints
+    click(eL);
+    click(eR);
+    click(eB);
+    settle();
+    {
+        const QRectF a = rect(area), c = rect(canvas);
+        const double s = eL->width();
+        QString fitWhy, structWhy;
+        const bool layoutOk = !left->isVisible() && !right->isVisible() && !film->isVisible() &&
+                              eL->isVisible() && eR->isVisible() && eB->isVisible() &&
+                              near(c.left(), a.left() + s) && near(c.right(), a.right() - s) &&
+                              near(c.bottom(), a.bottom() - s) && near(c.top(), rect(top).bottom()) &&
+                              structure(&structWhy);
+        check(QStringLiteral(
+                  "UX-10 all three folded: the strips stay on the edges and the canvas takes the rest, "
+                  "whole scan at fit"),
+              layoutOk && wholeAtFit(&fitWhy), QStringLiteral("canvas %1; %2").arg(r2s(c), fitWhy));
+        snapshot(QStringLiteral("U022-all-folded"));
+    }
+    if (prints > 1) {
+        const bool hit1 = clickOtherPrint(&why);
+        window_->resize(1100, 700);
+        settle();
+        QString why2;
+        const bool hit2 = clickOtherPrint(&why2);
+        check(QStringLiteral(
+                  "UX-10 clicks land on the print under the pointer after folding and after resizing "
+                  "the window"),
+              hit1 && hit2, why + QStringLiteral(" · ") + why2);
+    } else {
+        skip(QStringLiteral(
+                 "UX-10 clicks land on the print under the pointer after folding and after resizing "
+                 "the window"),
+             QStringLiteral("one print on this scan"));
+    }
+    // unfold again (mouse)
+    click(eL);
+    click(eR);
+    click(eB);
+    settle();
+
+    // ---- window sizes: minimum, default, large
+    {
+        QStringList bad;
+        QQuickItem* zoomIn = findItemIf([](QQuickItem* it) {
+            return it->property("iconName").toString() == QLatin1String("zoomIn") && it->isVisible();
+        });
+        auto topBarFits = [&] { return zoomIn && rect(zoomIn).right() <= rect(top).right() + 0.5; };
+        for (const QSize sz : {QSize(1100, 700), QSize(1440, 900), QSize(1920, 1080)}) {
+            window_->resize(sz);
+            settle();
+            QString st, f;
+            const bool minimum = sz.width() == 1100;
+            // the top bar at the minimum width is a known issue (UX-06, U021 reorganises the top bar)
+            const bool ok = structure(&st) && wholeAtFit(&f) && (minimum || topBarFits());
+            if (minimum) {
+                known(QStringLiteral("UX-06"),
+                      QStringLiteral(
+                          "the top bar is wider than its column at 1100×700 with both rails shown (its "
+                          "items run under the right rail)"),
+                      !topBarFits(),
+                      QStringLiteral("zoom + ends at x %1, the top bar's column at %2")
+                          .arg(zoomIn ? rect(zoomIn).right() : -1)
+                          .arg(rect(top).right()));
+                snapshot(QStringLiteral("U022-1100x700"));
+            }
+            if (!ok)
+                bad << QStringLiteral("%1×%2: %3; %4; zoom + at %5")
+                           .arg(sz.width())
+                           .arg(sz.height())
+                           .arg(st, f, zoomIn ? r2s(rect(zoomIn)) : QStringLiteral("missing"));
+        }
+        check(QStringLiteral(
+                  "UX-10 window at 1100×700 (minimum), 1440×900, 1920×1080: filmstrip full width, rails "
+                  "and canvas above it, strips on the edges, whole scan at fit; top bar fits at 1440 "
+                  "and 1920"),
+              bad.isEmpty(), bad.join(QStringLiteral(" | ")));
+        window_->resize(1440, 900);
+        settle();
+    }
+
+    // ---- keyboard: the strip is a button (Tab focus, Space); the View menu shortcuts still work
+    {
+        eL->forceActiveFocus();
+        key(Qt::Key_Space, Qt::NoModifier, true, QStringLiteral(" "));
+        key(Qt::Key_Space, Qt::NoModifier, false, QStringLiteral(" "));
+        settle();
+        const bool folded = !left->isVisible();
+        key(Qt::Key_Space, Qt::NoModifier, true, QStringLiteral(" "));
+        key(Qt::Key_Space, Qt::NoModifier, false, QStringLiteral(" "));
+        settle();
+        check(QStringLiteral("UX-10 an edge strip with keyboard focus folds and unfolds its panel (Space)"),
+              eL->property("activeFocusOnTab").toBool() && folded && left->isVisible());
+        canvas->forceActiveFocus();
+    }
+    const QString shortcutName =
+        QStringLiteral("UX-10 the shortcuts still fold and unfold the panels (Ctrl+Alt+1 / 2 / 3 / 0)");
+    if (window_->property("isMac").toBool()) {
+        skip(shortcutName,
+             QStringLiteral("macOS: the shortcuts belong to the native menu bar, which the offscreen "
+                            "window does not have; the menu items call the same commands"));
+    } else {
+        auto chord = [&](int k, const QString& text) {
+            key(k, Qt::ControlModifier | Qt::AltModifier, true, text);
+            key(k, Qt::ControlModifier | Qt::AltModifier, false, text);
+            settle();
+        };
+        QStringList steps;
+        auto state = [&] {
+            return QStringLiteral("%1%2%3")
+                .arg(left->isVisible() ? 'L' : '-')
+                .arg(right->isVisible() ? 'R' : '-')
+                .arg(film->isVisible() ? 'F' : '-');
+        };
+        chord(Qt::Key_1, QStringLiteral("1"));
+        steps << state();
+        chord(Qt::Key_2, QStringLiteral("2"));
+        steps << state();
+        chord(Qt::Key_3, QStringLiteral("3"));
+        steps << state();
+        chord(Qt::Key_0, QStringLiteral("0")); // "All Panels": none shown → all shown
+        steps << state();
+        chord(Qt::Key_0, QStringLiteral("0")); // some shown → all folded
+        steps << state();
+        check(shortcutName, steps == QStringList{"-RF", "--F", "---", "LRF", "---"},
+              steps.join(QStringLiteral(" → ")));
+        chord(Qt::Key_0, QStringLiteral("0"));
+    }
+
+    // ---- stored for the next start: folded state and a width dragged with the grip
+    {
+        QQuickItem* grip = findItemIf([](QQuickItem* it) {
+            return it->property("target").toString() == QLatin1String("rightRailWidth") && it->isVisible();
+        });
+        const int w0 = app_->settings().value("rightRailWidth").toInt();
+        if (grip) {
+            // scene positions fixed at the press: the grip moves left while the rail widens
+            QQuickItem* scene = window_->contentItem();
+            const QPointF at = grip->mapToScene(QPointF(grip->width() / 2, grip->height() / 2));
+            mouse(scene, at, QEvent::MouseButtonPress);
+            for (int k = 1; k <= 4; ++k)
+                mouse(scene, at + QPointF(-10 * k, 0), QEvent::MouseMove);
+            mouse(scene, at + QPointF(-40, 0), QEvent::MouseButtonRelease);
+        }
+        click(eL);
+        settle();
+        const int w1 = app_->settings().value("rightRailWidth").toInt();
+        const bool stored =
+            app_->storedSetting(QStringLiteral("rightRailWidth")).toInt() == w1 &&
+            app_->storedSetting(QStringLiteral("showLeftRail")).toString() == QLatin1String("false");
+        check(QStringLiteral(
+                  "UX-10 a rail width dragged with the grip and a folded panel are stored for the next "
+                  "start"),
+              grip && w1 == w0 + 40 && stored,
+              QStringLiteral("right rail %1 → %2 px, stored %3; left rail stored shown = %4")
+                  .arg(w0)
+                  .arg(w1)
+                  .arg(app_->storedSetting(QStringLiteral("rightRailWidth")).toString(),
+                       app_->storedSetting(QStringLiteral("showLeftRail")).toString()));
+        app_->setSetting(QStringLiteral("showFilmstrip"), false);
+        app_->setSetting(QStringLiteral("leftRailWidth"), 300);
+        QObject* commands = window_->property("commands").value<QObject*>();
+        if (commands) QMetaObject::invokeMethod(commands, "resetLayout");
+        settle();
+        const QVariantMap s = app_->settings();
+        check(QStringLiteral("UX-10 Reset Layout: default rail widths and every panel shown"),
+              commands && s.value("showLeftRail").toBool() && s.value("showRightRail").toBool() &&
+                  s.value("showFilmstrip").toBool() && s.value("leftRailWidth").toInt() == 254 &&
+                  s.value("rightRailWidth").toInt() == 300 && left->isVisible() && right->isVisible() &&
+                  film->isVisible() && std::abs(left->width() - 254) < 0.5 &&
+                  std::abs(right->width() - 300) < 0.5,
+              QStringLiteral("left %1 px, right %2 px").arg(left->width()).arg(right->width()));
+    }
+    restore();
+}
+
 void SelfTest::observe(const QString& name, const QJsonObject& data) {
     QJsonObject o = data;
     o.insert(QStringLiteral("name"), name);
@@ -3567,10 +3934,17 @@ int SelfTest::scenarioUpright() {
     app_->waitIdle(60000);
     QCoreApplication::processEvents();
     const QImage after = window_->grabWindow();
-    // compare the canvas region only (left of the right rail, above the filmstrip)
-    const QRect canvas(260, 60, 860, 640);
+    // compare the canvas and the filmstrip regions (their places in the window, U022 layout)
+    auto region = [&](QQuickItem* it) {
+        if (!it) return QRect();
+        const qreal dpr = window_->effectiveDevicePixelRatio();
+        const QRectF r = it->mapRectToScene(QRectF(0, 0, it->width(), it->height()));
+        return QRect(QPoint(qRound(r.left() * dpr), qRound(r.top() * dpr)),
+                     QPoint(qRound(r.right() * dpr) - 1, qRound(r.bottom() * dpr) - 1));
+    };
+    const QRect canvas = region(qobject_cast<QQuickItem*>(findCanvas()));
     const bool canvasSame = before.copy(canvas) == after.copy(canvas);
-    const QRect strip(260, 760, 860, 120);
+    const QRect strip = region(findItem(QStringLiteral("filmstrip")));
     const bool stripSame = before.copy(strip) == after.copy(strip);
     observe(QStringLiteral("U1 rotate upright on the current print"),
             {{"uprightAfter", app_->currentItem().value("upright").toInt()},
@@ -3640,7 +4014,8 @@ int SelfTest::run() {
         const QVariantMap plan = app_->currentItem().value("exportPlan").toMap();
         check(QStringLiteral("image area exports default to labelled straightening"),
               defaultGeometry == QLatin1String("straighten") && plan.value("resampled").toBool() &&
-                  plan.value("geometry").toString().contains(QLatin1String("straightened")) &&
+                  (plan.value("geometry").toString().contains(QLatin1String("straightened")) ||
+                   plan.value("geometry").toString().contains(QStringLiteral("拉正"))) &&
                   !app_->currentItem().value("frameBitExact").toBool(),
               app_->settings().value("geometryMode").toString() + QStringLiteral(" · ") +
                   plan.value("geometry").toString());
@@ -3758,6 +4133,7 @@ int SelfTest::run() {
     runMemoryBudget();
     runDisplayProfile();
     runFormats();
+    runLayout();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

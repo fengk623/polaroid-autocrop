@@ -9,7 +9,8 @@ RFC: `rfc/0011-ui-architecture.md`, `docs/ui-reference.md`, `CONTRACT-ui-core.md
 - Right rail (groups): Outer, Inner, Geometry, Safety margin, Export image area, Re-import, Composite, Mask,
   Colour, Final output, Metadata & privacy.
 - Bottom filmstrip: scans and prints with status badges (detection, confidence, exported, relinked,
-  size anomaly, ICC anomaly, composited, final exported).
+  size anomaly, ICC anomaly, composited, final exported). It spans the whole window; the rails end above it (UX-10).
+- Each panel folds with a thin strip on the window edge outside it (UX-10); View menu items and shortcuts stay.
 
 ## Rules
 - Two resolution states only: Preview (proxy) and Full (tiles from the original at ≥ proxy scale).
@@ -32,4 +33,13 @@ RFC: `rfc/0011-ui-architecture.md`, `docs/ui-reference.md`, `CONTRACT-ui-core.md
   at most one composite preview in flight per print; the last preview shows the last value. Same behaviour at 2×.
   Other fields keep plain keyboard input until a consistency review (UX-09). (self-test `runScrubFields`, at 1× and
   2× device pixel ratio)
+- A5 (UX-10) The left rail, the right rail and the filmstrip each fold and unfold with an 8 px strip on the window edge
+  outside the panel; the strip stays in place while folded, its chevron points where a click moves the panel, its
+  hit area reaches 6 px over an empty neighbouring inset (never over a scroll bar), it takes keyboard focus (Space /
+  Enter) and its tooltip says Hide/Show with the shortcut. The filmstrip spans the whole window and the rails end
+  above it. Folding, unfolding and resizing the window keep the whole scan at fit when the canvas was at fit, and a
+  click still lands on the print under the pointer. View ▸ Left Rail / Right Rail / Filmstrip / All Panels and
+  Ctrl+Alt+1/2/3/0 (⌥⌘ on macOS) stay; Reset Layout restores the default widths and shows every panel; widths and
+  folded state are stored. The top bar no longer has fold buttons. (self-test `runLayout` at 1100×700, 1440×900,
+  1920×1080; whole run also at 2× and in Chinese)
 
