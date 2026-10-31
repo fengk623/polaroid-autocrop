@@ -15,7 +15,7 @@ PATTERN = re.compile(r"(^FAIL\b|error|Error|FAILED|fatal|undefined reference|unr
 def emit(title, lines):
     for i in range(0, min(len(lines), 300), 30):
         chunk = lines[i:i + 30]
-        msg = "%0A".join(l.replace("%", "%25").replace("\r", "").replace("\n", " ")[:400] for l in chunk)
+        msg = "%0A".join(l.replace("%", "%25").replace("\r", "").replace("\n", " ")[:1500] for l in chunk)
         print(f"::error title={title} ({i // 30 + 1})::{msg}")
 
 

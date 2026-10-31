@@ -650,3 +650,8 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     U026). One known issue each (UX-06 top bar).
   - Seen in the Chinese run, not fixed here: the depth-reduction message ends with an untranslated developer note
     "(set allowDepthReduction after the user confirms)" → U024 (text and layout checks).
+  - CI round 2 (U022, Windows app job): with the check lines in the log — the U022 size check had also required the
+    top bar to fit at 1440×900 and 1920×1080; on the Windows runner's fonts it does not fit at 1440 (868 px column)
+    [platform-dependent part of the UX-06 issue] → the top bar is observed at each size in U022 and stays a known
+    issue at 1100; U021 turns all of it into checks. `ci-annotate.py` keeps up to 1500 characters per line (the
+    first attempt cut the detail at 400).
