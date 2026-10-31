@@ -3,6 +3,11 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.6.0-alpha.9 — U009: privacy presets on every channel (FK-004)
+- "Remove location and identity" no longer lets the source XMP creator through; one filter feeds every writer
+  (TIFF/DNG tags, XMP in TIFF/PNG/JPEG/DNG); the Export tab states exactly which fields an export carries.
+  Notes: docs/release-notes/v0.6.0-alpha.9.md.
+
 ## 0.6.0-alpha.8 — U008: data protection (FK-001, FK-008)
 - Every way of replacing the open project asks Save / Don't save / Cancel (also for dropped project files and with
   running tasks); a failed save keeps everything. Recovery snapshots of unsaved work (never the project file),

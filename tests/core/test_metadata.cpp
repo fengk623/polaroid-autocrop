@@ -57,3 +57,41 @@ TEST(Privacy, PresetsRemoveTheDocumentedFields) {
     EXPECT_EQ(id.make, "EPSON");
     EXPECT_EQ(id.fields.size(), 1u);
 }
+
+TEST(Privacy, RemoveIdentityDropsCreatorFromSourceXmp) {
+    // formerly KnownIssue.FK004_RemoveIdentityDropsCreatorFromSourceXmp
+    MetadataSet m;
+    m.artist = "Ann Example";
+    m.sourceXmp = "<dc:creator><rdf:Seq><rdf:li>Ann Example</rdf:li></rdf:Seq></dc:creator>"
+                  "<dc:rights><rdf:Alt><rdf:li>CC BY</rdf:li></rdf:Alt></dc:rights>";
+    m.fields = {{"Artist", "Ann Example", PrivacyClass::identity}};
+    const MetadataSet filtered = applyPrivacy(m, PrivacyPreset::remove_identity);
+    const std::string xmp = buildXmp(XmpIds{}, &filtered);
+    EXPECT_EQ(xmp.find("Ann Example"), std::string::npos) << xmp;
+    EXPECT_NE(xmp.find("CC BY"), std::string::npos) << "rights are kept";
+    // kept by the other presets
+    EXPECT_NE(buildXmp(XmpIds{}, &m).find("Ann Example"), std::string::npos);
+    const MetadataSet keep = applyPrivacy(m, PrivacyPreset::keep_all_safe);
+    EXPECT_NE(buildXmp(XmpIds{}, &keep).find("Ann Example"), std::string::npos);
+}
+
+TEST(Privacy, WrittenFieldsAreStatedPerChannel) {
+    MetadataSet m;
+    m.make = "EPSON";
+    m.artist = "Ann";
+    m.hostComputer = "host";
+    m.sourceXmp = "<dc:creator><rdf:Seq><rdf:li>Ann</rdf:li></rdf:Seq></dc:creator>"
+                  "<dc:title><rdf:Alt><rdf:li>T</rdf:li></rdf:Alt></dc:title>";
+    auto names = [](const std::vector<MetadataField>& v) {
+        std::vector<std::string> n;
+        for (const auto& f : v)
+            n.push_back(f.name);
+        return n;
+    };
+    const auto keepTiff = writtenMetadata(applyPrivacy(m, PrivacyPreset::keep_all_safe), TagChannel::tiff);
+    EXPECT_EQ(names(keepTiff), (std::vector<std::string>{"TIFF Make", "TIFF Artist", "TIFF HostComputer",
+                                                         "XMP dc:title", "XMP dc:creator"}));
+    const auto idPng = writtenMetadata(applyPrivacy(m, PrivacyPreset::remove_identity), TagChannel::none);
+    EXPECT_EQ(names(idPng), (std::vector<std::string>{"XMP dc:title"}));
+    EXPECT_EQ(idPng.front().value, "T");
+}

@@ -40,6 +40,8 @@ class SelfTest : public QObject {
     /// FK-001 / FK-008 (U008): the replace guard, failed saves, backup restore, recovery snapshots, output
     /// settings.
     void runDataProtection();
+    /// FK-004 (U009): privacy presets on a scan copy carrying identity, outputs read back byte for byte.
+    void runPrivacy();
     void runTaskSafety(const QString& exportDir, const QString& projectPath);
     int scenarioMinIsWhite();
     QJsonArray known_;

@@ -811,6 +811,89 @@ void SelfTest::runDataProtection() {
     app_->newProject();
 }
 
+void SelfTest::runPrivacy() {
+    const QString d = QDir(dir_).filePath(QStringLiteral("privacy"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    // a copy of the scan carrying identity: TIFF Artist and HostComputer, XMP dc:creator
+    const QString scanCopy = QDir(d).filePath(QStringLiteral("identity.tif"));
+    bool written = false;
+    {
+        fk::ImageInfo info;
+        auto img = fk::readImageFile(toPath(scan_), &info);
+        if (img) {
+            fk::WriteOptions o;
+            o.bits = img->bits();
+            o.icc = info.icc;
+            o.dpiX = info.dpiX;
+            o.dpiY = info.dpiY;
+            o.meta.make = "EPSON";
+            o.meta.artist = "Ann Example";
+            o.meta.hostComputer = "ann-host-1234";
+            o.xmp =
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF><rdf:Description><dc:creator><rdf:Seq>"
+                "<rdf:li>Ann Example</rdf:li></rdf:Seq></dc:creator></rdf:Description></rdf:RDF></x:xmpmeta>";
+            if (auto sink = fk::createSink(toPath(scanCopy), o)) {
+                written = (*sink)->begin({img->width(), img->height()}, img->channels(), img->bits()).ok() &&
+                          (*sink)->writeRows(img->data(), img->height(), img->rowBytes()).ok() &&
+                          (*sink)->finish().ok();
+            }
+        }
+    }
+    app_->newProject();
+    app_->importScans({scanCopy});
+    app_->waitIdle(300000);
+    const QVariant privacy = app_->settings().value("privacy"),
+                   format = app_->settings().value("exportFormat"),
+                   bits = app_->settings().value("exportBits"),
+                   folder = app_->settings().value("exportFolder");
+    auto listsIdentity = [&] {
+        const QVariantList l = app_->privacyPreview();
+        return std::any_of(l.begin(), l.end(),
+                           [](const QVariant& v) { return v.toMap().value("identity").toBool(); });
+    };
+    app_->setSetting(QStringLiteral("privacy"), QStringLiteral("keep_all_safe"));
+    app_->setSetting(QStringLiteral("exportFormat"), QStringLiteral("tif"));
+    const bool keepLists = listsIdentity();
+    app_->setSetting(QStringLiteral("privacy"), QStringLiteral("remove_identity"));
+    const bool removeLists = listsIdentity();
+    check(QStringLiteral("FK-004 the privacy panel states the written fields (identity only when kept)"),
+          written && keepLists && !removeLists && !app_->privacyPreview().isEmpty(),
+          QStringLiteral("keep lists identity %1, remove lists identity %2, fields %3")
+              .arg(keepLists)
+              .arg(removeLists)
+              .arg(app_->privacyPreview().size()));
+    // export one print in every format with "remove identity" and read the files back byte for byte
+    const QString exp = QDir(d).filePath(QStringLiteral("export"));
+    app_->setExportFolder(QUrl::fromLocalFile(exp));
+    const QVariantList targets = app_->relinkTargets();
+    const QString id = targets.isEmpty() ? QString() : targets.first().toMap().value("id").toString();
+    QStringList leaks;
+    int files = 0;
+    for (const QString fmt : {QStringLiteral("tif"), QStringLiteral("png"), QStringLiteral("jpg")}) {
+        app_->setSetting(QStringLiteral("exportFormat"), fmt);
+        app_->setSetting(QStringLiteral("exportBits"), fmt == QLatin1String("jpg") ? 8 : 0);
+        app_->exportImageAreas({id});
+        app_->waitIdle(300000);
+        for (const QString& f : filesMatching(exp, QStringLiteral("*.") + fmt)) {
+            QFile file(f);
+            if (!file.open(QIODevice::ReadOnly)) continue;
+            const QByteArray bytes = file.readAll();
+            ++files;
+            if (bytes.contains("Ann Example") || bytes.contains("ann-host-1234"))
+                leaks << QFileInfo(f).fileName();
+        }
+    }
+    check(QStringLiteral("FK-004 \"remove identity\": TIFF, PNG and JPEG outputs carry no identity"),
+          files == 3 && leaks.isEmpty(),
+          QStringLiteral("files %1, leaking: %2").arg(files).arg(leaks.join(',')));
+    app_->setSetting(QStringLiteral("privacy"), privacy);
+    app_->setSetting(QStringLiteral("exportFormat"), format);
+    app_->setSetting(QStringLiteral("exportBits"), bits);
+    app_->setSetting(QStringLiteral("exportFolder"), folder);
+    app_->newProject();
+}
+
 int SelfTest::scenarioMinIsWhite() {
     // FK-011: rows from the TIFF reader are already in normal polarity; the display converter inverts
     // MinIsWhite again, so Preview (proxy) and Full (rows) disagree.
@@ -1158,6 +1241,7 @@ int SelfTest::run() {
     runTaskSafety(exportDir, proj);
     runKnownIssues(exportDir);
     runDataProtection();
+    runPrivacy();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

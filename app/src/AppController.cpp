@@ -816,6 +816,7 @@ struct DetectResult {
     bool changed = false; ///< FK-007: the file at the path is not the imported scan
     std::string changeReason;
     std::string fullSha256; ///< computed while opening a scan whose fingerprint had none (older projects)
+    fk::MetadataSet meta;
 };
 } // namespace
 
@@ -851,6 +852,7 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
                 return;
             }
             res->info = (*src)->info();
+            res->meta = (*src)->metadata();
             res->iccSha =
                 res->info.icc.empty() ? "" : fk::sha256Hex(res->info.icc.data(), res->info.icc.size());
             // the whole file is hashed once at import (streamed), so later checks see any change
@@ -931,6 +933,8 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
                 s->items.push_back(it);
             }
             r.display = res->display;
+            r.meta = res->meta;
+            r.metaKnown = true;
             r.proxyScale = res->proxyScale;
             r.thumb = boxDownscale(res->display, kThumbLong);
             r.state = QStringLiteral("ready");
@@ -990,6 +994,7 @@ void AppController::loadPreview(const std::string& scanId) {
                 return;
             }
             res->info = (*src)->info();
+            res->meta = (*src)->metadata();
             auto proxy = fk::buildProxy(**src, 3000, ctx.cancel,
                                         [&](double f, std::string_view) { ctx.progress(f, tr("Reading")); });
             if (!proxy) {
@@ -1023,6 +1028,8 @@ void AppController::loadPreview(const std::string& scanId) {
                 sr && !res->fullSha256.empty() && sr->fingerprint.fullSha256.empty())
                 sr->fingerprint.fullSha256 = res->fullSha256; // saved with the next save
             r.display = res->display;
+            r.meta = res->meta;
+            r.metaKnown = true;
             r.proxyScale = res->proxyScale;
             r.thumb = boxDownscale(res->display, kThumbLong);
             r.state = QStringLiteral("ready");
@@ -2457,6 +2464,23 @@ void AppController::dropFiles(const QVariantList& urls) {
     }
     if (!scans.isEmpty()) importScans(scans);
     if (!graded.isEmpty()) relinkFiles(graded);
+}
+
+QVariantList AppController::privacyPreview() const {
+    QVariantList out;
+    auto r = rt_.find(curScan_);
+    if (r == rt_.end() || !r->second.metaKnown) return out;
+    const QString fmt = settings_.value("exportFormat").toString();
+    const fk::TagChannel tags = fmt == QLatin1String("tif")   ? fk::TagChannel::tiff
+                                : fmt == QLatin1String("dng") ? fk::TagChannel::dng
+                                                              : fk::TagChannel::none;
+    const fk::MetadataSet filtered =
+        fk::applyPrivacy(r->second.meta, privacyOf(settings_.value("privacy").toString()));
+    for (const auto& f : fk::writtenMetadata(filtered, tags))
+        out << QVariantMap{{"name", toQ(f.name)},
+                           {"value", toQ(f.value)},
+                           {"identity", f.cls == fk::PrivacyClass::identity}};
+    return out;
 }
 
 QVariantMap AppController::loadIccProfile(const QVariant& url) {

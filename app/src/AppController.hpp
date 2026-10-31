@@ -148,6 +148,10 @@ class AppController : public QObject {
     /// Reads an ICC profile chosen to interpret a graded file (FK-003): {ok, id "file", label, sha256} or
     /// {ok false, error}. Unreadable profiles are refused.
     Q_INVOKABLE QVariantMap loadIccProfile(const QVariant& url);
+    /// FK-004: the descriptive fields an export of the current scan would carry with the current preset and
+    /// format
+    /// ({name, value, identity}); empty when the scan's metadata is not known yet.
+    Q_INVOKABLE QVariantList privacyPreview() const;
     Q_INVOKABLE QVariantMap prepareFinal(const QStringList& itemIds);
     Q_INVOKABLE void exportFinal(const QStringList& itemIds, const QVariantMap& confirmations);
     Q_INVOKABLE void requestCompositePreview(const QString& itemId);
@@ -217,8 +221,10 @@ class AppController : public QObject {
         int proxyScale = 1;
         QImage thumb;
         std::map<std::string, QImage> itemThumbs;
-        QString state = QStringLiteral("pending"); // pending, detecting, ready, error, missing
+        QString state = QStringLiteral("pending"); // pending, detecting, ready, error, missing, changed
         QString error;
+        fk::MetadataSet meta; ///< descriptive metadata of the scan (privacy panel, FK-004)
+        bool metaKnown = false;
         quint64 rev = 0;
         std::shared_ptr<std::mutex> sourceMutex = std::make_shared<std::mutex>();
         std::shared_ptr<fk::TiffSource> source; ///< for full-resolution view tiles

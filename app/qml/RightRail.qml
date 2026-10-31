@@ -320,8 +320,27 @@ Rectangle {
                             wrapMode: Text.WordWrap
                             font.pixelSize: Theme.fontCaption
                             color: Theme.textTertiary
-                            text: App.settings.privacy === "remove_identity" ? qsTr("Removes artist, owner, serial number and computer name. GPS is never copied.")
+                            text: App.settings.privacy === "remove_identity" ? qsTr("Removes artist, creator, owner, serial number and computer name. GPS is never copied.")
                                   : qsTr("Scanner make/model, software and dates are kept. GPS is never copied.")
+                        }
+                        // FK-004: what an export of this scan actually carries, stated explicitly
+                        Text {
+                            id: writtenList
+                            // re-read when the preset, the format or the scan changes
+                            readonly property var fields: (App.settings.privacy, App.settings.exportFormat, App.currentScanId, App.currentScan.state, App.privacyPreview())
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: Theme.fontCaption
+                            color: Theme.textSecondary
+                            text: fields.length === 0 ? qsTr("Written: no descriptive fields from the scan.")
+                                  : qsTr("Written: %1").arg(fields.map(f => f.name + " “" + f.value + "”" + (f.identity ? " ⚠" : "")).join(" · "))
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: Theme.fontCaption
+                            color: Theme.textTertiary
+                            text: qsTr("Never written: GPS location, camera owner, serial numbers. ⚠ = identifies a person or computer.")
                         }
                     }
                 }
