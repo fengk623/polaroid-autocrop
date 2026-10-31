@@ -1,0 +1,512 @@
+{
+ "A01": {
+  "checks": [
+   "FK-001 new project with unsaved changes asks first",
+   "new project: the canvas no longer shows the previous scan"
+  ]
+ },
+ "A02": {
+  "checks": [
+   "open project",
+   "project keeps prints",
+   "FK-001 dropping a project file asks first"
+  ],
+  "tests": [
+   "Project.SaveLoadRoundTripIsLossless",
+   "Compat.OpensProjectsFromEarlierReleases"
+  ]
+ },
+ "A03": {
+  "checks": [
+   "detection finished",
+   "prints detected",
+   "import hashes the whole scan"
+  ]
+ },
+ "A04": {
+  "checks": [
+   "FREEZE A04"
+  ]
+ },
+ "A05": {
+  "checks": [
+   "save project",
+   "FK-001 failed save keeps the project path and unsaved changes"
+  ],
+  "tests": [
+   "Project.SecondSaveKeepsBackupAndIsAtomic"
+  ]
+ },
+ "A06": {
+  "checks": [
+   "FK-001 new project with unsaved changes asks first",
+   "FK-001 cancel keeps the project and its unsaved changes"
+  ],
+  "note": "Close Project runs the same command as New Project"
+ },
+ "A07": {
+  "manual": "closing the window with unsaved changes asks save / discard / cancel: needs a real window close (HV-02, HV-03); the same dialog and its answers are checked for New Project and dropped files (FK-001)"
+ },
+ "A08": {
+  "checks": [
+   "FREEZE A08"
+  ]
+ },
+ "A09": {
+  "checks": [
+   "FK-014 a project last saved by a later version opens"
+  ],
+  "tests": [
+   "Project.NewerSchemaOpensReadOnly"
+  ]
+ },
+ "A10": {
+  "checks": [
+   "FREEZE A10"
+  ],
+  "tests": [
+   "Project.RelocatesMovedScansByNameAndFingerprint"
+  ]
+ },
+ "A11": {
+  "checks": [
+   "FREEZE A11"
+  ]
+ },
+ "A12": {
+  "manual": "Reveal in Finder / Explorer opens the system file manager: real desktop (HV-02, HV-03)"
+ },
+ "A13": {
+  "checks": [
+   "UX-04 the scan file is unchanged (SHA-256)"
+  ],
+  "tests": [
+   "Export.SourceFileUntouched",
+   "Composite.NeverOverwritesAndSourceUntouched"
+  ]
+ },
+ "B01": {
+  "checks": [
+   "prints detected",
+   "UX-04 four prints found, in four orientations"
+  ],
+  "tests": [
+   "Detection.FindsAndContainsTwoTiltedPrints",
+   "Detection.WhitePrintOnWhiteLidExcludesTheShadowBand"
+  ]
+ },
+ "B02": {
+  "checks": [
+   "UX-01 left rail has the count switch and number",
+   "UX-01 manual count differing from the prints found is flagged"
+  ]
+ },
+ "B03": {
+  "checks": [
+   "FREEZE B08",
+   "prints detected"
+  ],
+  "note": "the left rail's method choice runs automatic or template detection; both are run"
+ },
+ "B04": {
+  "checks": [
+   "FREEZE B08"
+  ],
+  "note": "detecting a scan again (with a template) replaces its prints"
+ },
+ "B05": {
+  "tests": [
+   "Detection.FindsAndContainsTwoTiltedPrints"
+  ],
+  "note": "the margin is a detection parameter used with its default in every detection test; no test changes it"
+ },
+ "B06": {
+  "tests": [
+   "Detection.ScaledOutputWithNominalDpiTag"
+  ]
+ },
+ "B07": {
+  "checks": [
+   "UX-01 manual count differing from the prints found is flagged",
+   "UX-01 automatic: a blank scan says no prints were found"
+  ],
+  "tests": [
+   "Detection.CountMismatchIsReported",
+   "Detection.TouchingPrintsAreSplitContainedAndFlagged"
+  ]
+ },
+ "B08": {
+  "checks": [
+   "FREEZE B08"
+  ],
+  "tests": [
+   "Template.SaveLoadRoundTrip",
+   "Detection.TemplateReproducesItems"
+  ]
+ },
+ "C01": {
+  "checks": [
+   "UX-03 Shift tap (real key events): Outer → Inner",
+   "UX-03 tool button (mouse): Edit Inner"
+  ]
+ },
+ "C02": {
+  "checks": [
+   "UX-03 drag without Shift: free corner",
+   "UX-03 circle: radius drag (diagonal pointer) keeps rx = ry"
+  ]
+ },
+ "C03": {
+  "checks": [
+   "UX-03 Shift+→ on a selected corner: 10 px nudge",
+   "UX-03 circle: arrow nudges keep rx = ry"
+  ]
+ },
+ "C04": {
+  "checks": [
+   "FREEZE C04",
+   "FREEZE C07",
+   "UX-09 drag right (mouse)"
+  ],
+  "note": "the corner fields call the same command as FREEZE C07's numeric edit"
+ },
+ "C05": {
+  "checks": [
+   "UX-03 saved and reopened: outer and round inner unchanged",
+   "UX-03 the export uses the edited circle"
+  ]
+ },
+ "C06": {
+  "checks": [
+   "FREEZE C06"
+  ]
+ },
+ "C07": {
+  "checks": [
+   "FREEZE C07"
+  ]
+ },
+ "C08": {
+  "checks": [
+   "UX-03 rectangle: one drag = one undo step; redo",
+   "UX-04 undo/redo interleave a print's edit and a whole-scan turn in order"
+  ]
+ },
+ "C09": {
+  "checks": [
+   "UX-04 uprights on: the same export whether the scan is turned or not"
+  ],
+  "tests": [
+   "Composite.UnchangedEditRoundTripIsBitExact"
+  ]
+ },
+ "C10": {
+  "checks": [
+   "FREEZE C10"
+  ]
+ },
+ "C11": {
+  "checks": [
+   "FREEZE C11"
+  ]
+ },
+ "C12": {
+  "checks": [
+   "FREEZE C12"
+  ]
+ },
+ "C13": {
+  "checks": [
+   "FREEZE C13"
+  ]
+ },
+ "D01": {
+  "checks": [
+   "FREEZE D01",
+   "UX-06 narrow window: the compact view switch changes the view"
+  ]
+ },
+ "D02": {
+  "checks": [
+   "FREEZE D02"
+  ]
+ },
+ "D03": {
+  "checks": [
+   "physical 100 %",
+   "badge Preview at fit",
+   "badge Full at 100 %"
+  ]
+ },
+ "D04": {
+  "checks": [
+   "UX-04 turned view at 100 %: full resolution, navigator shows the visible part"
+  ]
+ },
+ "D05": {
+  "checks": [
+   "FREEZE D05"
+  ]
+ },
+ "D06": {
+  "checks": [
+   "FREEZE D06"
+  ]
+ },
+ "D07": {
+  "checks": [
+   "UX-10 the shortcuts still fold and unfold the panels",
+   "UX-10 an edge strip with keyboard focus folds and unfolds its panel",
+   "UX-10 all three folded",
+   "UX-10 Reset Layout"
+  ]
+ },
+ "D08": {
+  "checks": [
+   "UX-10 a rail width dragged with the grip and a folded panel are stored for the next start"
+  ]
+ },
+ "D09": {
+  "checks": [
+   "FREEZE D09"
+  ]
+ },
+ "D10": {
+  "checks": [
+   "FREEZE D10"
+  ]
+ },
+ "D11": {
+  "checks": [
+   "UX-10 the filmstrip spans the whole window",
+   "UX-04 the scan thumbnail turns with it"
+  ]
+ },
+ "E01": {
+  "checks": [
+   "image areas exported",
+   "image area exports default to labelled straightening"
+  ]
+ },
+ "E02": {
+  "checks": [
+   "UX-04 exported before the turn, relinked after it"
+  ],
+  "note": "the full prints exported there are compared bit for bit with the final outputs"
+ },
+ "E03": {
+  "checks": [
+   "FK-004 \"remove identity\": TIFF, PNG and JPEG outputs"
+  ],
+  "tests": [
+   "Export.LinearDngStructure",
+   "Export.PngSixteenBitExactAndXmp"
+  ]
+ },
+ "E04": {
+  "checks": [
+   "FK-010 8-bit export only with explicit consent"
+  ],
+  "tests": [
+   "Export.DepthReductionNeedsConsent"
+  ]
+ },
+ "E05": {
+  "tests": [
+   "TiffWriteRoundTrip.ExactAndTagged"
+  ]
+ },
+ "E06": {
+  "checks": [
+   "image area exports default to labelled straightening"
+  ],
+  "tests": [
+   "Composite.StraightenedRoundTripKeepsFrameExact"
+  ]
+ },
+ "E07": {
+  "checks": [
+   "UX-04 uprights on: the same export whether the scan is turned or not",
+   "UX-04 uprights off: exports follow the turned view"
+  ]
+ },
+ "E08": {
+  "checks": [
+   "image areas exported"
+  ],
+  "note": "the self-test exports into the folder it chose"
+ },
+ "E09": {
+  "checks": [
+   "output converts the chosen profile once: colours as in the scan"
+  ],
+  "tests": [
+   "Export.IccPoliciesKeepAssignConvertUntagged"
+  ]
+ },
+ "E10": {
+  "checks": [
+   "FK-004 the privacy panel states the written fields",
+   "FK-004 \"remove identity\": TIFF, PNG and JPEG outputs"
+  ]
+ },
+ "E11": {
+  "checks": [
+   "UX-04 uprights off: exports follow the turned view",
+   "FK-005 memory pressure: rebuildable caches dropped"
+  ],
+  "tests": [
+   "TiffWrite.NeverOverwritesAndAbortRemovesTemp"
+  ],
+  "note": "second exports are written as _v002 beside _v001"
+ },
+ "E12": {
+  "manual": "the export dialog lists unreviewed low-confidence prints: needs a low-confidence print, which the generated fixture does not produce (the owner's scans, HV-01)"
+ },
+ "E13": {
+  "checks": [
+   "no sidecar files by default",
+   "portable sidecar written when enabled",
+   "relink unchanged exports (file hash, embedded IDs)"
+  ]
+ },
+ "F01": {
+  "checks": [
+   "relink unchanged exports (file hash, embedded IDs)",
+   "renamed file relinks once its print is chosen"
+  ]
+ },
+ "F02": {
+  "checks": [
+   "180° graded file: turn found by the picture, confirmation required",
+   "graded file without a profile: the export's profile is offered"
+  ]
+ },
+ "F03": {
+  "checks": [
+   "TS1 a fresh preview matches the current print",
+   "UX-08 the composite preview and the final output use the print's mask",
+   "FREEZE D06"
+  ]
+ },
+ "F04": {
+  "checks": [
+   "UX-08 new prints get the natural blend by default",
+   "UX-09 drag right (mouse)"
+  ],
+  "tests": [
+   "NaturalBlend.UnchangedEditStaysBitExactWithEveryMask"
+  ]
+ },
+ "F05": {
+  "checks": [
+   "final exports",
+   "synthetic frame exports"
+  ]
+ },
+ "F06": {
+  "checks": [
+   "synthetic frame exports"
+  ],
+  "tests": [
+   "SyntheticFrame.LayoutModes",
+   "SyntheticFrame.SampleFrameColorIsTheBandMedian"
+  ]
+ },
+ "F07": {
+  "checks": [
+   "final exports"
+  ],
+  "tests": [
+   "Composite.LowerDepthNeedsConsent"
+  ]
+ },
+ "F08": {
+  "checks": [
+   "final exports",
+   "round trip bit-exact (frame and image)"
+  ],
+  "tests": [
+   "Composite.SizeAndAspectChecks"
+  ]
+ },
+ "G01": {
+  "checks": [
+   "FREEZE G01"
+  ]
+ },
+ "G02": {
+  "checks": [
+   "image areas exported",
+   "final exports"
+  ],
+  "note": "exports with no selection run on every print"
+ },
+ "G03": {
+  "checks": [
+   "TS3 export interrupted by opening a project: cancelled",
+   "TS4 a failing job ends as failed"
+  ]
+ },
+ "H01": {
+  "checks": [
+   "FREEZE H01",
+   "UX-01 default off: new scans use the default manual count"
+  ]
+ },
+ "H02": {
+  "checks": [
+   "FK-009 every visible text has glyphs"
+  ],
+  "ci": "tools/check-i18n.py; the text checks run in Chinese in CI (--scenario text)"
+ },
+ "H03": {
+  "checks": [
+   "FREEZE H03"
+  ]
+ },
+ "H04": {
+  "ci": "tools/check-no-network.py (no network code in the app or core)"
+ },
+ "H05": {
+  "checks": [
+   "FREEZE H05",
+   "UX-03 Shift tap while typing in a text field"
+  ]
+ },
+ "H06": {
+  "checks": [
+   "UX-10 a rail width dragged with the grip and a folded panel are stored for the next start"
+  ]
+ },
+ "I01": {
+  "tests": [
+   "eval_corpus",
+   "realeval_fixture"
+  ],
+  "note": "fkcli eval / realeval in CTest; fkcli roundtrip in the round-trip checks"
+ },
+ "I02": {
+  "tests": [
+   "eval_corpus"
+  ],
+  "note": "fkfixture writes the corpus and every CI self-test scan"
+ },
+ "I03": {
+  "checks": [
+   "detection finished"
+  ],
+  "ci": "every CI app job runs --self-test and the scenarios miniswhite, text, memory"
+ },
+ "J01": {
+  "ci": "release.yml: tools/release/test-macos-dmg.sh (mount, check, copy, run arm64 and x86_64, upgrade and rollback)"
+ },
+ "J02": {
+  "ci": "release.yml: tools/release/test-windows-install.sh (install, upgrade from published releases, rollback, uninstall) and the unpacked ZIP"
+ },
+ "J03": {
+  "checks": [
+   "FK-011 another monitor's profile: the proxy is converted again"
+  ]
+ }
+}

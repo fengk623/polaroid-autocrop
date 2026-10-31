@@ -9,9 +9,10 @@
 | C ABI | C11 test | not built (the C ABI is planned, ADR-0007) | every CI job |
 | Integration | `fkcli` scripts | `tests/eval_corpus.cmake`, `tests/realeval_fixture.cmake` (CTest) | every CI job |
 | Detection eval | `fkfixture` + `fkcli eval` | CTest label `eval` | every CI job (small corpus), nightly (large) |
-| UI | `--self-test` (real controllers, injected input, offscreen; scenarios `relink`, `count`, `upright`, `miniswhite`, `memory`, `text`) | `app/src/SelfTest.cpp` (no Qt Quick Test suite is built) | Linux + macOS + Windows CI |
+| UI | `--self-test` (real controllers, injected input, offscreen; scenarios `relink`, `count`, `upright`, `miniswhite`, `memory`, `text`, `freeze`) | `app/src/SelfTest.cpp` (no Qt Quick Test suite is built) | Linux + macOS + Windows CI |
 | Compatibility | GoogleTest on files written by earlier releases' own code, and a rollback round trip through the newest one (`Compat.*`, FK-014) | `tests/core/test_compat.cpp`, `tests/data/compat/` (`tools/compat/make-fixtures.sh`) | every CI job |
 | Packages | the packages as the user receives them: contents, licences, BUILDINFO, version (`tools/release/check-package.py`); DMG mounted, app copied and run, upgrade/rollback by replacing it (`tools/release/test-macos-dmg.sh`); ZIP unpacked and run; installer install/upgrade from every published release/rollback/uninstall with the user's data checked (`tools/release/test-windows-install.sh`) | `tools/release/` | `release.yml` on every PR into `main` or a unit branch |
+| Feature freeze regression | every entry of `docs/v1/FEATURE-FREEZE.md` mapped to its evidence (`tests/freeze-regression.json`): self-test checks (“FREEZE <ID> …” for those no other section covers), core tests, CI steps or a manual reason; `tools/freeze-regression.py` | `tools/freeze-regression.py` | CI docs job (mapping), after the app self-test on every platform (results) |
 | Real windows | manual / computer-use capture | `docs/HUMAN-VERIFICATION.md` | before release |
 | Performance | `fkcli perf` | `fkcli perf`, self-test `--scenario memory`, `tools/memory-summary.py` | nightly + before release |
 

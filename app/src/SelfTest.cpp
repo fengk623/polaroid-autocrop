@@ -23,6 +23,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLineF>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRectF>
@@ -34,6 +35,7 @@
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <set>
@@ -3380,6 +3382,431 @@ int SelfTest::scenarioMinIsWhite() {
     return allOk_ ? 0 : 1;
 }
 
+void SelfTest::runFreezeRegression() {
+    const QString d = QDir(dir_).filePath(QStringLiteral("freeze"));
+    QDir(d).removeRecursively();
+    const QString folder = QDir(d).filePath(QStringLiteral("scans"));
+    QDir().mkpath(folder);
+    const QString fileA = QDir(folder).filePath(QStringLiteral("roll-a.tif"));
+    const QString fileB = QDir(folder).filePath(QStringLiteral("roll-b.tif"));
+    const bool copied = QFile::copy(scan_, fileA) && QFile::copy(scan_, fileB);
+    {
+        QFile note(QDir(folder).filePath(QStringLiteral("notes.txt")));
+        if (note.open(QIODevice::WriteOnly)) note.write("not a scan");
+    }
+    const bool mac = window_->property("isMac").toBool();
+    const QString macWhy =
+        QStringLiteral("macOS: the shortcut belongs to the native menu bar, which the offscreen "
+                       "window does not have; the menu item calls the same command");
+    auto settle = [] {
+        for (int i = 0; i < 5; ++i)
+            QCoreApplication::processEvents();
+    };
+    auto press = [&](int k, Qt::KeyboardModifiers m, const QString& text) {
+        key(k, m, true, text);
+        key(k, m, false, text);
+        settle();
+    };
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 400);
+
+    // A04 folder import: every TIFF of the folder, nothing else
+    app_->newProject();
+    app_->importFolder(QUrl::fromLocalFile(folder));
+    app_->waitIdle(300000);
+    settle();
+    QString idA, idB;
+    for (const auto& sc : app_->project().scans) {
+        const QString name = QFileInfo(toQ(sc.path)).fileName();
+        if (name == QLatin1String("roll-a.tif")) idA = toQ(sc.scanId);
+        if (name == QLatin1String("roll-b.tif")) idB = toQ(sc.scanId);
+    }
+    const int scanCount = static_cast<int>(app_->project().scans.size());
+    check(QStringLiteral("FREEZE A04 importing a folder adds every TIFF in it and nothing else"),
+          copied && scanCount == 2 && !idA.isEmpty() && !idB.isEmpty(),
+          QStringLiteral("%1 scans").arg(scanCount));
+    if (idA.isEmpty() || idB.isEmpty()) {
+        app_->newProject();
+        return;
+    }
+    QQuickItem* canvas = qobject_cast<QQuickItem*>(findCanvas());
+    if (!canvas) return;
+    auto focusCanvas = [&] {
+        canvas->forceActiveFocus();
+        settle();
+    };
+    app_->selectScan(idA);
+    settle();
+    const int perScan = app_->currentScan().value("itemCount").toInt();
+
+    // C13 navigation keys
+    focusCanvas();
+    const QString first = app_->currentItemId();
+    press(Qt::Key_Right, Qt::NoModifier, {});
+    const QString second = app_->currentItemId();
+    press(Qt::Key_Left, Qt::NoModifier, {});
+    const QString back = app_->currentItemId();
+    press(Qt::Key_Right, Qt::ShiftModifier, {});
+    const QString nextScan = app_->currentScanId();
+    press(Qt::Key_Left, Qt::ShiftModifier, {});
+    check(QStringLiteral("FREEZE C13 ← / → step through the prints, Shift+← / → through the scans"),
+          perScan > 1 && !first.isEmpty() && second != first && back == first && nextScan == idB &&
+              app_->currentScanId() == idA,
+          QStringLiteral("prints %1, after → %2, after ← %3, Shift+→ scan %4, Shift+← scan %5")
+              .arg(perScan)
+              .arg(second != first)
+              .arg(back == first)
+              .arg(nextScan == idB)
+              .arg(app_->currentScanId() == idA));
+
+    // D01 view keys, D06 compare keys in the composite view
+    QStringList modes;
+    const std::pair<int, const char*> viewKeys[] = {
+        {Qt::Key_1, "1"}, {Qt::Key_2, "2"}, {Qt::Key_3, "3"}, {Qt::Key_4, "4"}};
+    for (const auto& [k, t] : viewKeys) {
+        press(k, Qt::NoModifier, QString::fromLatin1(t));
+        modes << canvas->property("mode").toString();
+    }
+    check(QStringLiteral("FREEZE D01 keys 1–4 switch the view: scan, print, image area, composite"),
+          modes == QStringList{QStringLiteral("scan"), QStringLiteral("print"), QStringLiteral("image"),
+                               QStringLiteral("composite")},
+          modes.join(QStringLiteral(", ")));
+    press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    const bool compareOn = canvas->property("compare").toBool();
+    press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    const bool compareOff = !canvas->property("compare").toBool();
+    press(Qt::Key_Backslash, Qt::NoModifier, QStringLiteral("\\"));
+    const bool originalOn = canvas->property("showOriginal").toBool();
+    press(Qt::Key_Backslash, Qt::NoModifier, QStringLiteral("\\"));
+    const bool originalOff = !canvas->property("showOriginal").toBool();
+    check(
+        QStringLiteral("FREEZE D06 composite view: Y toggles the split comparison, \\ original ↔ composite"),
+        compareOn && compareOff && originalOn && originalOff,
+        QStringLiteral("Y %1/%2, \\ %3/%4").arg(compareOn).arg(compareOff).arg(originalOn).arg(originalOff));
+    press(Qt::Key_1, Qt::NoModifier, QStringLiteral("1"));
+
+    // D02 zoom: Z on every platform; the Ctrl shortcuts (menu items on macOS)
+    QMetaObject::invokeMethod(canvas, "fit");
+    settle();
+    press(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
+    const double zAt = canvas->property("zoomPercent").toDouble();
+    press(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
+    const bool zBack = canvas->property("atFit").toBool();
+    check(QStringLiteral("FREEZE D02 Z toggles fit ↔ 100 %"), std::abs(zAt - 100.0) < 0.01 && zBack,
+          QStringLiteral("after Z %1 %, again at fit %2").arg(zAt).arg(zBack));
+    if (mac) {
+        skip(QStringLiteral("FREEZE D02 Ctrl+1 100 %, Ctrl+0 fit, Ctrl+= / Ctrl+− zoom in and out"), macWhy);
+    } else {
+        press(Qt::Key_1, Qt::ControlModifier, QStringLiteral("1"));
+        const double z100 = canvas->property("zoomPercent").toDouble();
+        press(Qt::Key_0, Qt::ControlModifier, QStringLiteral("0"));
+        const bool fit = canvas->property("atFit").toBool();
+        const double zFit = canvas->property("zoomPercent").toDouble();
+        press(Qt::Key_Equal, Qt::ControlModifier, QStringLiteral("="));
+        const double zIn = canvas->property("zoomPercent").toDouble();
+        press(Qt::Key_Minus, Qt::ControlModifier, QStringLiteral("-"));
+        const double zOut = canvas->property("zoomPercent").toDouble();
+        check(QStringLiteral("FREEZE D02 Ctrl+1 100 %, Ctrl+0 fit, Ctrl+= / Ctrl+− zoom in and out"),
+              std::abs(z100 - 100.0) < 0.01 && fit && zIn > zFit && zOut < zIn,
+              QStringLiteral("Ctrl+1 %1 %, Ctrl+0 fit %2 (%3 %), Ctrl+= %4 %, Ctrl+− %5 %")
+                  .arg(z100)
+                  .arg(fit)
+                  .arg(zFit)
+                  .arg(zIn)
+                  .arg(zOut));
+        QMetaObject::invokeMethod(canvas, "fit");
+        settle();
+    }
+
+    // D05 overlays, C12 select all, D09 full screen, H01 settings — menu shortcuts
+    if (mac) {
+        for (const char* n :
+             {"FREEZE D05 Ctrl+Shift+H hides and shows the overlays",
+              "FREEZE C12 Ctrl+A selects every print of the project",
+              "FREEZE D09 F11 enters and leaves full screen", "FREEZE H01 Ctrl+, opens Settings"})
+            skip(QString::fromUtf8(n), macWhy);
+    } else {
+        focusCanvas();
+        const bool shown = canvas->property("showOverlays").toBool();
+        press(Qt::Key_H, Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("H"));
+        const bool hidden = canvas->property("showOverlays").toBool() != shown;
+        press(Qt::Key_H, Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("H"));
+        check(QStringLiteral("FREEZE D05 Ctrl+Shift+H hides and shows the overlays"),
+              hidden && canvas->property("showOverlays").toBool() == shown);
+        press(Qt::Key_A, Qt::ControlModifier, QStringLiteral("a"));
+        const int selected = static_cast<int>(app_->selectedItemIds().size());
+        const int allPrints = app_->counts().value("prints").toInt();
+        check(QStringLiteral("FREEZE C12 Ctrl+A selects every print of the project"),
+              selected == allPrints && allPrints == 2 * perScan,
+              QStringLiteral("%1 of %2").arg(selected).arg(allPrints));
+        app_->selectItem(first);
+        settle();
+        const QSize size = window_->size();
+        press(Qt::Key_F11, Qt::NoModifier, {});
+        waitFor([&] { return window_->visibility() == QWindow::FullScreen; }, 2000);
+        const bool full = window_->visibility() == QWindow::FullScreen;
+        press(Qt::Key_F11, Qt::NoModifier, {});
+        waitFor([&] { return window_->visibility() != QWindow::FullScreen; }, 2000);
+        const bool windowed = window_->visibility() != QWindow::FullScreen;
+        window_->resize(size);
+        settle();
+        check(QStringLiteral("FREEZE D09 F11 enters and leaves full screen"), full && windowed,
+              QStringLiteral("full screen %1, back %2").arg(full).arg(windowed));
+        focusCanvas();
+        press(Qt::Key_Comma, Qt::ControlModifier, QStringLiteral(","));
+        const bool settingsOpen = waitFor(
+            [&] {
+                QVariant r;
+                QMetaObject::invokeMethod(window_, "dialogOpen", Q_RETURN_ARG(QVariant, r));
+                return r.toBool();
+            },
+            3000);
+        QQuickItem* defaultCount = findItem(QStringLiteral("defaultAutoCount"));
+        check(QStringLiteral("FREEZE H01 Ctrl+, opens Settings (appearance, language, default print count)"),
+              settingsOpen && defaultCount && defaultCount->isVisible());
+        QMetaObject::invokeMethod(window_, "closeDialogs");
+        waitFor([] { return false; }, 600);
+    }
+
+    // H03 About: version, full commit, build
+    QMetaObject::invokeMethod(window_, "showAbout");
+    waitFor([] { return false; }, 400);
+    const QString commit = app_->buildCommit();
+    QQuickItem* aboutText = findItemIf([&](QQuickItem* it) {
+        return it->isVisible() && it->metaObject()->indexOfProperty("text") >= 0 &&
+               it->property("text").toString().contains(commit);
+    });
+    QQuickItem* versionText = findItemIf([&](QQuickItem* it) {
+        return it->isVisible() && it->metaObject()->indexOfProperty("text") >= 0 &&
+               it->property("text").toString().contains(app_->version());
+    });
+    check(QStringLiteral("FREEZE H03 About shows the version, the full commit and the build"),
+          aboutText && versionText && aboutText->property("text").toString().contains(app_->buildId()),
+          aboutText ? aboutText->property("text").toString().simplified().left(120)
+                    : QStringLiteral("not found"));
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+
+    // D10 info chips: ICC, bit depth, DPI of the scan
+    {
+        const QVariantMap sc = app_->currentScan();
+        const QString dpi = QString::number(qRound(sc.value("dpi").toDouble()));
+        const QString icc = sc.value("icc").toString().left(20);
+        auto shows = [&](const QString& part) {
+            return findItemIf([&](QQuickItem* it) {
+                       return it->isVisible() && it->metaObject()->indexOfProperty("text") >= 0 &&
+                              it->property("text").toString().contains(part);
+                   }) != nullptr;
+        };
+        check(QStringLiteral("FREEZE D10 the canvas shows the scan's ICC profile, bit depth and DPI"),
+              shows(icc) &&
+                  (shows(QStringLiteral("%1-bit").arg(sc.value("bits").toInt())) ||
+                   shows(QStringLiteral("%1 位").arg(sc.value("bits").toInt()))) &&
+                  shows(dpi + QStringLiteral(" dpi")),
+              QStringLiteral("%1 · %2-bit · %3 dpi").arg(icc).arg(sc.value("bits").toInt()).arg(dpi));
+    }
+
+    // C04 the corner fields: one focused and left without typing changes nothing (the field shows the value
+    // rounded to 0.1 px; committing that would move the corner and mark the boundary edited)
+    {
+        app_->setSetting(QStringLiteral("rightTab"), 0);
+        app_->selectItem(first);
+        settle();
+        const QVariant before = app_->currentItem().value("outer");
+        const QString sourceBefore = app_->currentItem().value("outerSource").toString();
+        QQuickItem* cornerField = findItemIf([](QQuickItem* it) {
+            return it->isVisible() && it->isEnabled() && it->metaObject()->indexOfProperty("decimals") >= 0 &&
+                   it->property("unit").toString() == QLatin1String("x");
+        });
+        if (cornerField) {
+            cornerField->forceActiveFocus();
+            settle();
+            focusCanvas();
+            const QVariant after = app_->currentItem().value("outer");
+            const QVariantList p0 = before.toMap().value("points").toList().value(0).toList();
+            const QVariantList p1 = after.toMap().value("points").toList().value(0).toList();
+            check(QStringLiteral("FREEZE C04 a corner field focused and left without typing changes nothing"),
+                  after == before && app_->currentItem().value("outerSource").toString() == sourceBefore,
+                  QStringLiteral("corner x %1 → %2, source %3 → %4")
+                      .arg(p0.value(0).toDouble(), 0, 'f', 4)
+                      .arg(p1.value(0).toDouble(), 0, 'f', 4)
+                      .arg(sourceBefore, app_->currentItem().value("outerSource").toString()));
+        } else {
+            skip(QStringLiteral("FREEZE C04 a corner field focused and left without typing changes nothing"),
+                 QStringLiteral("no corner field visible"));
+        }
+    }
+
+    // C11 exclude / include with X; H05 single keys do nothing while typing
+    focusCanvas();
+    app_->selectItem(first);
+    settle();
+    const QVariantMap countsBefore = app_->counts();
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    const bool excluded = app_->currentItem().value("excluded").toBool();
+    const QVariantMap countsExcluded = app_->counts();
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    check(QStringLiteral("FREEZE G01 the batch counts follow the prints: total, excluded, to review"),
+          countsBefore.value("prints").toInt() == 2 * perScan &&
+              countsBefore.value("excluded").toInt() == 0 && countsExcluded.value("excluded").toInt() == 1 &&
+              countsExcluded.value("prints").toInt() == countsBefore.value("prints").toInt() &&
+              app_->counts().value("excluded").toInt() == 0 &&
+              countsBefore.contains(QStringLiteral("needReview")),
+          QStringLiteral("prints %1, excluded %2 → %3 → %4, to review %5")
+              .arg(countsBefore.value("prints").toInt())
+              .arg(countsBefore.value("excluded").toInt())
+              .arg(countsExcluded.value("excluded").toInt())
+              .arg(app_->counts().value("excluded").toInt())
+              .arg(countsBefore.value("needReview").toInt()));
+    check(QStringLiteral("FREEZE C11 X excludes the selected print from the batch, X again includes it"),
+          excluded && !app_->currentItem().value("excluded").toBool());
+    QQuickItem* field = findItemIf([](QQuickItem* it) {
+        return it->isVisible() && it->isEnabled() &&
+               it->metaObject()->indexOfProperty("cursorPosition") >= 0 &&
+               it->metaObject()->indexOfProperty("readOnly") >= 0 && !it->property("readOnly").toBool();
+    });
+    if (field) {
+        field->forceActiveFocus();
+        settle();
+        const QString modeBefore = canvas->property("mode").toString();
+        press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+        press(Qt::Key_2, Qt::NoModifier, QStringLiteral("2"));
+        check(QStringLiteral("FREEZE H05 single-key shortcuts do not fire while typing in a field"),
+              window_->activeFocusItem() == field && !app_->currentItem().value("excluded").toBool() &&
+                  canvas->property("mode").toString() == modeBefore,
+              QString::fromLatin1(field->metaObject()->className()));
+        press(Qt::Key_Escape, Qt::NoModifier, {});
+        focusCanvas();
+    } else {
+        skip(QStringLiteral("FREEZE H05 single-key shortcuts do not fire while typing in a field"),
+             QStringLiteral("no editable text field visible in this layout"));
+    }
+
+    // C10 reviewed and next (Ctrl+Return; the menu item on macOS calls the same command)
+    app_->selectItem(first);
+    settle();
+    if (mac)
+        app_->reviewAndNext();
+    else
+        press(Qt::Key_Return, Qt::ControlModifier, QStringLiteral("\r"));
+    settle();
+    bool firstReviewed = false;
+    for (const auto& sc : app_->project().scans)
+        for (const auto& it : sc.items)
+            if (toQ(it.itemId) == first) firstReviewed = it.reviewed;
+    check(QStringLiteral("FREEZE C10 reviewed and next: the print is marked reviewed, the next one selected"),
+          firstReviewed && app_->currentItemId() != first,
+          QStringLiteral("%1 · reviewed %2, moved %3")
+              .arg(mac ? QStringLiteral("command") : QStringLiteral("Ctrl+Return"))
+              .arg(firstReviewed)
+              .arg(app_->currentItemId() != first));
+
+    // C07 reset to detected; C06 snap Outer to the paper edges
+    app_->selectItem(first);
+    settle();
+    auto outerOf = [&] { return app_->currentItem().value("outer").toMap().value("points").toList(); };
+    auto corner = [](const QVariantList& pts, int i) {
+        const QVariantList p = pts.value(i).toList();
+        return QPointF(p.value(0).toDouble(), p.value(1).toDouble());
+    };
+    const QVariantList detected = outerOf();
+    const QPointF c0 = corner(detected, 0);
+    app_->setOuterNumeric(first, 0, c0.x() + 8, c0.y() + 8);
+    settle();
+    const bool edited = QLineF(corner(outerOf(), 0), c0).length() > 5;
+    app_->resetToDetected(first);
+    settle();
+    const double afterReset = QLineF(corner(outerOf(), 0), c0).length();
+    check(QStringLiteral("FREEZE C07 reset to detected restores the detected boundary"),
+          edited && afterReset < 0.01 &&
+              app_->currentItem().value("outerSource").toString() != QLatin1String("manual"),
+          QStringLiteral("edited %1, corner %2 px from detected after reset")
+              .arg(edited)
+              .arg(afterReset, 0, 'f', 3));
+    app_->setOuterNumeric(first, 0, c0.x() + 8, c0.y() + 8);
+    settle();
+    const double beforeSnap = QLineF(corner(outerOf(), 0), c0).length();
+    app_->snapOuter(first);
+    app_->waitIdle(120000);
+    settle();
+    const double afterSnap = QLineF(corner(outerOf(), 0), c0).length();
+    check(QStringLiteral("FREEZE C06 snap to edges moves a corner pulled inside the paper back to its edge"),
+          afterSnap < beforeSnap && afterSnap < 4.0,
+          QStringLiteral("corner %1 px from the detected edge before, %2 px after")
+              .arg(beforeSnap, 0, 'f', 2)
+              .arg(afterSnap, 0, 'f', 2));
+    app_->resetToDetected(first);
+    settle();
+
+    // B08 templates: save the layout, detect with it, delete it
+    const QString jig = QStringLiteral("Freeze regression jig");
+    const bool saved = app_->saveTemplate(jig);
+    settle();
+    const bool listed = app_->templates().contains(jig);
+    app_->detectScan(idA, jig);
+    app_->waitIdle(300000);
+    app_->selectScan(idA);
+    settle();
+    const int byTemplate = app_->currentScan().value("itemCount").toInt();
+    const QString source = app_->currentItem().value("outerSource").toString();
+    app_->deleteTemplate(jig);
+    settle();
+    check(
+        QStringLiteral("FREEZE B08 a template saves the layout, detects the same prints, and can be deleted"),
+        saved && listed && byTemplate == perScan && source == QLatin1String("template") &&
+            !app_->templates().contains(jig),
+        QStringLiteral("saved %1, listed %2, prints %3 of %4, source %5, deleted %6")
+            .arg(saved)
+            .arg(listed)
+            .arg(byTemplate)
+            .arg(perScan)
+            .arg(source)
+            .arg(!app_->templates().contains(jig)));
+
+    // A10 relocation: the scan moved away is found again in the folder the user points to
+    const QString proj = QDir(d).filePath(QStringLiteral("freeze.fkproj"));
+    const bool projSaved = app_->saveProjectAs(QUrl::fromLocalFile(proj));
+    app_->newProject();
+    const QString moved = QDir(d).filePath(QStringLiteral("moved"));
+    QDir().mkpath(moved);
+    const bool movedOk = QFile::rename(fileA, QDir(moved).filePath(QStringLiteral("roll-a.tif")));
+    app_->openProject(QUrl::fromLocalFile(proj));
+    app_->waitIdle(300000);
+    const QStringList recent = app_->settings().value("recentProjects").toStringList();
+    check(QStringLiteral("FREEZE A08 an opened project heads the recent projects list"),
+          !recent.isEmpty() && QFileInfo(recent.first()) == QFileInfo(proj), recent.value(0));
+    app_->selectScan(idA);
+    settle();
+    const bool missing = app_->currentScan().value("state").toString() == QLatin1String("missing");
+    app_->relocateMissing(QUrl::fromLocalFile(moved));
+    app_->waitIdle(300000);
+    app_->selectScan(idA);
+    settle();
+    const QVariantMap relocated = app_->currentScan();
+    check(QStringLiteral("FREEZE A10 a moved scan shows as missing and is found again in the folder chosen"),
+          projSaved && movedOk && missing &&
+              relocated.value("state").toString() != QLatin1String("missing") &&
+              QFileInfo(relocated.value("path").toString()).absolutePath() ==
+                  QFileInfo(moved).absoluteFilePath() &&
+              relocated.value("itemCount").toInt() == perScan,
+          QStringLiteral("missing before %1, state after %2, prints %3")
+              .arg(missing)
+              .arg(relocated.value("state").toString())
+              .arg(relocated.value("itemCount").toInt()));
+
+    // A11 removing a scan from the project leaves its file alone
+    app_->removeScan(idB);
+    app_->waitIdle(60000);
+    settle();
+    check(QStringLiteral("FREEZE A11 removing a scan from the project leaves its file untouched"),
+          app_->project().scans.size() == 1 && QFileInfo::exists(fileB),
+          QStringLiteral("%1 scans, file kept %2")
+              .arg(app_->project().scans.size())
+              .arg(QFileInfo::exists(fileB)));
+    app_->newProject();
+    focusCanvas();
+}
+
 void SelfTest::runLayout() {
     QMetaObject::invokeMethod(window_, "closeDialogs");
     const QVariantMap saved = app_->settings();
@@ -4448,6 +4875,10 @@ int SelfTest::runScenario(const QString& name) {
     else if (name ==
              QLatin1String("text")) // FK-009: the text and layout matrix alone (CI: English, Chinese, 2×)
         rc = runTextLayout() == 0 && allOk_ ? 0 : 1;
+    else if (name == QLatin1String("freeze")) { // U029: the FEATURE-FREEZE regression section alone
+        runFreezeRegression();
+        rc = allOk_ ? 0 : 1;
+    }
     QJsonObject report{
         {"scenario", name},
         {"version", app_->version()},
@@ -4891,6 +5322,7 @@ int SelfTest::run() {
     runMemoryBudget();
     runDisplayProfile();
     runFormats();
+    runFreezeRegression();
     runLayout();
     runToolbar();
     runTextLayout();

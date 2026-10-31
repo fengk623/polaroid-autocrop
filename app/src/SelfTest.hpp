@@ -89,6 +89,12 @@ class SelfTest : public QObject {
     /// FK-012 (U026): a Linear DNG export given back (relink, drag and drop) is refused with guidance and
     /// never imported as a scan.
     void runFormats();
+    /// U029 (UX-12): the full regression of docs/v1/FEATURE-FREEZE.md for the features no other section
+    /// exercises — folder import, relocation, removing a scan, templates, reset and snap, review and exclude,
+    /// navigation and view keys, zoom, overlays, compare, full screen, settings, About, typing guard. Checks
+    /// are named "FREEZE <id> …" (tools/freeze-regression.py maps every entry of the freeze list to its
+    /// evidence).
+    void runFreezeRegression();
     /// UX-10 (U022): edge strips fold and unfold each panel (mouse, keyboard, shortcuts), the filmstrip spans
     /// the window, the canvas refits the whole scan and clicks still land on the print under the pointer
     /// after folding and resizing; widths and folded state are stored; Reset Layout.
