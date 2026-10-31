@@ -643,3 +643,10 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     tip.
   - `scenarioUpright` compared fixed pixel rectangles (260,60 …) for the canvas and the filmstrip; with the new
     layout they come from the items.
+  - Results (U022 build): fixture 205 pass (1×), 205 (`QT_SCALE_FACTOR=2`); Chinese interface first 201 + 4 failures
+    — older checks only matched English text ("straightened", "8 bits", "replaced by a different picture", "changed
+    since it was imported") [tests written for English only] → accept the Chinese text too → 205 pass. polaroid_92
+    200 pass + 3 skips (UX-08 ×2, UX-10 click on another print: one print); img20260702_0005 198 pass + 5 skips (as
+    U026). One known issue each (UX-06 top bar).
+  - Seen in the Chinese run, not fixed here: the depth-reduction message ends with an untranslated developer note
+    "(set allowDepthReduction after the user confirms)" → U024 (text and layout checks).
