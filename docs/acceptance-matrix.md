@@ -19,7 +19,7 @@ Each release acceptance item → PRD → RFC → code → test → CI job → ev
 | 13 | Jig templates; batch | F09, F10 | RFC-0004, RFC-0010 | core/project, core/jobs | test_templates, test_batch | ci.yml | ☐ |
 | 14 | Projects save/restore/migrate/relocate | F11 | RFC-0009 | core/src/project.cpp | test_project | ci.yml | ◐ core |
 | 15 | Preview = export geometry | F04 | RFC-0002 | core/geometry | test_geometry_consistency | ci.yml | ☐ |
-| 16 | Memory independent of batch size; 8 GB tier works | F10, F14 | RFC-0015 | core | perf batch test; HV-05 | nightly.yml | ☐ HV |
+| 16 | Memory independent of batch size; 8 GB tier works | F10, F14 | RFC-0014, RFC-0015 | core/cache, app | `CacheLedger.*`; self-test FK-005 checks; `--scenario memory` batches 1/10/50/100 (PERFORMANCE-BUDGET §3); HV-05 | ci.yml, release.yml | ☐ HV |
 | 17 | Cache/temp bounded and clearable | F14 | RFC-0014 | core/cache | test_cache | ci.yml | ☐ |
 | 18 | Offline | F14 | SECURITY-PRIVACY | — | check-no-network | ci.yml | ☐ |
 | 19 | UI learns from SpektraLab, platform conventions, real-window captures | F15 | RFC-0011 | app/ | snapshots; HV-02, HV-03 | ci.yml | ☐ HV |

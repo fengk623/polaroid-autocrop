@@ -129,6 +129,13 @@ struct CompositeRequest { const Item* item; const Sidecar* edit; const ImageBuff
   std::vector<uint8_t> editedIcc; RelinkActions actions; MaskParams mask;
   GeometryMode outputMode; WriteOptions write; ColorPolicy color; path output; XmpIds ids; };
 Result<ExportReport> compositeItem(ImageSource&, const CompositeRequest&, const CancelToken&, const ProgressFn&);
+// UX-08 natural blend: a print's mask choice (width in mm or px), presets, the one conversion, edge measurement
+struct MaskChoice { MaskMode mode; double width; bool mm; };
+inline constexpr double kNaturalFeatherMm = 0.05, kNaturalInsetMm = 0.02, kNaturalFeatherPx = 2.4, kNaturalInsetPx = 0.9;
+MaskChoice naturalBlend(MaskMode, bool dpiReliable);  MaskParams resolveMask(const MaskChoice&, double dpi);
+inline constexpr double kStrongEdgeChange = 10.0;
+double edgeChange(const ImageBuffer& composite, const ImageBuffer& scanOnly, const Shape& inner, Vec2 origin,
+                  double scale, double pxPerMm);
 ```
 
 ## 7. Project, sidecar, template (`fk/project.hpp`) — RFC-0009, `docs/project-format.md`
@@ -143,6 +150,21 @@ applied, else the scan's view rotation, never both; `void updateCountWarning(Sca
 ## 8. Colour, metadata, cache, jobs, diagnostics, capabilities
 See RFC-0012/13/14/10/15 and ADR-0007. Key types: `Profile`, `Transform`, `MetadataSet`, `PrivacyPreset {keep_all_safe=0, remove_location=1, remove_identity=2}`,
 `DiskCache`, `JobQueue`, `MemoryStats`, `BufferAccounting`, `Capabilities {desktop_full, mobile_lite}`.
+
+In-memory cache budget (`fk/cache.hpp`, RFC-0014 §Memory budget, FK-005):
+```cpp
+class CacheLedger { public:
+  void setBudget(uint64_t); void put(const std::string& key, uint64_t bytes, bool kept = false);
+  void touch(const std::string&); void erase(const std::string&); void setPinned(std::set<std::string>);
+  uint64_t reserve(uint64_t bytes); void release(uint64_t token); uint64_t reserved() const;
+  std::vector<std::string> enforce();               // LRU keys to drop: total ≤ max(budget − reserved, fixed)
+  std::vector<std::string> shrinkTo(uint64_t bytes); // memory pressure
+  uint64_t bytes() const; uint64_t bytes(const std::string& prefix) const; uint64_t fixedBytes() const;
+  size_t count(const std::string& prefix = {}) const; uint64_t evictions() const; };
+uint64_t defaultCacheBudget(uint64_t physicalBytes); // RAM/16, 256 MB … 2 GB
+struct SystemMemory { uint64_t totalBytes, availableBytes; }; SystemMemory systemMemory(); // fk/memory.hpp
+uint64_t TiffSource::cachedBytes() const;            // decoded strip/tile cache + line buffers
+```
 
 ## 9. C ABI (`fk/fk_c.h`)
 ```c
@@ -162,3 +184,5 @@ void fk_free(void*);
 | 1.0 | Initial API. |
 | 0.7.0-alpha.3 | `editShape`, `EditInput`, `EditHandle`, `ellipseHandle`, `isCircle` (UX-03). |
 | 0.7.0-alpha.4 | `quarterTurnMatrix`, `quarterTurnSize`, `ScanRecord::rotation`, `rotateScanView`, `exportTurns` (UX-04). |
+| 0.7.0-alpha.5 | `MaskChoice`, `naturalBlend`, `resolveMask`, `edgeChange`, `CompositeSettings::mask`/`maskSet`, `deltaE2000` (UX-08). |
+| 0.7.0-alpha.7 | `CacheLedger`, `defaultCacheBudget`, `systemMemory`, `TiffSource::cachedBytes` (FK-005). |

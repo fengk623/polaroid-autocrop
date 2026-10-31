@@ -337,9 +337,10 @@ json itemJson(const ItemRecord& it) {
         {"excluded", it.excluded},
         {"edits", edits},
         {"composite",
-         {{"maskMode", maskModeName(it.composite.maskMode)},
-          {"featherPx", it.composite.featherPx},
-          {"preserveEdgePx", it.composite.preserveEdgePx},
+         {{"mask", it.composite.maskSet ? json{{"mode", maskModeName(it.composite.mask.mode)},
+                                               {"width", it.composite.mask.width},
+                                               {"unit", it.composite.mask.mm ? "mm" : "px"}}
+                                        : json(nullptr)},
           {"strokes", strokesJson(it.composite.strokes)},
           {"lastOutput", it.composite.lastOutput.empty() ? json(nullptr) : json(it.composite.lastOutput)},
           {"lastOutputAt", it.composite.lastOutputAt}}},
@@ -400,9 +401,15 @@ ItemRecord itemFrom(const json& j) {
     }
     if (j.contains("composite")) {
         const auto& c = j["composite"];
-        it.composite.maskMode = maskModeFrom(c.value("maskMode", "hard_edge"));
-        it.composite.featherPx = c.value("featherPx", 0.0);
-        it.composite.preserveEdgePx = c.value("preserveEdgePx", 0.0);
+        // UX-08 (0.7.0-alpha.5): the print's own mask; older files carry unused maskMode/featherPx
+        // placeholders
+        if (c.contains("mask") && c["mask"].is_object()) {
+            const auto& m = c["mask"];
+            it.composite.mask.mode = maskModeFrom(m.value("mode", "hard_edge"));
+            it.composite.mask.width = std::max(0.0, m.value("width", 0.0));
+            it.composite.mask.mm = m.value("unit", "px") == "mm";
+            it.composite.maskSet = true;
+        }
         it.composite.strokes = strokesFrom(c.value("strokes", json::array()));
         if (c.contains("lastOutput") && c["lastOutput"].is_string())
             it.composite.lastOutput = c["lastOutput"].get<std::string>();

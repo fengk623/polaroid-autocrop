@@ -62,9 +62,26 @@ void ScanCanvas::setApp(QObject* a) {
             cancelDrag();
             setHandle(std::nullopt);
             if (mode_ != QLatin1String("scan")) fit();
+            // composite mode: another print, or a preview the memory budget gave back (FK-005) — compute it
+            if (mode_ == QLatin1String("composite") && !app_->currentItemId().isEmpty() &&
+                app_->compositePreview(app_->currentItemId().toStdString()).isNull())
+                app_->requestCompositePreview(app_->currentItemId());
             update();
         });
         connect(app_, &AppController::compositePreviewReady, this, [this] {
+            updateBadge();
+            update();
+        });
+        // FK-011: another display profile — the full-resolution patch and the composite preview were
+        // converted for the old one: dropped and asked for again (the proxy comes back through
+        // scanImageChanged)
+        connect(app_, &AppController::displayProfileChanged, this, [this] {
+            detail_ = QImage();
+            reportBytes();
+            ++generation_;
+            scheduleDetail();
+            if (mode_ == QLatin1String("composite") && !app_->currentItemId().isEmpty())
+                app_->requestCompositePreview(app_->currentItemId());
             updateBadge();
             update();
         });
@@ -178,6 +195,7 @@ void ScanCanvas::onScanImage(const QString& scanId) {
     if (newScan || rotation_ != rotationBefore) {
         // another scan, or the same scan turned (UX-04): the content changed shape
         detail_ = QImage();
+        reportBytes();
         cancelDrag();
         if (newScan) setHandle(std::nullopt);
         fit();
@@ -211,6 +229,7 @@ void ScanCanvas::rebuildPyramid() {
               : cs.display.isNull() && !cs.state.isEmpty() ? tr("Loading…")
                                                            : QString();
     if (cs.display.isNull()) {
+        reportBytes();
         Q_EMIT badgeChanged();
         return;
     }
@@ -225,7 +244,17 @@ void ScanCanvas::rebuildPyramid() {
         scanH_ = static_cast<int64_t>(cs.display.height()) * proxyScale_;
         updateDisplayMapping();
     }
+    reportBytes();
     Q_EMIT badgeChanged();
+}
+
+void ScanCanvas::reportBytes() {
+    // FK-005: the canvas's own images count in the cache budget (level 0 is the controller's proxy, shared)
+    if (!app_) return;
+    uint64_t b = detail_.isNull() ? 0 : static_cast<uint64_t>(detail_.sizeInBytes());
+    for (size_t i = 1; i < pyramid_.size(); ++i)
+        b += static_cast<uint64_t>(pyramid_[i].sizeInBytes());
+    app_->setCanvasBytes(b);
 }
 
 const fk::Shape* ScanCanvas::currentShape(bool outer) const {
@@ -391,9 +420,14 @@ void ScanCanvas::scheduleDetail() {
 
 void ScanCanvas::requestDetail() {
     if (!app_ || pyramid_.empty()) return;
-    if (scale_ * proxyScale_ <= 1.05) {
+    // device pixels per scan pixel decide (UX-09 HiDPI run: logical scale alone showed the proxy at 100 % on
+    // a 2× display)
+    if (scale_ * dpr() * proxyScale_ <= 1.05) {
         // the proxy is enough; release the full-resolution image
-        detail_ = QImage();
+        if (!detail_.isNull()) {
+            detail_ = QImage();
+            reportBytes();
+        }
         updateBadge();
         return;
     }
@@ -411,6 +445,8 @@ void ScanCanvas::requestDetail() {
     app_->requestDetail(r, ow, oh, gen, [this, scan](QImage img, QRectF rect, quint64 g) {
         if (scan != scanId_) return; // superseded: another scan is shown
         detail_ = std::move(img);
+        detailProfile_ = currentDisplayProfile().id; // delivered only when made for the current profile
+        reportBytes();
         detailRect_ = rect;
         detailGen_ = g;
         if (g == generation_) detailPending_ = false;
@@ -424,7 +460,7 @@ void ScanCanvas::updateBadge() {
     if (mode_ == QLatin1String("composite") && app_ && !showOriginal_ &&
         !app_->compositePreview(app_->currentItemId().toStdString()).isNull())
         b = QStringLiteral("Preview");
-    else if (scale_ * proxyScale_ <= 1.05 || pyramid_.empty())
+    else if (scale_ * dpr() * proxyScale_ <= 1.05 || pyramid_.empty())
         b = QStringLiteral("Preview");
     else if (!detail_.isNull() && detailGen_ == generation_)
         b = QStringLiteral("Full");
@@ -443,7 +479,7 @@ void ScanCanvas::paint(QPainter* p) {
     if (pyramid_.empty()) return;
     const bool pixelExact = scale_ * dpr() >= 0.999;
     // proxy level: the smallest image that still has ≥ 1 source pixel per ~1.5 screen pixels
-    const double k = scale_ * proxyScale_;
+    const double k = scale_ * dpr() * proxyScale_; // device px per proxy px
     int L = 0;
     while (L + 1 < static_cast<int>(pyramid_.size()) && k * std::pow(2.0, L + 1) <= 1.5)
         ++L;

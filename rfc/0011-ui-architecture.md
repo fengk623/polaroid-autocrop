@@ -82,3 +82,22 @@ Status: Accepted, implemented in U014.
   (`seq`): undo takes the most recent of the two, redo the most recently undone.
 - **Self-test** `runScanRotation` (UX-04) builds a scan with one print four times turned 0/90/180/270°, then clicks
   each print at the screen position computed independently of the canvas, before and after a turn.
+
+## Value fields: drag to adjust, double-click to type (v0.7.0-alpha.6, U016, UX-09)
+
+Status: Accepted, implemented in U016.
+- `NumField.scrubbable` (opt-in; only the mask feather/inset width uses it — UX-09 asks for a consistency review
+  before other fields change). While not editing, the field is read-only and a `MouseArea` over it owns the mouse:
+  press, then a horizontal move past 4 logical px starts a drag; the value follows at 2 logical px per step
+  (Shift ×10, Alt ×0.1), clamped to the field's range, shown live. Logical px make the speed the same on 1× and 2×
+  displays. A click (no move past the threshold) changes nothing and selects nothing.
+- Signals: `scrubStarted` → `App.beginMaskEdit` (remembers the mask); `scrubbed(v)` at most every 100 ms →
+  `App.setItemMaskWidthLive` (no undo step; the canvas's composite preview follows, coalesced); `scrubFinished(v)`
+  → last value + `App.endMaskEdit(commit)` = one undo step for the whole drag; Esc or a lost grab → `scrubCancelled`
+  → `endMaskEdit(false)` restores the value from before the drag.
+- Keyboard input: double-click (or Enter while focused) selects the text for typing; the validator refuses invalid
+  characters; Enter or focus loss commits (one undo step), Esc cancels. Arrow keys step as before.
+- Previews: at most one composite preview per print in flight (RFC-0010 table); outdated results are dropped by
+  generation, so an older preview never replaces the newer value.
+- HiDPI: the full-resolution decision and the proxy level use device pixels per scan pixel (`scale × dpr`); before
+  U016 a 2× display showed the proxy at 100 % (found by running the self-test with `QT_SCALE_FACTOR=2`).

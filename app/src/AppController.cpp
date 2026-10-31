@@ -1,11 +1,13 @@
 #include "AppController.hpp"
 
+#include "MemoryPressure.hpp"
 #include "util.hpp"
 
 #include "fk/color.hpp"
 #include "fk/export.hpp"
 #include "fk/hash.hpp"
 #include "fk/image_io.hpp"
+#include "fk/memory.hpp"
 #include "fk/metadata.hpp"
 #include "fk/product_info.hpp"
 #include "fk/relink.hpp"
@@ -29,13 +31,21 @@
 #include <cmath>
 #include <limits>
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 namespace fkapp {
 
 namespace {
 
-constexpr int kThumbLong = 320;   // scan thumbnails (left rail)
-constexpr int kItemThumbH = 216;  // filmstrip cells are 108 px tall at 2× density
-constexpr size_t kDisplayLru = 4; // display images kept in memory (≈ 26 MB each)
+constexpr int kThumbLong = 320;  // scan thumbnails (left rail)
+constexpr int kItemThumbH = 216; // filmstrip cells are 108 px tall at 2× density
+constexpr uint64_t kMB = 1ull << 20;
+constexpr uint64_t kJobDecodeCache = 128 * kMB; // TiffOpenOptions default: decoded strips a job may hold
+uint64_t imageBytes(const QImage& i) {
+    return i.isNull() ? 0 : static_cast<uint64_t>(i.sizeInBytes());
+}
 
 QString confidenceClass(double c) {
     if (c >= fk::kHighConfidence) return QStringLiteral("high");
@@ -213,6 +223,29 @@ AppController::AppController(QObject* parent)
                             QStringLiteral("FrameKeeper"), this);
     loadSettings();
     connect(jobs_, &JobRunner::busyChanged, this, &AppController::busyChanged);
+    // FK-005: one byte budget for the caches, sized by the device's RAM (diagnostic overrides:
+    // FK_CACHE_BUDGET_MB, 0 = unlimited; FK_ASSUME_RAM_GB); jobs reserve their working memory before they
+    // start; memory pressure drops what can be rebuilt
+    {
+        uint64_t ram = fk::systemMemory().totalBytes;
+        bool okRam = false;
+        const double assumed = qEnvironmentVariable("FK_ASSUME_RAM_GB").toDouble(&okRam);
+        if (okRam && assumed > 0) ram = static_cast<uint64_t>(assumed * 1073741824.0);
+        defaultBudget_ = fk::defaultCacheBudget(ram);
+        bool okBudget = false;
+        const qint64 mb = qEnvironmentVariable("FK_CACHE_BUDGET_MB").toLongLong(&okBudget);
+        if (okBudget && mb >= 0)
+            defaultBudget_ = mb == 0 ? std::numeric_limits<uint64_t>::max() / 4 : mb * kMB;
+        cache_.setBudget(defaultBudget_);
+    }
+    jobs_->setReservationHandler([this](uint64_t bytes) {
+        cache_.release(workToken_); // one reservation: the runner reports the total
+        workToken_ = bytes ? cache_.reserve(bytes) : 0;
+        enforceCache();
+    });
+    connect(new MemoryPressure(this), &MemoryPressure::pressure, this, &AppController::onMemoryPressure);
+    // what is on screen changed: pins move, the new current entries become the most recently used
+    connect(this, &AppController::selectionChanged, this, &AppController::enforceCache);
     // FK-008: unsaved work is snapshotted a few seconds after the last change (never into the project file)
     recoveryTimer_ = new QTimer(this);
     recoveryTimer_->setSingleShot(true);
@@ -243,6 +276,8 @@ void AppController::loadSettings() {
                                {"expectedCount", 4},
                                {"autoCount", true},             // UX-01: new scans are counted automatically
                                {"shiftSwitchesBoundary", true}, // UX-03: a Shift tap switches Outer/Inner
+                               // UX-08: the mask new prints get (natural blend preset; hard_edge = archival)
+                               {"newPrintMask", "feather"},
                                {"safetyMargin", 1.0},
                                {"finalMode", "real"},
                                {"finalFormat", "tif"},
@@ -295,6 +330,37 @@ const QStringList kOutputKeys = {
     "maskMode",     "featherPx",    "preserveEdgePx"};
 } // namespace
 
+namespace {
+/// UX-08: the scan's DPI for mask widths in mm (measured when the scanner scaled its output) and whether it
+/// can be trusted (no `dpi_unknown`).
+double scanDpi(const fk::ScanRecord& s) {
+    return s.dpiUsed > 0 ? s.dpiUsed : s.info.dpiX;
+}
+bool dpiReliable(const fk::ScanRecord& s) {
+    return scanDpi(s) > 0 &&
+           std::find(s.warnings.begin(), s.warnings.end(), std::string("dpi_unknown")) == s.warnings.end();
+}
+fk::MaskMode maskModeOf(const QString& m) {
+    return m == QLatin1String("feather")         ? fk::MaskMode::feather
+           : m == QLatin1String("preserve_edge") ? fk::MaskMode::preserve_edge
+                                                 : fk::MaskMode::hard_edge;
+}
+/// A print's mask: its own (UX-08), or — prints set up before 0.7.0-alpha.5 — the project's output settings
+/// in px, exactly what they were composited with before.
+fk::MaskChoice maskChoiceOf(const fk::ItemRecord& it, const QVariantMap& st) {
+    if (it.composite.maskSet) return it.composite.mask;
+    const fk::MaskMode m = maskModeOf(st.value("maskMode").toString());
+    const double w = m == fk::MaskMode::feather         ? st.value("featherPx").toDouble()
+                     : m == fk::MaskMode::preserve_edge ? st.value("preserveEdgePx").toDouble()
+                                                        : 0.0;
+    return {m, w, false};
+}
+/// The one conversion used by the composite preview and the final output.
+fk::MaskParams maskParamsOf(const fk::ItemRecord& it, const fk::ScanRecord& s, const QVariantMap& st) {
+    return fk::resolveMask(maskChoiceOf(it, st), scanDpi(s));
+}
+} // namespace
+
 void AppController::syncOutputSettings() {
     QJsonObject o;
     for (const auto& k : kOutputKeys)
@@ -309,6 +375,8 @@ void AppController::setSetting(const QString& key, const QVariant& value) {
     if (key == QLatin1String("maskMode") || key == QLatin1String("featherPx") ||
         key == QLatin1String("preserveEdgePx")) {
         ++compositeGen_;
+        for (const auto& [id, img] : compositePreviews_)
+            cache_.erase("composite:" + id);
         compositePreviews_.clear();
         previewGen_.clear();
     }
@@ -363,6 +431,53 @@ QString AppController::buildCommit() const {
 }
 QString AppController::buildId() const {
     return QString::fromStdString(fk::buildId());
+}
+
+QString AppController::displayProfileName() const {
+    const DisplayProfileInfo p = currentDisplayProfile();
+    return p.source.isEmpty() ? p.description : p.description + QStringLiteral(" — ") + p.source;
+}
+
+void AppController::refreshDisplayProfile(QScreen* screen) {
+    if (displayOverridden_) return;
+    applyDisplayProfile(readDisplayProfile(screen));
+}
+
+void AppController::setDisplayProfileOverride(std::optional<DisplayProfileInfo> p) {
+    displayOverridden_ = p.has_value();
+    if (p) applyDisplayProfile(*p);
+}
+
+void AppController::applyDisplayProfile(const DisplayProfileInfo& p) {
+    const DisplayProfileInfo before = currentDisplayProfile();
+    if (!setCurrentDisplayProfile(p)) return;
+    ++displayGen_;
+    // display-space images are converted again from the scans (proxies, previews: dropped and rebuilt when
+    // shown); thumbnails are converted from the old display profile to the new one, so the lists keep them
+    for (auto& [id, r] : rt_) {
+        if (!r.display.isNull() && id == curScan_) {
+            // on screen: converted from the old display profile at once (no blank canvas), then read again
+            // from the scan below (exact)
+            convertDisplayImage(r.display, before.profile, p.profile);
+        } else if (!r.display.isNull()) {
+            r.display = QImage();
+            cache_.erase("display:" + id);
+        }
+        convertDisplayImage(r.thumb, before.profile, p.profile);
+        for (auto& [item, img] : r.itemThumbs)
+            convertDisplayImage(img, before.profile, p.profile);
+        ++r.rev;
+    }
+    for (const auto& [id, img] : compositePreviews_)
+        cache_.erase("composite:" + id);
+    compositePreviews_.clear();
+    previewGen_.clear();
+    // the scan on screen is read again now (a detection or an opening in flight notices the change itself)
+    if (auto f = rt_.find(curScan_); f != rt_.end() && f->second.state == QLatin1String("ready"))
+        loadPreview(curScan_);
+    rebuildModels();
+    Q_EMIT displayProfileChanged();
+    Q_EMIT scanImageChanged(toQ(curScan_));
 }
 
 QString AppController::platform() const {
@@ -437,6 +552,7 @@ void AppController::newProject() {
     ++projectGen_; // results of jobs started for the previous project are outdated from here on
     previewGen_.clear();
     previewJob_.clear();
+    previewPending_.clear();
     project_ = fk::newProject(toStd(tr("Untitled")));
     project_.settings.expectedCount = settings_.value("expectedCount").toInt();
     project_.settings.autoCount = settings_.value("autoCount").toBool();
@@ -452,6 +568,8 @@ void AppController::newProject() {
     undo_.clear();
     detected_.clear();
     compositePreviews_.clear();
+    for (const auto& e : cache_.entries())
+        if (e.key != "canvas") cache_.erase(e.key);
     relinkChecks_.clear();
     rebuildModels();
     Q_EMIT projectChanged();
@@ -702,6 +820,7 @@ void AppController::invalidateItem(const std::string& itemId) {
     if (const fk::ScanRecord* s = scanOf(itemId)) ++scanGen_[s->scanId];
     compositePreviews_.erase(itemId);
     previewGen_.erase(itemId);
+    cache_.erase("composite:" + itemId);
 }
 
 quint64 AppController::itemGeneration(const std::string& itemId) const {
@@ -786,6 +905,7 @@ void AppController::removeScan(const QString& scanId) {
         for (const auto& it : gone->items)
             invalidateItem(it.itemId);
     ++scanGen_[id];
+    forgetScanCaches(id);
     v.erase(std::remove_if(v.begin(), v.end(), [&](const fk::ScanRecord& s) { return s.scanId == id; }),
             v.end());
     rt_.erase(id);
@@ -831,6 +951,7 @@ struct DetectResult {
     fk::Fingerprint fp;
     fk::DetectionResult det;
     QImage display;
+    QString displayProfile; ///< FK-011: the display profile `display` was converted to
     int proxyScale = 1;
     bool changed = false; ///< FK-007: the file at the path is not the imported scan
     std::string changeReason;
@@ -896,7 +1017,10 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
             }
             res->det = std::move(*det);
             DisplayConverter conv;
-            if (conv.init(res->info)) res->display = conv.convertProxy(*proxy);
+            if (conv.init(res->info)) {
+                res->display = conv.convertProxy(*proxy);
+                res->displayProfile = conv.profileId();
+            }
             res->proxyScale = proxy->scale;
             res->ok = true;
         },
@@ -946,21 +1070,30 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
             s->items.clear();
             ++scanGen_[scanId];
             int idx = 1;
+            // UX-08: new prints get the default mask for new prints (natural blend unless set otherwise),
+            // in mm when the DPI is reliable
+            const fk::MaskChoice newMask =
+                fk::naturalBlend(maskModeOf(settings_.value("newPrintMask").toString()), dpiReliable(*s));
             for (const auto& d : res->det.items) {
                 fk::ItemRecord it = fk::itemFromDetection(d, idx++);
+                it.composite.mask = newMask;
+                it.composite.maskSet = true;
                 detected_[it.itemId] = {it.outer, it.inner};
                 s->items.push_back(it);
             }
             fk::updateCountWarning(*s); // the count setting may have changed while detection ran (UX-01)
-            r.display = res->display;
+            // FK-011: a proxy converted for a display profile that is no longer current is not shown
+            const bool staleDisplay = res->displayProfile != currentDisplayProfile().id;
+            r.display = staleDisplay ? QImage() : res->display;
             r.meta = res->meta;
             r.metaKnown = true;
             r.proxyScale = res->proxyScale;
-            r.thumb = boxDownscale(res->display, kThumbLong);
+            if (!staleDisplay) r.thumb = boxDownscale(res->display, kThumbLong);
             r.state = QStringLiteral("ready");
             r.error.clear();
             ++r.rev;
             refreshItemThumbs(scanId);
+            if (staleDisplay && curScan_ == scanId) loadPreview(scanId);
             dirty_ = true;
             if (curScan_ == scanId && !s->items.empty() && item(curItem_) == nullptr)
                 curItem_ = s->items.front().itemId;
@@ -990,7 +1123,8 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
                     notify(tr("%1: no prints found.").arg(name), QStringLiteral("warning"));
             }
             return JobApply::applied;
-        });
+        },
+        scanWorkBytes(*s));
 }
 
 void AppController::loadPreview(const std::string& scanId) {
@@ -1035,7 +1169,10 @@ void AppController::loadPreview(const std::string& scanId) {
                 return;
             }
             DisplayConverter conv;
-            if (conv.init(res->info)) res->display = conv.convertProxy(*proxy);
+            if (conv.init(res->info)) {
+                res->display = conv.convertProxy(*proxy);
+                res->displayProfile = conv.profileId();
+            }
             res->proxyScale = proxy->scale;
             res->ok = true;
         },
@@ -1060,6 +1197,12 @@ void AppController::loadPreview(const std::string& scanId) {
             if (fk::ScanRecord* sr = findScan(scanId);
                 sr && !res->fullSha256.empty() && sr->fingerprint.fullSha256.empty())
                 sr->fingerprint.fullSha256 = res->fullSha256; // saved with the next save
+            if (res->displayProfile != currentDisplayProfile().id) {
+                // FK-011: converted for a display profile that is no longer current: read it again
+                r.state = QStringLiteral("pending");
+                if (curScan_ == scanId) loadPreview(scanId);
+                return JobApply::outdated;
+            }
             r.display = res->display;
             r.meta = res->meta;
             r.metaKnown = true;
@@ -1067,20 +1210,14 @@ void AppController::loadPreview(const std::string& scanId) {
             r.thumb = boxDownscale(res->display, kThumbLong);
             r.state = QStringLiteral("ready");
             ++r.rev;
+            // FK-005: counted in the cache budget (refreshItemThumbs); scans that are not on screen give
+            // their proxy back first, least recently used first
             refreshItemThumbs(scanId);
-            // keep memory bounded: drop display images of scans that are not current (LRU by rev order)
-            std::vector<std::pair<quint64, std::string>> loaded;
-            for (auto& [id, rr] : rt_)
-                if (!rr.display.isNull() && id != curScan_) loaded.push_back({rr.rev, id});
-            std::sort(loaded.begin(), loaded.end());
-            while (loaded.size() + 1 > kDisplayLru) {
-                rt_[loaded.front().second].display = QImage();
-                loaded.erase(loaded.begin());
-            }
             rebuildModels();
             Q_EMIT scanImageChanged(toQ(scanId));
             return JobApply::applied;
-        });
+        },
+        scanWorkBytes(*s));
 }
 
 void AppController::detectScan(const QString& scanId, const QString& templateName) {
@@ -1212,7 +1349,8 @@ void AppController::stepScan(int delta) {
 // ---- edits / undo --------------------------------------------------------------------------------------
 
 AppController::Snapshot AppController::snap(const fk::ItemRecord& it) const {
-    return {it.outer, it.inner, it.outerSource, it.innerSource, it.upright, it.reviewed};
+    return {it.outer,    it.inner, it.outerSource,    it.innerSource,      it.upright,
+            it.reviewed, 0,        it.composite.mask, it.composite.maskSet};
 }
 
 void AppController::restore(fk::ItemRecord& it, const Snapshot& s) {
@@ -1222,6 +1360,8 @@ void AppController::restore(fk::ItemRecord& it, const Snapshot& s) {
     it.innerSource = s.innerSource;
     it.upright = s.upright;
     it.reviewed = s.reviewed;
+    it.composite.mask = s.mask;
+    it.composite.maskSet = s.maskSet;
 }
 
 void AppController::pushUndo(fk::ItemRecord& it) {
@@ -1450,6 +1590,104 @@ void AppController::rotateUpright(const QString& itemId, int delta) {
     touch(false);
 }
 
+// ---- UX-08: per-print mask ----------------------------------------------------------------------------
+
+void AppController::setMask(const std::string& itemId, const fk::MaskChoice& m, bool undoStep) {
+    if (readOnly_) return;
+    fk::ItemRecord* it = findItemMut(itemId);
+    if (!it || (it->composite.maskSet && it->composite.mask == m)) return;
+    if (undoStep) pushUndo(*it);
+    it->composite.mask = m;
+    it->composite.maskSet = true;
+    invalidateItem(itemId); // the composite preview was computed with the old mask
+    edgeChange_.erase(itemId);
+    touch(false);
+    Q_EMIT geometryChanged(toQ(itemId));
+}
+
+void AppController::setItemMaskMode(const QString& itemId, const QString& mode) {
+    const fk::ScanRecord* s = scanOf(toStd(itemId));
+    if (!s) return;
+    // a mode comes with its natural-blend preset (hard edge: 0 px, the archival exact path)
+    setMask(toStd(itemId), fk::naturalBlend(maskModeOf(mode), dpiReliable(*s)));
+}
+
+void AppController::setItemMaskWidth(const QString& itemId, double width) {
+    const fk::ItemRecord* it = item(toStd(itemId));
+    if (!it) return;
+    fk::MaskChoice m = maskChoiceOf(*it, settings_);
+    if (m.mode == fk::MaskMode::hard_edge) return;
+    m.width = std::clamp(width, 0.0, m.mm ? 1.0 : 50.0);
+    setMask(it->itemId, m);
+}
+
+void AppController::resetItemMask(const QString& itemId) {
+    const fk::ItemRecord* it = item(toStd(itemId));
+    const fk::ScanRecord* s = scanOf(toStd(itemId));
+    if (!it || !s) return;
+    setMask(it->itemId, fk::naturalBlend(maskChoiceOf(*it, settings_).mode, dpiReliable(*s)));
+}
+
+void AppController::beginMaskEdit(const QString& itemId) {
+    if (const fk::ItemRecord* it = item(toStd(itemId)))
+        maskEditStart_[it->itemId] = {it->composite.mask, it->composite.maskSet};
+}
+
+void AppController::setItemMaskWidthLive(const QString& itemId, double width) {
+    const fk::ItemRecord* it = item(toStd(itemId));
+    if (!it || !maskEditStart_.count(it->itemId)) return; // live changes only inside begin … end
+    fk::MaskChoice m = maskChoiceOf(*it, settings_);
+    if (m.mode == fk::MaskMode::hard_edge) return;
+    m.width = std::clamp(width, 0.0, m.mm ? 1.0 : 50.0);
+    setMask(it->itemId, m, false);
+}
+
+void AppController::endMaskEdit(const QString& itemId, bool commit) {
+    fk::ItemRecord* it = findItemMut(toStd(itemId));
+    auto f = maskEditStart_.find(toStd(itemId));
+    if (!it || f == maskEditStart_.end()) return;
+    const auto [startMask, startSet] = f->second;
+    maskEditStart_.erase(f);
+    if (it->composite.mask == startMask && it->composite.maskSet == startSet) return; // nothing changed
+    if (!commit) {
+        // Esc: back to the value before the drag, no undo step
+        it->composite.mask = startMask;
+        it->composite.maskSet = startSet;
+        invalidateItem(it->itemId);
+        edgeChange_.erase(it->itemId);
+        touch(false);
+        Q_EMIT geometryChanged(itemId);
+        return;
+    }
+    // one undo step for the whole drag: the state before it
+    Snapshot before = snap(*it);
+    before.mask = startMask;
+    before.maskSet = startSet;
+    auto& u = undo_[it->itemId];
+    u.undo.push_back(before);
+    u.undo.back().seq = ++undoSeq_;
+    if (u.undo.size() > 100) u.undo.erase(u.undo.begin());
+    u.redo.clear();
+    touch(false);
+}
+
+int AppController::applyMaskToItems(const QString& fromItemId, const QStringList& itemIds) {
+    // explicit batch (UX-08): the chosen prints take this print's mask; a width in mm stays in mm, so it
+    // means the same physical edge on scans of other DPIs; on a scan without a reliable DPI a mm width is
+    // converted at 300 dpi (resolveMask) — the right rail shows the resulting px
+    const fk::ItemRecord* from = item(toStd(fromItemId));
+    if (!from) return 0;
+    const fk::MaskChoice m = maskChoiceOf(*from, settings_);
+    int n = 0;
+    for (const auto& id : itemIds) {
+        if (id == fromItemId || !item(toStd(id))) continue;
+        setMask(toStd(id), m);
+        ++n;
+    }
+    if (n > 0) notify(tr("Mask applied to %n print(s).", nullptr, n));
+    return n;
+}
+
 void AppController::setReviewed(const QString& itemId, bool reviewed) {
     fk::ItemRecord* it = findItemMut(toStd(itemId));
     if (!it || it->reviewed == reviewed) return;
@@ -1561,6 +1799,7 @@ void AppController::refreshItemThumbs(const std::string& scanId) {
             crop.scaledToHeight(std::min(kItemThumbH, crop.height()), Qt::SmoothTransformation);
     }
     ++r.rev;
+    noteScanImages(scanId); // FK-005: proxy and thumbnails counted in the cache budget
 }
 
 QImage AppController::thumbnail(const QString& id) const {
@@ -1655,6 +1894,23 @@ QVariantMap AppController::currentItem() const {
     m["reviewed"] = it->reviewed;
     m["excluded"] = it->excluded;
     m["upright"] = it->upright * 90;
+    {
+        // UX-08: the print's mask as chosen, and what it means in px on this scan
+        const fk::MaskChoice mc = maskChoiceOf(*it, settings_);
+        const fk::MaskParams mp = fk::resolveMask(mc, scanDpi(*s));
+        const auto e = edgeChange_.find(it->itemId);
+        m["mask"] =
+            QVariantMap{{"mode", QString::fromLatin1(fk::maskModeName(mc.mode))},
+                        {"width", mc.width},
+                        {"unit", mc.mm ? QStringLiteral("mm") : QStringLiteral("px")},
+                        {"px", mc.mode == fk::MaskMode::feather ? mp.featherPx : mp.preserveEdgePx},
+                        {"dpi", scanDpi(*s)},
+                        {"dpiReliable", dpiReliable(*s)},
+                        {"own", it->composite.maskSet}, // false: an older print using the project setting
+                        {"isDefault", mc == fk::naturalBlend(mc.mode, dpiReliable(*s))},
+                        {"edgeChange", e == edgeChange_.end() ? 0.0 : e->second},
+                        {"strongEdgeChange", e != edgeChange_.end() && e->second > fk::kStrongEdgeChange}};
+    }
     m["outer"] = shapeToVariant(it->outer);
     m["inner"] = shapeToVariant(it->inner);
     m["outerSource"] = sourceName(it->outerSource);
@@ -1730,14 +1986,18 @@ void AppController::requestDetail(QRectF r, int outW, int outH, quint64 generati
     auto mtx = rt.sourceMutex;
     auto srcHolder = std::make_shared<std::shared_ptr<fk::TiffSource>>(rt.source);
     auto result = std::make_shared<QImage>();
+    auto cached = std::make_shared<uint64_t>(0);
+    auto profileUsed = std::make_shared<QString>();
     const std::string scanId = curScan_;
+    // FK-005: one scan's decoded strips take at most a quarter of the cache budget
+    const uint64_t decodeBudget = std::min<uint64_t>(96 * kMB, cache_.budget() / 4);
     jobs_->start(
         Lane::io, QString(),
         [=](JobContext& ctx) {
             std::lock_guard<std::mutex> lk(*mtx);
             if (!*srcHolder) {
                 fk::TiffOpenOptions o;
-                o.cacheBudgetBytes = 96ull << 20;
+                o.cacheBudgetBytes = decodeBudget;
                 auto src = fk::openTiff(fk::pathFromUtf8(path), o);
                 if (!src) return;
                 *srcHolder = std::shared_ptr<fk::TiffSource>(std::move(*src));
@@ -1746,6 +2006,7 @@ void AppController::requestDetail(QRectF r, int outW, int outH, quint64 generati
             const fk::ImageInfo& info = src.info();
             DisplayConverter conv;
             if (!conv.init(info)) return;
+            *profileUsed = conv.profileId();
             const int64_t x0 = std::clamp<int64_t>(static_cast<int64_t>(std::floor(r.left())), 0, info.width);
             const int64_t y0 = std::clamp<int64_t>(static_cast<int64_t>(std::floor(r.top())), 0, info.height);
             const int64_t x1 = std::clamp<int64_t>(static_cast<int64_t>(std::ceil(r.right())), 0, info.width);
@@ -1785,10 +2046,18 @@ void AppController::requestDetail(QRectF r, int outW, int outH, quint64 generati
                               (acc[ox * 3 + 2] / n);
             }
             *result = std::move(img);
+            *cached = src.cachedBytes();
         },
-        [this, result, srcHolder, r, generation, done, scanId](const JobOutcome& o) -> JobDone {
-            if (auto f = rt_.find(scanId); f != rt_.end() && !f->second.source) f->second.source = *srcHolder;
-            if (!o.cancelled && !result->isNull())
+        [this, result, srcHolder, cached, profileUsed, decodeBudget, r, generation, done,
+         scanId](const JobOutcome& o) -> JobDone {
+            if (auto f = rt_.find(scanId); f != rt_.end() && *srcHolder) {
+                if (!f->second.source) f->second.source = *srcHolder;
+                // the size measured at the end of the read; a job that stopped early counts its upper bound
+                if (f->second.source == *srcHolder)
+                    noteCache("source:" + scanId, *cached ? *cached : decodeBudget);
+            }
+            // FK-011: a patch converted for a display profile that is no longer current is not shown
+            if (!o.cancelled && !result->isNull() && *profileUsed == currentDisplayProfile().id)
                 done(*result, r, generation); // the canvas checks its generation
             return JobApply::applied;
         });
@@ -1802,6 +2071,13 @@ void AppController::requestCompositePreview(const QString& itemId) {
     for (const auto& e : it->edits)
         if (!e.relinkedPath.empty()) ev = &e;
     if (!ev) return;
+    // coalesce (UX-09: no backlog while a value is dragged): at most one preview per print in flight. A
+    // request while one runs cancels it and is served once it has stopped, with the state as it is then.
+    if (auto f = previewJob_.find(it->itemId); f != previewJob_.end()) {
+        jobs_->cancel(f->second);
+        previewPending_.insert(it->itemId);
+        return;
+    }
     const std::string scanPath = s->path, editPath = ev->relinkedPath, id = it->itemId;
     const fk::ItemRecord itemCopy = *it;
     const fk::EditVersion evCopy = *ev;
@@ -1812,10 +2088,12 @@ void AppController::requestCompositePreview(const QString& itemId) {
     const QVariantMap st = settings_;
     auto out = std::make_shared<QImage>();
     auto err = std::make_shared<QString>();
+    auto change = std::make_shared<double>(0.0);
+    auto maskUsed = std::make_shared<fk::MaskParams>();
+    auto previewProfile = std::make_shared<QString>();
     const JobSnapshot snap = snapshotFor(s->scanId, id);
-    // coalesce: a newer request supersedes the one still in flight for this print
-    if (auto f = previewJob_.find(id); f != previewJob_.end()) jobs_->cancel(f->second);
-    previewJob_[id] = jobs_->start(
+    auto self = std::make_shared<int>(0);
+    previewJob_[id] = *self = jobs_->start(
         Lane::exportJob, tr("Composite preview %1").arg(toQ(it->label)),
         [=](JobContext& ctx) {
             if (QString e = ScanGuard().verify(scanCopy, ctx.cancel); !e.isEmpty()) {
@@ -1863,13 +2141,8 @@ void AppController::requestCompositePreview(const QString& itemId) {
             }
             req.editedIcc = *prof;
             if (!relinkAdjust(evCopy, *sc, *edited, ei, true, true, req.adjust, *err)) return;
-            req.mask.mode = st.value("maskMode").toString() == QLatin1String("feather")
-                                ? fk::MaskMode::feather
-                            : st.value("maskMode").toString() == QLatin1String("preserve_edge")
-                                ? fk::MaskMode::preserve_edge
-                                : fk::MaskMode::hard_edge;
-            req.mask.featherPx = st.value("featherPx").toDouble();
-            req.mask.preserveEdgePx = st.value("preserveEdgePx").toDouble();
+            req.mask = maskParamsOf(itemCopy, scanCopy, st); // the same as the final output (UX-08)
+            *maskUsed = req.mask;
             req.strokes = itemCopy.composite.strokes;
             const fk::RectI b = fk::boundingRect(itemCopy.outer);
             const double scale = std::min(1.0, 2400.0 / static_cast<double>(std::max(b.w, b.h)));
@@ -1878,24 +2151,41 @@ void AppController::requestCompositePreview(const QString& itemId) {
                 *err = errText(buf.error());
                 return;
             }
+            // UX-08: how strongly the grade changes the picture at the edge (the same view without the
+            // grade); above kStrongEdgeChange the mask alone cannot promise a seamless edge — the user is
+            // asked to check
+            fk::CompositeRequest plain = req;
+            plain.mask = {fk::MaskMode::preserve_edge, 0, 1e12};
+            plain.strokes.clear();
+            if (auto scanOnly = fk::compositeToBuffer(**src, plain, scale, ctx.cancel))
+                *change = fk::edgeChange(*buf, *scanOnly, itemCopy.inner,
+                                         {static_cast<double>(b.x), static_cast<double>(b.y)}, scale,
+                                         scanDpi(scanCopy) > 0 ? scanDpi(scanCopy) / 25.4 : 300.0 / 25.4);
             fk::ImageInfo info = (*src)->info();
             info.channels = buf->channels();
             info.bitsPerSample = buf->bits();
             info.photometric = info.channels >= 3 ? fk::Photometric::rgb : fk::Photometric::min_is_black;
             DisplayConverter conv;
             if (!conv.init(info)) return;
+            *previewProfile = conv.profileId();
             QImage img(static_cast<int>(buf->width()), static_cast<int>(buf->height()), QImage::Format_RGB32);
             for (int64_t y = 0; y < buf->height(); ++y)
                 conv.convertRow(buf->row(y), buf->width(),
                                 reinterpret_cast<uint32_t*>(img.scanLine(static_cast<int>(y))));
             *out = std::move(img);
         },
-        [this, out, err, id, snap](const JobOutcome& o) -> JobDone {
-            if (auto f = previewJob_.find(id); f != previewJob_.end() && sameProject(snap))
+        [this, out, err, change, maskUsed, previewProfile, id, snap, self](const JobOutcome& o) -> JobDone {
+            if (auto f = previewJob_.find(id); f != previewJob_.end() && f->second == *self)
                 previewJob_.erase(f);
+            // a request arrived while this ran: serve it now, with the current state
+            // (started here, not queued: whoever waits for the jobs to finish also waits for this one)
+            if (previewPending_.erase(id) && sameProject(snap)) requestCompositePreview(toQ(id));
             if (o.cancelled) return JobApply::applied;
             // the boundary, orientation, relinked file or mask changed while this ran: drop the result
             if (!sameComposite(snap)) return JobApply::outdated;
+            // FK-011: converted for a display profile that is no longer current (the canvas asks again)
+            if (err->isEmpty() && !out->isNull() && *previewProfile != currentDisplayProfile().id)
+                return JobApply::outdated;
             if (!err->isEmpty()) {
                 notify(tr("Composite preview failed: %1").arg(*err), QStringLiteral("error"));
                 return {JobApply::failed, *err};
@@ -1903,15 +2193,178 @@ void AppController::requestCompositePreview(const QString& itemId) {
             if (out->isNull()) return {JobApply::failed, tr("Composite preview failed")};
             compositePreviews_[id] = *out;
             previewGen_[id] = snap.item;
+            noteCache("composite:" + id, imageBytes(*out)); // FK-005 (may drop older previews)
+            edgeChange_[id] = *change;
+            masksUsed_[id].first = *maskUsed;
             Q_EMIT compositePreviewReady(toQ(id));
             Q_EMIT currentChanged();
             return JobApply::applied;
-        });
+        },
+        itemWorkBytes(*s, *it, true));
+}
+
+std::pair<fk::MaskParams, fk::MaskParams> AppController::masksUsed(const std::string& itemId) const {
+    auto f = masksUsed_.find(itemId);
+    if (f != masksUsed_.end()) return f->second;
+    fk::MaskParams none;
+    none.mode = static_cast<fk::MaskMode>(-1);
+    return {none, none};
 }
 
 QImage AppController::compositePreview(const std::string& itemId) const {
     auto f = compositePreviews_.find(itemId);
     return f == compositePreviews_.end() ? QImage() : f->second;
+}
+
+// ---- memory budget (FK-005, RFC-0014 §Memory budget) --------------------------------------------------
+
+void AppController::noteCache(const std::string& key, uint64_t bytes, bool kept) {
+    if (bytes == 0)
+        cache_.erase(key);
+    else
+        cache_.put(key, bytes, kept);
+    enforceCache();
+}
+
+void AppController::noteScanImages(const std::string& scanId) {
+    auto f = rt_.find(scanId);
+    if (f == rt_.end()) return;
+    const ScanRuntime& r = f->second;
+    uint64_t thumbs = imageBytes(r.thumb);
+    for (const auto& [id, img] : r.itemThumbs)
+        thumbs += imageBytes(img);
+    if (thumbs)
+        cache_.put("thumb:" + scanId, thumbs, true);
+    else
+        cache_.erase("thumb:" + scanId);
+    if (r.display.isNull())
+        cache_.erase("display:" + scanId);
+    else
+        cache_.put("display:" + scanId, imageBytes(r.display));
+    enforceCache();
+}
+
+void AppController::setCanvasBytes(uint64_t bytes) {
+    noteCache("canvas", bytes, true);
+}
+
+void AppController::enforceCache() {
+    // on screen: the current scan's proxy and decoded strips, the current print's composite preview
+    std::set<std::string> pins;
+    if (!curScan_.empty()) {
+        pins.insert("display:" + curScan_);
+        pins.insert("source:" + curScan_);
+    }
+    if (!curItem_.empty()) pins.insert("composite:" + curItem_);
+    for (const auto& k : pins)
+        cache_.touch(k);
+    cache_.setPinned(std::move(pins));
+    for (const auto& k : cache_.enforce())
+        dropCacheEntry(k);
+}
+
+void AppController::dropCacheEntry(const std::string& key) {
+    const size_t colon = key.find(':');
+    if (colon == std::string::npos) return;
+    const std::string kind = key.substr(0, colon), id = key.substr(colon + 1);
+    if (kind == "display") {
+        // selecting the scan again reads its proxy again (loadPreview)
+        if (auto f = rt_.find(id); f != rt_.end()) f->second.display = QImage();
+    } else if (kind == "source") {
+        // a running view job keeps its own reference until it ends
+        if (auto f = rt_.find(id); f != rt_.end()) f->second.source.reset();
+    } else if (kind == "composite") {
+        // shown again → computed again (the canvas asks for it)
+        compositePreviews_.erase(id);
+        previewGen_.erase(id);
+    }
+}
+
+void AppController::forgetScanCaches(const std::string& scanId) {
+    for (const char* kind : {"display:", "source:", "thumb:"})
+        cache_.erase(kind + scanId);
+    if (const fk::ScanRecord* s = findScan(scanId))
+        for (const auto& it : s->items)
+            cache_.erase("composite:" + it.itemId);
+}
+
+void AppController::onMemoryPressure() {
+    ++pressureEvents_;
+    // everything that can be rebuilt goes, on screen or not, except what the canvas shows right now (the
+    // current scan's proxy and the current print's preview): the decoded strips of the current scan too
+    for (const auto& k : cache_.shrinkTo(0))
+        dropCacheEntry(k);
+    if (!curScan_.empty() && cache_.contains("source:" + curScan_)) {
+        cache_.erase("source:" + curScan_);
+        dropCacheEntry("source:" + curScan_);
+    }
+}
+
+void AppController::setCacheBudget(uint64_t bytes) {
+    cache_.setBudget(bytes ? bytes : defaultBudget_);
+    enforceCache();
+}
+
+uint64_t AppController::scanWorkBytes(const fk::ScanRecord& s) const {
+    // decoded strips + the proxy (scan depth, about 3000 px on the long side) + its display copy (4 bytes/px)
+    // + detection's working images (about the proxy again); unknown size: a 1600 dpi A4 scan
+    const int64_t w = s.info.width > 0 ? s.info.width : 13606, h = s.info.height > 0 ? s.info.height : 18709;
+    const int bpp = s.info.width > 0 ? s.info.bytesPerPixel() : 6;
+    const double k = std::max(1.0, static_cast<double>(std::max(w, h)) / 3000.0);
+    const auto px = static_cast<uint64_t>(static_cast<double>(w) / k * static_cast<double>(h) / k);
+    return kJobDecodeCache + px * static_cast<uint64_t>(2 * bpp + 4);
+}
+
+uint64_t AppController::itemWorkBytes(const fk::ScanRecord& s, const fk::ItemRecord& it, bool graded) const {
+    // the print's region in scan depth (buffered for upright turns) + a band, the decoded graded file of the
+    // same size, decoded strips
+    const fk::RectI b = fk::boundingRect(it.outer);
+    const int bpp = s.info.width > 0 ? s.info.bytesPerPixel() : 6;
+    const uint64_t region = static_cast<uint64_t>(std::max<int64_t>(0, b.w)) *
+                            static_cast<uint64_t>(std::max<int64_t>(0, b.h)) * static_cast<uint64_t>(bpp);
+    return kJobDecodeCache + region * (graded ? 3 : 2);
+}
+
+QVariantMap AppController::memoryReport() const {
+    const fk::MemoryStats m = fk::currentMemoryStats();
+    const fk::SystemMemory sys = fk::systemMemory();
+    auto mb = [](uint64_t b) { return static_cast<double>(b) / static_cast<double>(kMB); };
+    QVariantMap r;
+    r["residentMB"] = mb(m.residentBytes);
+    r["peakResidentMB"] = mb(m.peakResidentBytes);
+    r["privateMB"] = mb(m.privateBytes);
+    r["accountedMB"] = mb(m.accountedBytes);
+    r["accountedPeakMB"] = mb(m.accountedPeakBytes);
+    r["physicalMB"] = mb(sys.totalBytes);
+    r["availableMB"] = mb(sys.availableBytes);
+    r["cacheBudgetMB"] = mb(cache_.budget());
+    r["cacheMB"] = mb(cache_.bytes());
+    r["fixedMB"] = mb(cache_.fixedBytes());
+    r["reservedMB"] = mb(cache_.reserved());
+    for (const char* kind : {"display", "source", "composite", "thumb", "canvas"}) {
+        const std::string prefix = kind == std::string("canvas") ? "canvas" : std::string(kind) + ":";
+        r[QStringLiteral("%1MB").arg(QLatin1String(kind))] = mb(cache_.bytes(prefix));
+        r[QStringLiteral("%1Count").arg(QLatin1String(kind))] = static_cast<int>(cache_.count(prefix));
+    }
+    r["evictions"] = static_cast<qulonglong>(cache_.evictions());
+    r["pressureEvents"] = pressureEvents_;
+    // what the ledger does not see, for the self-test: images held outside it
+    int displays = 0, sources = 0;
+    for (const auto& [id, rr] : rt_) {
+        displays += rr.display.isNull() ? 0 : 1;
+        sources += rr.source ? 1 : 0;
+    }
+    r["displaysHeld"] = displays;
+    r["sourcesHeld"] = sources;
+    r["compositesHeld"] = static_cast<int>(compositePreviews_.size());
+#if defined(__GLIBC__)
+    // Linux (development builds): memory the allocator holds but the app has freed — RSS keeps it until the
+    // allocator returns it (AGENTS §7: RSS alone hides allocator caches)
+    const struct mallinfo2 mi = mallinfo2();
+    r["mallocInUseMB"] = mb(mi.uordblks + mi.hblkhd);
+    r["mallocFreeMB"] = mb(mi.fordblks);
+#endif
+    return r;
 }
 
 bool AppController::waitIdle(int timeoutMs) {
@@ -2059,6 +2512,7 @@ struct ExportOutcome {
     std::optional<fk::Sidecar> record; ///< export record kept in the project (UX-07)
     std::string fullPath;
     std::string regradedSha256; ///< FK-007: graded file graded again (same picture) — new hash to record
+    std::optional<fk::MaskParams> mask; ///< UX-08: the mask a real-frame final output was composited with
 };
 
 } // namespace
@@ -2080,6 +2534,9 @@ void AppController::exportImageAreas(const QStringList& itemIds, bool allowDepth
     const std::string dir = toStd(folder);
     const bool writeSidecar = settings_.value("writeSidecar").toBool();
     const JobSnapshot snap = snapshotFor({}, {});
+    uint64_t workBytes = 0; // FK-005: the largest print, reserved before the job starts
+    for (const auto& w : work)
+        workBytes = std::max(workBytes, itemWorkBytes(w.scan, w.item, false));
     jobs_->start(
         Lane::exportJob, tr("Exporting %n image area(s)", nullptr, static_cast<int>(work.size())),
         [work, projCopy, outcomes, dir, writeSidecar](JobContext& ctx) {
@@ -2185,7 +2642,8 @@ void AppController::exportImageAreas(const QStringList& itemIds, bool allowDepth
             Q_EMIT exportFinished(folder, ok, failed);
             if (failed) return {JobApply::failed, tr("%1 of %2 exports failed").arg(failed).arg(ok + failed)};
             return JobApply::applied;
-        });
+        },
+        workBytes);
 }
 
 void AppController::exportFullPrints(const QStringList& itemIds, bool allowDepthReduction) {
@@ -2204,6 +2662,9 @@ void AppController::exportFullPrints(const QStringList& itemIds, bool allowDepth
     const std::string dir = toStd(folder);
     const std::string projectId = project_.projectId;
     const JobSnapshot snap = snapshotFor({}, {});
+    uint64_t workBytes = 0; // FK-005: the largest print, reserved before the job starts
+    for (const auto& w : work)
+        workBytes = std::max(workBytes, itemWorkBytes(w.scan, w.item, false));
     jobs_->start(
         Lane::exportJob, tr("Exporting %n full print(s)", nullptr, static_cast<int>(work.size())),
         [work, outcomes, dir, projectId](JobContext& ctx) {
@@ -2262,7 +2723,8 @@ void AppController::exportFullPrints(const QStringList& itemIds, bool allowDepth
             Q_EMIT exportFinished(folder, ok, failed);
             if (failed) return {JobApply::failed, tr("%1 of %2 exports failed").arg(failed).arg(ok + failed)};
             return JobApply::applied;
-        });
+        },
+        workBytes);
 }
 
 // ---- relink -------------------------------------------------------------------------------------------
@@ -2346,10 +2808,22 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
     // the target's current image area, sampled from the scan preview (content check of a new alignment)
     QImage preview;
     int proxyScale = 1;
+    // FK-005: a proxy given back to the cache budget is read again in the job (the same proxy as on screen),
+    // so the assessment never depends on what the cache still holds
+    std::optional<fk::ScanRecord> rereadScan;
+    uint64_t workBytes = 0;
+    for (const auto& sc : project_.scans)
+        for (const auto& it : sc.items)
+            if (target.empty() || it.itemId == target)
+                workBytes = std::max(workBytes, itemWorkBytes(sc, it, true));
     if (const fk::ScanRecord* s = target.empty() ? nullptr : scanOf(target)) {
         if (auto r = rt_.find(s->scanId); r != rt_.end()) {
             preview = r->second.display;
             proxyScale = r->second.proxyScale;
+        }
+        if (preview.isNull() && !s->missing && !s->changed) {
+            rereadScan = *s;
+            workBytes += scanWorkBytes(*s);
         }
     }
     auto rows = std::make_shared<QVariantList>();
@@ -2358,7 +2832,7 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
     const JobSnapshot snap = snapshotFor({}, {});
     jobs_->start(
         Lane::exportJob, tr("Checking %n graded file(s)", nullptr, static_cast<int>(files.size())),
-        [files, projCopy, target, preview, proxyScale, rows, aligned, profiles](JobContext& ctx) {
+        [files, projCopy, target, preview, proxyScale, rereadScan, rows, aligned, profiles](JobContext& ctx) {
             std::map<std::string, std::vector<uint8_t>> scanIccCache; // scan path → its embedded profile
             auto scanIccOf = [&](const std::string& scanId) -> const std::vector<uint8_t>& {
                 static const std::vector<uint8_t> none;
@@ -2384,8 +2858,21 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
                         tItem = &it;
                     }
             std::optional<fk::ImageBuffer> previewBuf;
-            if (tItem && !preview.isNull())
-                if (auto buf = bufferOf(preview)) previewBuf = std::move(buf.value());
+            QImage targetPreview = preview;
+            int targetScale = proxyScale;
+            if (tItem && targetPreview.isNull() && rereadScan &&
+                ScanGuard().verify(*rereadScan, ctx.cancel).isEmpty())
+                if (auto src = fk::openTiff(fk::pathFromUtf8(rereadScan->path)))
+                    if (auto proxy =
+                            fk::buildProxy(**src, 3000, ctx.cancel, [](double, std::string_view) {})) {
+                        DisplayConverter conv;
+                        if (conv.init((*src)->info())) {
+                            targetPreview = conv.convertProxy(*proxy);
+                            targetScale = proxy->scale;
+                        }
+                    }
+            if (tItem && !targetPreview.isNull())
+                if (auto buf = bufferOf(targetPreview)) previewBuf = std::move(buf.value());
             auto where = [&](const std::string& itemId) {
                 QVariantMap m;
                 for (const auto& s : projCopy.scans)
@@ -2419,10 +2906,10 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
                 fk::ExportGeometry ag;
                 fk::Signature area;
                 if (tItem) {
-                    ag = previewBuf ? fk::alignmentGeometry(*tScan, *tItem, in.size, *previewBuf, proxyScale,
+                    ag = previewBuf ? fk::alignmentGeometry(*tScan, *tItem, in.size, *previewBuf, targetScale,
                                                             in.signature)
                                     : fk::alignmentGeometry(*tScan, *tItem, in.size);
-                    if (previewBuf) area = fk::signatureOfExport(*previewBuf, ag, proxyScale);
+                    if (previewBuf) area = fk::signatureOfExport(*previewBuf, ag, targetScale);
                 }
                 const fk::RelinkAssessment a =
                     fk::assessRelink(in, projCopy, target, area.valid ? &area : nullptr);
@@ -2607,7 +3094,8 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
             else
                 Q_EMIT relinkResults(*rows);
             return JobApply::applied;
-        });
+        },
+        workBytes);
 }
 
 QVariantList AppController::relinkTargets() const {
@@ -2825,6 +3313,9 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
     const fk::IccStore iccStore = project_.iccProfiles;
     auto outcomes = std::make_shared<std::vector<ExportOutcome>>();
     const JobSnapshot snap = snapshotFor({}, {});
+    uint64_t workBytes = 0; // FK-005: the largest print and its graded file, reserved before the job starts
+    for (const auto& w : work)
+        workBytes = std::max(workBytes, itemWorkBytes(w.scan, w.item, true));
     jobs_->start(
         Lane::exportJob, tr("Final export of %n print(s)", nullptr, static_cast<int>(work.size())),
         [work, st, allowScale, allowDepth, dir, projectId, outcomes, iccStore](JobContext& ctx) {
@@ -2899,12 +3390,8 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                         fail(why);
                         continue;
                     }
-                    const QString mm = st.value("maskMode").toString();
-                    req.mask.mode = mm == QLatin1String("feather")         ? fk::MaskMode::feather
-                                    : mm == QLatin1String("preserve_edge") ? fk::MaskMode::preserve_edge
-                                                                           : fk::MaskMode::hard_edge;
-                    req.mask.featherPx = st.value("featherPx").toDouble();
-                    req.mask.preserveEdgePx = st.value("preserveEdgePx").toDouble();
+                    req.mask = maskParamsOf(w.item, w.scan, st); // the same as the preview (UX-08)
+                    o.mask = req.mask;
                     req.strokes = w.item.composite.strokes;
                     req.outputMode = st.value("geometryMode").toString() == QLatin1String("straighten")
                                          ? fk::GeometryMode::straightened
@@ -3013,6 +3500,7 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                     notify(o.error, QStringLiteral("error"));
                     continue;
                 }
+                if (o.mask) masksUsed_[o.itemId].second = *o.mask;
                 if (fk::ItemRecord* it = sameProj ? findItemMut(o.itemId) : nullptr) {
                     it->finalExport = o.fullPath;
                     it->composite.lastOutput = o.fullPath;
@@ -3038,7 +3526,8 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
             Q_EMIT exportFinished(folder, ok, failed);
             if (failed) return {JobApply::failed, tr("%1 of %2 exports failed").arg(failed).arg(ok + failed)};
             return JobApply::applied;
-        });
+        },
+        workBytes);
 }
 
 // ---- templates ------------------------------------------------------------------------------------------

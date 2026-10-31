@@ -6,6 +6,7 @@
 #include "Jobs.hpp"
 #include "Models.hpp"
 
+#include "fk/cache.hpp"
 #include "fk/composite.hpp"
 #include "fk/project.hpp"
 
@@ -19,6 +20,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <set>
 
 namespace fkapp {
 
@@ -46,6 +49,7 @@ class AppController : public QObject {
     Q_PROPERTY(QString buildCommit READ buildCommit CONSTANT)
     Q_PROPERTY(QString buildId READ buildId CONSTANT)
     Q_PROPERTY(QString platform READ platform CONSTANT)
+    Q_PROPERTY(QString displayProfileName READ displayProfileName NOTIFY displayProfileChanged)
 
   public:
     explicit AppController(QObject* parent = nullptr);
@@ -74,6 +78,8 @@ class AppController : public QObject {
     QString buildCommit() const;
     QString buildId() const;
     QString platform() const;
+    /// FK-011: the display profile the canvas converts to and where it came from (About dialog).
+    QString displayProfileName() const;
 
     // ---- project ----
     Q_INVOKABLE void newProject();
@@ -122,6 +128,19 @@ class AppController : public QObject {
     /// UX-04: turns the whole scan's view by `delta` quarter turns (clockwise positive). Every print follows;
     /// no boundary, file or export record changes; one undo step for the whole scan.
     Q_INVOKABLE void rotateScan(const QString& scanId, int delta);
+    /// UX-08: the print's mask. A mode comes with its natural-blend preset (mm when the DPI is reliable); the
+    /// width keeps the choice's unit. Undoable, saved per print; the preview and the final output use it.
+    Q_INVOKABLE void setItemMaskMode(const QString& itemId, const QString& mode);
+    Q_INVOKABLE void setItemMaskWidth(const QString& itemId, double width);
+    Q_INVOKABLE void resetItemMask(const QString& itemId);
+    /// Explicit batch: the listed prints take `fromItemId`'s mask. Returns how many changed.
+    Q_INVOKABLE int applyMaskToItems(const QString& fromItemId, const QStringList& itemIds);
+    /// UX-09: a drag on a value (scrubbing). begin remembers the mask; live changes update the print (and its
+    /// coalesced preview) without undo steps; end commits one undo step for the whole drag, or restores
+    /// (Esc).
+    Q_INVOKABLE void beginMaskEdit(const QString& itemId);
+    Q_INVOKABLE void setItemMaskWidthLive(const QString& itemId, double width);
+    Q_INVOKABLE void endMaskEdit(const QString& itemId, bool commit);
     Q_INVOKABLE void setReviewed(const QString& itemId, bool reviewed);
     Q_INVOKABLE void setExcluded(const QString& itemId, bool excluded);
     Q_INVOKABLE void reviewAndNext();
@@ -172,6 +191,9 @@ class AppController : public QObject {
     Q_INVOKABLE QString defaultExportFolder() const;
     Q_INVOKABLE QString fileUrl(const QString& path) const;
     Q_INVOKABLE void notify(const QString& text, const QString& kind = QStringLiteral("info"));
+    /// FK-005: process memory (RSS, private, accounted buffers) and the cache budget with what it holds
+    /// (bytes and counts per kind, reserved job memory, evictions, memory-pressure events).
+    Q_INVOKABLE QVariantMap memoryReport() const;
 
     // ---- canvas support (C++ only) ----
     struct CanvasScan {
@@ -184,6 +206,8 @@ class AppController : public QObject {
         std::vector<const fk::ItemRecord*> items;
     };
     CanvasScan canvasScan() const;
+    /// UX-08 (self-test): {preview, final} masks last used for the print (mode -1 = not made yet).
+    std::pair<fk::MaskParams, fk::MaskParams> masksUsed(const std::string& itemId) const;
     // test access (self-test): generations and the job runner
     quint64 itemGeneration(const std::string& itemId) const;
     /// Item generation the cached composite preview was computed for (0 = no preview).
@@ -201,6 +225,23 @@ class AppController : public QObject {
     QImage thumbnail(const QString& id) const;
     JobRunner* jobRunner() { return jobs_; }
     bool waitIdle(int timeoutMs);
+    // ---- memory budget (FK-005) ----
+    /// The canvas's own images (pyramid levels above the proxy, the full-resolution patch): counted, kept.
+    void setCanvasBytes(uint64_t bytes);
+    /// Drops every cache that can be rebuilt (OS memory pressure; the self-test calls it directly).
+    void onMemoryPressure();
+    /// Test hook: another cache budget (0 = the device default).
+    void setCacheBudget(uint64_t bytes);
+    const fk::CacheLedger& cacheLedger() const { return cache_; }
+    // ---- display profile (FK-011) ----
+    /// The window is on `screen` now, or its ICC may have changed: read the profile and convert again if it
+    /// differs (main.cpp calls it on screen changes and every 5 s).
+    void refreshDisplayProfile(QScreen* screen);
+    /// Test hook: behave as if the window had moved to a monitor with this profile (the screen is ignored
+    /// until it is cleared with std::nullopt).
+    void setDisplayProfileOverride(std::optional<DisplayProfileInfo> p);
+    /// Display-space images in use were made for this generation (bumped when the display profile changes).
+    quint64 displayGeneration() const { return displayGen_; }
     fk::Project& project() { return project_; }
 
   Q_SIGNALS:
@@ -222,6 +263,9 @@ class AppController : public QObject {
     void relinkRowUpdated(const QVariantMap& row);
     void exportFinished(const QString& folder, int written, int failed);
     void confirmationNeeded(const QString& title, const QString& text);
+    /// FK-011: the display profile changed (another monitor, another ICC): display images were converted
+    /// again.
+    void displayProfileChanged();
 
   private:
     struct ScanRuntime {
@@ -245,6 +289,8 @@ class AppController : public QObject {
         int upright = 0;
         bool reviewed = false;
         quint64 seq = 0; ///< order across the print's and the scan's steps (one undo history)
+        fk::MaskChoice mask{};
+        bool maskSet = false;
     };
     struct UndoState {
         std::vector<Snapshot> undo, redo;
@@ -286,10 +332,37 @@ class AppController : public QObject {
     std::map<std::string, ScanRuntime> rt_;
     std::map<std::string, UndoState> undo_;
     std::map<std::string, ScanUndo> scanUndo_;
+    std::map<std::string, double> edgeChange_; ///< UX-08: last composite preview's edge change (ΔE00)
+    /// UX-08 (self-test): the mask the last composite preview and the last final output of a print were made
+    /// with
+    std::map<std::string, std::pair<fk::MaskParams, fk::MaskParams>> masksUsed_;
+    void setMask(const std::string& itemId, const fk::MaskChoice& m, bool undoStep = true);
+    std::map<std::string, std::pair<fk::MaskChoice, bool>> maskEditStart_; ///< UX-09: mask before a drag
     quint64 undoSeq_ = 0;
     void afterScanRotation(const std::string& scanId);
     std::map<std::string, std::pair<fk::Shape, fk::Shape>> detected_; ///< itemId → detected outer/inner
     std::map<std::string, QImage> compositePreviews_;
+    // ---- memory budget (FK-005, RFC-0014 §Memory budget) ----
+    /// One byte budget over the caches that can be rebuilt: scan display proxies ("display:<scan>"), decoded
+    /// strips of the full-resolution view ("source:<scan>"), composite previews ("composite:<item>"); counted
+    /// but kept: thumbnails ("thumb:<scan>"), the canvas's images ("canvas"). On screen = pinned.
+    fk::CacheLedger cache_;
+    uint64_t defaultBudget_ = 0;
+    uint64_t workToken_ = 0; ///< the jobs' reservation in the ledger
+    // ---- display profile (FK-011) ----
+    quint64 displayGen_ = 1;
+    bool displayOverridden_ = false;
+    void applyDisplayProfile(const DisplayProfileInfo& p);
+    int pressureEvents_ = 0;
+    /// Records an entry's current size and drops what no longer fits (least recently used first).
+    void noteCache(const std::string& key, uint64_t bytes, bool kept = false);
+    void noteScanImages(const std::string& scanId);
+    void enforceCache();
+    void dropCacheEntry(const std::string& key);
+    void forgetScanCaches(const std::string& scanId);
+    /// Working memory a job on this scan / print is expected to need (reserved before it starts).
+    uint64_t scanWorkBytes(const fk::ScanRecord& s) const;
+    uint64_t itemWorkBytes(const fk::ScanRecord& s, const fk::ItemRecord& it, bool graded) const;
     // ---- task safety (RFC-0010 §Task safety, FK-006) ----
     /// Generations: a background result is applied only if what it was computed from is still current.
     struct JobSnapshot {
@@ -307,6 +380,7 @@ class AppController : public QObject {
     std::map<std::string, quint64> scanGen_, itemGen_;
     std::map<std::string, quint64> previewGen_; ///< item → item generation its cached composite preview shows
     std::map<std::string, int> previewJob_;     ///< item → in-flight composite preview job (coalescing)
+    std::set<std::string> previewPending_;      ///< UX-09: asked again while one was in flight
     std::map<std::string, QVariantMap> relinkChecks_; ///< itemId → last content/geometry check
     /// New-alignment records offered by the last assessments, applied only when the user confirms them.
     std::map<QString, fk::Sidecar> pendingAlignments_;

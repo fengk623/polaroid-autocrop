@@ -16,10 +16,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRectF>
+#include <QThread>
 #include <QTransform>
 #include <QUrl>
 #include <QWheelEvent>
@@ -28,6 +30,10 @@
 #include <cstring>
 #include <functional>
 #include <set>
+
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 // Exported by Qt GUI for input injection (declared, like this, by Qt Test's qtestmouse.h).
 Q_GUI_EXPORT void qt_handleMouseEvent(QWindow* window, const QPointF& local, const QPointF& global,
@@ -106,6 +112,23 @@ void SelfTest::key(int k, Qt::KeyboardModifiers mods, bool press, const QString&
     QCoreApplication::processEvents();
 }
 
+void SelfTest::doubleClick(QQuickItem* item, QPointF local) {
+    if (local.x() < 0) local = QPointF(item->width() / 2, item->height() / 2);
+    const QPointF at = item->mapToScene(local), global = item->mapToGlobal(local);
+    inputTs_ += 1000;
+    // two clicks 60 ms apart at the same place: Qt makes the second press a double click
+    qt_handleMouseEvent(window_, at, global, Qt::LeftButton, Qt::LeftButton, QEvent::MouseButtonPress,
+                        Qt::NoModifier, inputTs_);
+    qt_handleMouseEvent(window_, at, global, Qt::NoButton, Qt::LeftButton, QEvent::MouseButtonRelease,
+                        Qt::NoModifier, inputTs_ + 20);
+    qt_handleMouseEvent(window_, at, global, Qt::LeftButton, Qt::LeftButton, QEvent::MouseButtonPress,
+                        Qt::NoModifier, inputTs_ + 60);
+    qt_handleMouseEvent(window_, at, global, Qt::NoButton, Qt::LeftButton, QEvent::MouseButtonRelease,
+                        Qt::NoModifier, inputTs_ + 80);
+    inputTs_ += 80;
+    QCoreApplication::processEvents();
+}
+
 QQuickItem* SelfTest::findItemIf(const std::function<bool(QQuickItem*)>& pred) const {
     std::function<QQuickItem*(QQuickItem*)> find = [&](QQuickItem* it) -> QQuickItem* {
         if (!it) return nullptr;
@@ -156,6 +179,46 @@ bool samePixels(const QString& a, const QString& b, QString& why) {
         }
     return true;
 }
+/// Writes `src` with per-channel gains and offsets (a colour grade: v × gain + offset, offset in 0…1),
+/// keeping its profile and its XMP (UX-08 edge tests).
+bool rewriteGraded(const QString& src, const QString& dst, std::array<double, 3> gain,
+                   std::array<double, 3> offset = {0, 0, 0}) {
+    fk::ImageInfo info;
+    auto img = fk::readImageFile(toPath(src), &info);
+    if (!img) return false;
+    const auto xmp = fk::readXmpPacket(toPath(src));
+    const int ch = img->channels();
+    for (int64_t y = 0; y < img->height(); ++y)
+        for (int64_t x = 0; x < img->width(); ++x)
+            for (int c = 0; c < ch; ++c) {
+                const double g = gain[static_cast<size_t>(std::min(c, 2))];
+                const double o = offset[static_cast<size_t>(std::min(c, 2))];
+                if (img->bits() == 16) {
+                    uint16_t v;
+                    std::memcpy(&v, img->row(y) + (x * ch + c) * 2, 2);
+                    v = static_cast<uint16_t>(std::clamp(std::lround(v * g + o * 65535), 0L, 65535L));
+                    std::memcpy(img->row(y) + (x * ch + c) * 2, &v, 2);
+                } else {
+                    uint8_t& v = img->row(y)[x * ch + c];
+                    v = static_cast<uint8_t>(std::clamp(std::lround(v * g + o * 255), 0L, 255L));
+                }
+            }
+    fk::WriteOptions opt;
+    opt.bits = img->bits();
+    opt.icc = info.icc;
+    opt.dpiX = info.dpiX;
+    opt.dpiY = info.dpiY;
+    if (xmp) opt.xmp = *xmp;
+    const QString tmp = dst + QStringLiteral(".tmp.tif");
+    QFile::remove(tmp);
+    auto sink = fk::createSink(toPath(tmp), opt);
+    if (!sink || !(*sink)->begin({img->width(), img->height()}, ch, img->bits())) return false;
+    for (int64_t y = 0; y < img->height(); ++y)
+        if (!(*sink)->writeRows(img->row(y), 1, img->rowBytes())) return false;
+    if (!(*sink)->finish()) return false;
+    QFile::remove(dst);
+    return QFile::rename(tmp, dst);
+}
 /// `b` is `a` turned by `k` quarter turns clockwise, pixel for pixel (UX-04: lossless export orientation).
 bool sameTurned(const QString& a, const QString& b, int k, QString& why) {
     auto ia = fk::readImageFile(toPath(a)), ib = fk::readImageFile(toPath(b));
@@ -200,7 +263,8 @@ bool sameTurned(const QString& a, const QString& b, int k, QString& why) {
 }
 /// A scanner bed with the first print of `src` four times, turned 0°, 90°, 180° and 270° (UX-04 test scan),
 /// at about 300 dpi on the scan's own background.
-bool writeFourOrientations(const QString& src, const fk::Shape& outer, const QString& dst) {
+bool writeFourOrientations(const QString& src, const fk::Shape& outer, const QString& dst,
+                           uint32_t seed = 11) {
     fk::ImageInfo info;
     auto img = fk::readImageFile(toPath(src), &info);
     if (!img) return false;
@@ -232,7 +296,7 @@ bool writeFourOrientations(const QString& src, const fk::Shape& outer, const QSt
     const int64_t ow = 2 * cell + gap + cell / 2, oh = 2 * cell + gap; // not square: a turn changes the shape
     auto out = fk::ImageBuffer::create(ow, oh, ch, img->bits());
     if (!out) return false;
-    uint32_t rng = 11;
+    uint32_t rng = seed; // another seed: the same scene with other scanner noise (a different file)
     auto put = [&](int64_t x, int64_t y, int c, int v) {
         if (img->bits() == 8) {
             out->row(y)[x * ch + c] = static_cast<uint8_t>(v / 257);
@@ -419,6 +483,29 @@ bool rewriteWithoutMetadata(const QString& src, const QString& dst, fk::FileForm
     if (!(*sink)->begin({img->width(), img->height()}, img->channels(), img->bits())) return false;
     for (int64_t y = 0; y < img->height(); ++y)
         if (!(*sink)->writeRows(img->row(y), 1, img->rowBytes())) return false;
+    return static_cast<bool>((*sink)->finish());
+}
+/// Writes the pixels of `r` (scan px) of `src` without metadata: a print's picture that was never exported.
+bool writeCrop(const QString& src, const fk::RectI& r, const QString& dst) {
+    fk::ImageInfo info;
+    auto img = fk::readImageFile(toPath(src), &info);
+    if (!img) return false;
+    const int64_t x0 = std::clamp<int64_t>(r.x, 0, img->width()),
+                  y0 = std::clamp<int64_t>(r.y, 0, img->height());
+    const int64_t w = std::clamp<int64_t>(r.w, 0, img->width() - x0),
+                  h = std::clamp<int64_t>(r.h, 0, img->height() - y0);
+    if (w <= 0 || h <= 0) return false;
+    const size_t bpp = static_cast<size_t>(img->channels()) * static_cast<size_t>(img->bits() / 8);
+    fk::WriteOptions opt;
+    opt.bits = img->bits();
+    opt.icc = info.icc;
+    QFile::remove(dst);
+    auto sink = fk::createSink(toPath(dst), opt);
+    if (!sink || !(*sink)->begin({w, h}, img->channels(), img->bits())) return false;
+    for (int64_t y = 0; y < h; ++y)
+        if (!(*sink)->writeRows(img->row(y0 + y) + static_cast<size_t>(x0) * bpp, 1,
+                                static_cast<size_t>(w) * bpp))
+            return false;
     return static_cast<bool>((*sink)->finish());
 }
 /// Writes `src` rotated by 180° (lossless) without metadata.
@@ -2046,9 +2133,1082 @@ void SelfTest::runScanRotation() {
     app_->newProject();
 }
 
+void SelfTest::runMaskDefaults() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("mask"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QVariantMap saved = app_->settings();
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{{"exportFolder", exportDir},
+                                                                        {"exportFormat", "tif"},
+                                                                        {"geometryMode", "crop"},
+                                                                        {"finalMode", "real"},
+                                                                        {"finalFormat", "tif"},
+                                                                        {"applyUpright", false},
+                                                                        {"rightTab", 2}})
+        app_->setSetting(k, v);
+    auto restoreSettings = [&] {
+        for (const char* k : {"exportFolder", "exportFormat", "geometryMode", "finalMode", "finalFormat",
+                              "applyUpright", "rightTab", "newPrintMask"})
+            app_->setSetting(QString::fromLatin1(k), saved.value(QString::fromLatin1(k)));
+    };
+    check(QStringLiteral("UX-08 new prints get the natural blend by default"),
+          saved.value("newPrintMask").toString() == QLatin1String("feather"),
+          saved.value("newPrintMask").toString());
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    QCoreApplication::processEvents();
+    std::vector<std::string> ids;
+    double dpi = 0;
+    bool reliable = false;
+    if (!app_->project().scans.empty()) {
+        const auto& sc = app_->project().scans.front();
+        for (const auto& it : sc.items)
+            ids.push_back(it.itemId);
+        dpi = sc.dpiUsed > 0 ? sc.dpiUsed : sc.info.dpiX;
+        reliable =
+            dpi > 0 && std::find(sc.warnings.begin(), sc.warnings.end(), "dpi_unknown") == sc.warnings.end();
+    }
+    check(QStringLiteral("UX-08 setup: prints to composite"), !ids.empty(), QString::number(ids.size()));
+    if (ids.empty()) {
+        restoreSettings();
+        return;
+    }
+    auto rec = [&](const std::string& id) -> const fk::ItemRecord* { return app_->item(id); };
+    auto maskOf = [&](const std::string& id) {
+        app_->selectItem(toQ(id));
+        QCoreApplication::processEvents();
+        return app_->currentItem().value("mask").toMap();
+    };
+    auto maskText = [](const QVariantMap& m) {
+        return QStringLiteral("%1 %2 %3 (= %4 px), own %5")
+            .arg(m.value("mode").toString())
+            .arg(m.value("width").toDouble())
+            .arg(m.value("unit").toString())
+            .arg(m.value("px").toDouble(), 0, 'f', 3)
+            .arg(m.value("own").toBool());
+    };
+    const fk::MaskChoice natural = fk::naturalBlend(fk::MaskMode::feather, reliable);
+    bool allNatural = true;
+    for (const auto& id : ids)
+        allNatural = allNatural && rec(id)->composite.maskSet && rec(id)->composite.mask == natural;
+    const QVariantMap m0 = maskOf(ids.front());
+    check(QStringLiteral("UX-08 every new print: feather %1 %2, converted with the scan's DPI")
+              .arg(natural.width)
+              .arg(natural.mm ? QStringLiteral("mm") : QStringLiteral("px")),
+          allNatural && std::abs(m0.value("px").toDouble() -
+                                 (natural.mm ? natural.width * dpi / 25.4 : natural.width)) < 1e-9,
+          maskText(m0) + QStringLiteral(" at %1 dpi").arg(dpi));
+    QQuickItem* combo = findItem(QStringLiteral("maskModeCombo"));
+    QQuickItem* field = findItem(QStringLiteral("maskWidthField"));
+    check(QStringLiteral("UX-08 the right rail shows the print's mask"),
+          combo && field && combo->isVisible() && field->isVisible() &&
+              combo->property("value").toString() == QLatin1String("feather") &&
+              std::abs(field->property("value").toDouble() - natural.width) < 1e-9,
+          combo && field ? QStringLiteral("%1 / %2").arg(combo->property("value").toString(),
+                                                         field->property("text").toString())
+                         : QStringLiteral("controls not found"));
+    // the width typed into the field (real key events), then undone
+    if (field && field->isVisible()) {
+        doubleClick(field); // UX-09: keyboard input opens with a double-click (the text is selected)
+        const QString typed = natural.mm ? QStringLiteral("0.06") : QStringLiteral("2.5");
+        for (const QChar c : typed) {
+            const int k = c == QLatin1Char('.') ? Qt::Key_Period : Qt::Key_0 + (c.unicode() - '0');
+            key(k, Qt::NoModifier, true, QString(c));
+            key(k, Qt::NoModifier, false, QString(c));
+        }
+        key(Qt::Key_Return, Qt::NoModifier, true);
+        key(Qt::Key_Return, Qt::NoModifier, false);
+        const fk::MaskChoice afterTyping = rec(ids.front())->composite.mask;
+        app_->undo();
+        check(QStringLiteral("UX-08 width typed in the right rail is saved with the print; undo restores it"),
+              afterTyping.mode == fk::MaskMode::feather &&
+                  std::abs(afterTyping.width - typed.toDouble()) < 1e-9 &&
+                  rec(ids.front())->composite.mask == natural,
+              QStringLiteral("typed %1 → %2").arg(typed).arg(afterTyping.width));
+    }
+    // explicit batch: two prints selected, the current one's mask applied with the button (mouse)
+    if (ids.size() >= 2) {
+        app_->selectItem(toQ(ids[0]));
+        app_->selectItem(toQ(ids[1]), true);
+        QCoreApplication::processEvents();
+        app_->setItemMaskMode(app_->currentItemId(), QStringLiteral("preserve_edge"));
+        const std::string cur = toStd(app_->currentItemId());
+        const std::string other = cur == ids[0] ? ids[1] : ids[0];
+        const bool before = rec(other)->composite.mask == natural;
+        const bool clicked = click(findItem(QStringLiteral("maskApplyButton")));
+        const bool appliedToOther =
+            rec(other)->composite.mask == fk::naturalBlend(fk::MaskMode::preserve_edge, reliable);
+        const bool restUnchanged = ids.size() < 3 || rec(ids[2])->composite.mask == natural;
+        check(QStringLiteral("UX-08 applied to the selected prints only, with the button (mouse)"),
+              before && clicked && appliedToOther && restUnchanged);
+    } else {
+        skip(QStringLiteral("UX-08 applied to the selected prints only, with the button (mouse)"),
+             QStringLiteral("one print on this scan"));
+    }
+
+    // preview and final output use the same mask; graded files: a normal grade and a strong one
+    app_->selectItem(toQ(ids.front()));
+    app_->exportImageAreas({});
+    app_->waitIdle(300000);
+    const QStringList edits = filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif"));
+    // edits are named by label: P01 is ids[0], … (labels follow the detection order)
+    const bool graded =
+        edits.size() == ids.size() && rewriteGraded(edits[0], edits[0], {1.03, 1.03, 1.03}) &&
+        (ids.size() < 2 || rewriteGraded(edits.back(), edits.back(), {1.2, 1.0, 0.7}, {0.12, 0, 0}));
+    QVariantList rows;
+    auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+    QVariantList urls;
+    for (const auto& e : edits)
+        urls << e;
+    app_->relinkFiles(urls);
+    app_->waitIdle(300000);
+    disconnect(c);
+    app_->applyRelink(rows);
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    auto previewOf = [&](const std::string& id) {
+        app_->selectItem(toQ(id));
+        app_->requestCompositePreview(toQ(id));
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+        return app_->currentItem().value("mask").toMap();
+    };
+    const QVariantMap normal = previewOf(ids.front());
+    app_->exportFinal({toQ(ids.front())}, {});
+    app_->waitIdle(300000);
+    const auto used = app_->masksUsed(ids.front());
+    const fk::MaskParams want = fk::resolveMask(rec(ids.front())->composite.mask, dpi);
+    auto same = [](const fk::MaskParams& a, const fk::MaskParams& b) {
+        return a.mode == b.mode && a.featherPx == b.featherPx && a.preserveEdgePx == b.preserveEdgePx;
+    };
+    check(QStringLiteral("UX-08 the composite preview and the final output use the print's mask"),
+          graded && same(used.first, want) && same(used.second, want) &&
+              !filesMatching(exportDir, QStringLiteral("*_FINAL_v001.tif")).isEmpty(),
+          QStringLiteral("preview %1/%2 px, final %3/%4 px, print %5/%6 px")
+              .arg(used.first.featherPx)
+              .arg(used.first.preserveEdgePx)
+              .arg(used.second.featherPx)
+              .arg(used.second.preserveEdgePx)
+              .arg(want.featherPx)
+              .arg(want.preserveEdgePx));
+    check(QStringLiteral("UX-08 a normal grade (+3 %) is not flagged at the edge"),
+          normal.value("strongEdgeChange").toBool() == false && normal.value("edgeChange").toDouble() > 0,
+          QStringLiteral("edge change ΔE00 %1").arg(normal.value("edgeChange").toDouble(), 0, 'f', 2));
+    if (ids.size() >= 2) {
+        const QVariantMap strong = previewOf(ids.back());
+        QQuickItem* hint = findItem(QStringLiteral("strongEdgeHint"));
+        check(QStringLiteral("UX-08 a strong colour change at the edge asks for a check (right rail)"),
+              strong.value("strongEdgeChange").toBool() && hint && hint->isVisible(),
+              QStringLiteral("edge change ΔE00 %1").arg(strong.value("edgeChange").toDouble(), 0, 'f', 2));
+    } else {
+        skip(QStringLiteral("UX-08 a strong colour change at the edge asks for a check (right rail)"),
+             QStringLiteral("one print on this scan (its graded file carries the normal grade)"));
+    }
+    snapshot(QStringLiteral("U015-mask"));
+
+    // saved and reopened: each print keeps its own mask
+    std::map<std::string, fk::MaskChoice> masks;
+    for (const auto& id : ids)
+        masks[id] = rec(id)->composite.mask;
+    const QString proj = QDir(d).filePath(QStringLiteral("mask.fkproj"));
+    const bool savedOk = app_->saveProjectAs(proj);
+    app_->newProject();
+    const bool opened = app_->openProject(QUrl::fromLocalFile(proj));
+    app_->waitIdle(300000);
+    bool kept = savedOk && opened;
+    for (const auto& id : ids)
+        kept = kept && rec(id) && rec(id)->composite.maskSet && rec(id)->composite.mask == masks[id];
+    check(QStringLiteral("UX-08 saved and reopened: every print keeps its own mask"), kept);
+    // a project from before 0.7.0-alpha.5 (no per-print mask): its prints keep the project's setting
+    {
+        QFile f(proj);
+        f.open(QIODevice::ReadOnly);
+        QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+        f.close();
+        QJsonObject root = doc.object();
+        QJsonArray scans = root.value("scans").toArray();
+        for (int i = 0; i < scans.size(); ++i) {
+            QJsonObject sc = scans[i].toObject();
+            QJsonArray items = sc.value("items").toArray();
+            for (int j = 0; j < items.size(); ++j) {
+                QJsonObject it = items[j].toObject();
+                QJsonObject comp = it.value("composite").toObject();
+                comp.remove(QStringLiteral("mask"));
+                it.insert(QStringLiteral("composite"), comp);
+                items[j] = it;
+            }
+            sc.insert(QStringLiteral("items"), items);
+            scans[i] = sc;
+        }
+        root.insert(QStringLiteral("scans"), scans);
+        const QString old = QDir(d).filePath(QStringLiteral("before-0.7.0-alpha.5.fkproj"));
+        QFile o(old);
+        o.open(QIODevice::WriteOnly);
+        o.write(QJsonDocument(root).toJson());
+        o.close();
+        app_->newProject();
+        app_->openProject(QUrl::fromLocalFile(old));
+        app_->waitIdle(300000);
+        const QVariantMap m = maskOf(ids.front());
+        check(QStringLiteral("UX-08 older projects: prints keep compositing with the project's setting"),
+              rec(ids.front()) && !rec(ids.front())->composite.maskSet && !m.value("own").toBool() &&
+                  m.value("unit").toString() == QLatin1String("px") &&
+                  m.value("mode").toString() == app_->settings().value("maskMode").toString(),
+              maskText(m));
+    }
+    restoreSettings();
+    app_->newProject();
+}
+
+void SelfTest::runScrubFields() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("scrub"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QVariantMap saved = app_->settings();
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{
+             {"exportFolder", exportDir}, {"exportFormat", "tif"}, {"geometryMode", "crop"}, {"rightTab", 2}})
+        app_->setSetting(k, v);
+    auto restoreSettings = [&] {
+        for (const char* k : {"exportFolder", "exportFormat", "geometryMode", "rightTab"})
+            app_->setSetting(QString::fromLatin1(k), saved.value(QString::fromLatin1(k)));
+    };
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    QCoreApplication::processEvents();
+    const QString id = app_->currentItemId();
+    const fk::ItemRecord* it0 = app_->item(toStd(id));
+    QQuickItem* field = findItem(QStringLiteral("maskWidthField"));
+    check(QStringLiteral("UX-09 setup: the mask width field of a print"),
+          it0 && field && field->isVisible() && it0->composite.mask.mode == fk::MaskMode::feather);
+    if (!it0 || !field || !field->isVisible()) {
+        restoreSettings();
+        return;
+    }
+    const fk::MaskChoice start = it0->composite.mask;
+    const bool mm = start.mm;
+    const double step = field->property("step").toDouble(), upper = field->property("to").toDouble();
+    auto width = [&] { return app_->item(toStd(id))->composite.mask.width; };
+    auto near = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+    auto expected = [&](double from, double dxPx) { // 2 logical px per step, clamped to the field's range
+        return std::clamp(from + std::round(dxPx / 2.0) * step, 0.0, upper);
+    };
+    const QPointF c(field->width() / 2, field->height() / 2);
+    // a drag in `n` moves of `dx/n` px, optionally waiting between moves (a realistic speed)
+    auto scrubBy = [&](double dx, int n, int waitMs, bool release = true) {
+        mouse(field, c, QEvent::MouseButtonPress);
+        for (int k = 1; k <= n; ++k) {
+            mouse(field, c + QPointF(dx * k / n, 0), QEvent::MouseMove);
+            if (waitMs > 0) waitFor([] { return false; }, waitMs);
+        }
+        if (release) mouse(field, c + QPointF(dx, 0), QEvent::MouseButtonRelease);
+        QCoreApplication::processEvents();
+    };
+    // 1. drag right over about 0.25 s (live updates happen): the value follows, one undo step for the whole
+    // drag
+    scrubBy(60, 12, 20);
+    const double w1 = width();
+    app_->undo();
+    const double undone = width();
+    const bool moreSteps = app_->canUndo(); // a fresh print: the drag must be its only step
+    app_->redo();
+    check(QStringLiteral("UX-09 drag right (mouse): the value follows, one undo step for the whole drag"),
+          near(w1, expected(start.width, 60)) && near(undone, start.width) && !moreSteps && near(width(), w1),
+          QStringLiteral("%1 → %2 %3, undo → %4").arg(start.width).arg(w1).arg(mm ? "mm" : "px").arg(undone));
+    // 2. a click is not a drag and does not open keyboard input or select text
+    mouse(field, c, QEvent::MouseButtonPress);
+    mouse(field, c, QEvent::MouseButtonRelease);
+    check(QStringLiteral("UX-09 a click changes nothing, no keyboard input, no selected text"),
+          near(width(), w1) && field->property("readOnly").toBool() &&
+              field->property("selectedText").toString().isEmpty());
+    // 3. under the 4 px threshold
+    scrubBy(3, 3, 0);
+    check(QStringLiteral("UX-09 a 3 px move is not a drag"), near(width(), w1));
+    // 4. / 5. negative drag to the lower bound, then past the upper bound
+    scrubBy(-400, 20, 0);
+    const double lo = width();
+    scrubBy(400, 20, 0);
+    check(QStringLiteral("UX-09 drag left to the lower bound, right to the upper bound (clamped)"),
+          near(lo, 0.0) && near(width(), upper), QStringLiteral("%1 … %2").arg(lo).arg(width()));
+    // 6. Esc during a drag: back to the value before it, no undo step
+    const double beforeEsc = width();
+    scrubBy(-40, 8, 20, false); // long enough for live updates: Esc must undo them
+    const double during = field->property("liveValue").toDouble();
+    key(Qt::Key_Escape, Qt::NoModifier, true);
+    key(Qt::Key_Escape, Qt::NoModifier, false);
+    mouse(field, c + QPointF(-40, 0), QEvent::MouseButtonRelease);
+    app_->undo();
+    const double afterUndo = width();
+    app_->redo();
+    check(QStringLiteral("UX-09 Esc during a drag restores the value (no undo step)"),
+          !near(during, beforeEsc) && near(width(), beforeEsc) && near(afterUndo, 0.0),
+          QStringLiteral("live %1, after Esc %2, undo → %3").arg(during).arg(width()).arg(afterUndo));
+    // 7. double-click: keyboard input; letters refused; Enter commits
+    doubleClick(field);
+    const bool editing = !field->property("readOnly").toBool() &&
+                         field->property("selectedText").toString() == field->property("text").toString();
+    for (const QChar ch : QStringLiteral("ab")) {
+        key(Qt::Key_A + (ch.unicode() - 'a'), Qt::NoModifier, true, QString(ch));
+        key(Qt::Key_A + (ch.unicode() - 'a'), Qt::NoModifier, false, QString(ch));
+    }
+    const QString afterLetters = field->property("text").toString();
+    auto type = [&](const QString& t) {
+        for (const QChar ch : t) {
+            const int k = ch == QLatin1Char('.') ? Qt::Key_Period : Qt::Key_0 + (ch.unicode() - '0');
+            key(k, Qt::NoModifier, true, QString(ch));
+            key(k, Qt::NoModifier, false, QString(ch));
+        }
+    };
+    const QString v12 = mm ? QStringLiteral("0.12") : QStringLiteral("3.5");
+    type(v12);
+    key(Qt::Key_Return, Qt::NoModifier, true);
+    key(Qt::Key_Return, Qt::NoModifier, false);
+    check(QStringLiteral("UX-09 double-click opens keyboard input; letters are refused; Enter commits"),
+          editing && !afterLetters.contains(QLatin1Char('a')) && near(width(), v12.toDouble()) &&
+              field->property("readOnly").toBool(),
+          QStringLiteral("after letters \"%1\", value %2").arg(afterLetters).arg(width()));
+    // 8. Esc cancels typing
+    doubleClick(field);
+    type(mm ? QStringLiteral("0.5") : QStringLiteral("9"));
+    key(Qt::Key_Escape, Qt::NoModifier, true);
+    key(Qt::Key_Escape, Qt::NoModifier, false);
+    check(QStringLiteral("UX-09 Esc cancels keyboard input"),
+          near(width(), v12.toDouble()) && field->property("readOnly").toBool());
+    // 9. focus loss commits
+    doubleClick(field);
+    const QString v07 = mm ? QStringLiteral("0.07") : QStringLiteral("2");
+    type(v07);
+    if (auto* canvas = qobject_cast<QQuickItem*>(findCanvas())) click(canvas, QPointF(4, 4));
+    check(QStringLiteral("UX-09 leaving the field commits the typed value"), near(width(), v07.toDouble()),
+          QString::number(width()));
+    // 10. keyboard steps kept
+    click(field);
+    key(Qt::Key_Up, Qt::NoModifier, true);
+    key(Qt::Key_Up, Qt::NoModifier, false);
+    const double up1 = width();
+    key(Qt::Key_Up, Qt::ShiftModifier, true);
+    key(Qt::Key_Up, Qt::ShiftModifier, false);
+    check(QStringLiteral("UX-09 arrow keys still step (Shift ×10)"),
+          near(up1, v07.toDouble() + step) && near(width(), v07.toDouble() + 11 * step),
+          QStringLiteral("%1, %2").arg(up1).arg(width()));
+    // 11. no backlog of composite previews while dragging, and the last preview is the last value
+    app_->exportImageAreas({id});
+    app_->waitIdle(300000);
+    QVariantList rows;
+    auto conn = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+    app_->relinkFiles({filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif")).value(0)});
+    app_->waitIdle(300000);
+    disconnect(conn);
+    app_->applyRelink(rows);
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    app_->selectItem(id);
+    QObject* canvas = findCanvas();
+    canvas->setProperty("mode", QStringLiteral("composite"));
+    app_->requestCompositePreview(id);
+    app_->waitIdle(120000);
+    QCoreApplication::processEvents();
+    const int firstJob = app_->jobRunner()->lastJobId();
+    int maxActive = 0;
+    const double before11 = width();
+    mouse(field, c, QEvent::MouseButtonPress);
+    for (int k = 1; k <= 30; ++k) { // 30 moves over about 0.6 s
+        mouse(field, c + QPointF(2.0 * k, 0), QEvent::MouseMove);
+        waitFor([] { return false; }, 20);
+        maxActive = std::max(maxActive, app_->jobRunner()->activeCount());
+    }
+    mouse(field, c + QPointF(60, 0), QEvent::MouseButtonRelease);
+    app_->waitIdle(120000);
+    QCoreApplication::processEvents();
+    const int started = app_->jobRunner()->lastJobId() - firstJob;
+    const auto used = app_->masksUsed(toStd(id));
+    const fk::ItemRecord* it1 = app_->item(toStd(id));
+    double scanDpi = 0;
+    for (const auto& sc : app_->project().scans)
+        for (const auto& i : sc.items)
+            if (i.itemId == toStd(id)) scanDpi = sc.dpiUsed > 0 ? sc.dpiUsed : sc.info.dpiX;
+    const fk::MaskParams want = fk::resolveMask(it1->composite.mask, scanDpi);
+    check(QStringLiteral(
+              "UX-09 a 0.6 s drag in composite view: few previews, never more than 2 at once, the last "
+              "preview is the last value"),
+          near(it1->composite.mask.width, expected(before11, 60)) && started <= 10 && maxActive <= 2 &&
+              used.first.featherPx == want.featherPx && used.first.preserveEdgePx == want.preserveEdgePx &&
+              app_->compositePreviewGeneration(toStd(id)) == app_->itemGeneration(toStd(id)),
+          QStringLiteral("%1 preview jobs for 30 moves, at most %2 at once, preview mask %3 px, value %4")
+              .arg(started)
+              .arg(maxActive)
+              .arg(used.first.featherPx + used.first.preserveEdgePx)
+              .arg(it1->composite.mask.width));
+    canvas->setProperty("mode", QStringLiteral("scan"));
+    snapshot(QStringLiteral("U016-scrub"));
+    restoreSettings();
+    app_->newProject();
+}
+
+void SelfTest::runMemoryBudget() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("memory"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QVariantMap saved = app_->settings();
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{{"exportFolder", exportDir},
+                                                                        {"exportFormat", "tif"},
+                                                                        {"geometryMode", "crop"},
+                                                                        {"applyUpright", false},
+                                                                        {"autoCount", true}})
+        app_->setSetting(k, v);
+    QObject* canvas = findCanvas();
+    auto restore = [&] {
+        for (const char* k : {"exportFolder", "exportFormat", "geometryMode", "applyUpright", "autoCount"})
+            app_->setSetting(QString::fromLatin1(k), saved.value(QString::fromLatin1(k)));
+        app_->setCacheBudget(0);
+        app_->jobRunner()->setTestDelayMs(0);
+        if (canvas) {
+            canvas->setProperty("mode", QStringLiteral("scan"));
+            QMetaObject::invokeMethod(canvas, "fit");
+        }
+    };
+    const fk::CacheLedger& L = app_->cacheLedger();
+    auto rep = [&] { return app_->memoryReport(); };
+    // the ledger's rule: what can be dropped fits next to the jobs' reservation
+    auto within = [&] {
+        const uint64_t room = L.budget() > L.reserved() ? L.budget() - L.reserved() : 0;
+        return L.bytes() <= std::max(room, L.fixedBytes());
+    };
+    // every image the controller holds is in the ledger (nothing kept behind its back)
+    auto counted = [&] {
+        const QVariantMap r = rep();
+        return r.value("displaysHeld").toInt() == r.value("displayCount").toInt() &&
+               r.value("sourcesHeld").toInt() == r.value("sourceCount").toInt() &&
+               r.value("compositesHeld").toInt() == r.value("compositeCount").toInt();
+    };
+    auto mb = [](uint64_t b) { return QString::number(static_cast<double>(b) / 1048576.0, 'f', 1); };
+    auto state = [&] {
+        const QVariantMap r = rep();
+        return QStringLiteral("cache %1 / budget %2 MB (fixed %3, reserved %4) · proxies %5 · sources %6 · "
+                              "previews %7 · RSS %8 MB")
+            .arg(mb(L.bytes()), mb(L.budget()), mb(L.fixedBytes()), mb(L.reserved()))
+            .arg(r.value("displaysHeld").toInt())
+            .arg(r.value("sourcesHeld").toInt())
+            .arg(r.value("compositesHeld").toInt())
+            .arg(r.value("residentMB").toDouble(), 0, 'f', 0);
+    };
+
+    // setup: the first print of the test scan four times on a bed, six scans with different scanner noise
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    fk::Shape first;
+    if (!app_->project().scans.empty() && !app_->project().scans.front().items.empty())
+        first = app_->project().scans.front().items.front().outer;
+    QVariantList beds;
+    bool made = !app_->project().scans.empty();
+    for (uint32_t i = 0; made && i < 6; ++i) {
+        const QString f = QDir(d).filePath(QStringLiteral("bed-%1.tif").arg(i + 1));
+        made = writeFourOrientations(scan_, first, f, 101 + i);
+        beds << f;
+    }
+    check(QStringLiteral("FK-005 setup: six scans with four prints each"), made);
+    if (!made) {
+        restore();
+        return;
+    }
+    // the reservation of the job that reads a proxy again (what switching scans runs), measured while it runs
+    uint64_t jobReserve = 0;
+    auto waitAndWatch = [&](int ms) {
+        waitFor(
+            [&] {
+                jobReserve = std::max(jobReserve, L.reserved());
+                return !app_->busy();
+            },
+            ms);
+        app_->waitIdle(ms);
+        QCoreApplication::processEvents();
+    };
+    app_->newProject();
+    app_->importScans(beds.mid(0, 2));
+    waitAndWatch(300000);
+    std::vector<QString> scanIds;
+    for (const auto& sc : app_->project().scans)
+        scanIds.push_back(toQ(sc.scanId));
+    const uint64_t proxy = scanIds.size() == 2 ? L.bytes("display:" + toStd(scanIds[0])) : 0; // one proxy
+    if (proxy > 0) {
+        // the second scan's proxy goes: reading it again shows that job's reservation (detection reserved for
+        // a scan of unknown size, i.e. a large one: not what switching needs)
+        app_->selectScan(scanIds[0]);
+        app_->onMemoryPressure();
+        jobReserve = 0;
+        app_->selectScan(scanIds[1]);
+        waitAndWatch(300000);
+    }
+    if (proxy == 0 || jobReserve == 0) {
+        check(QStringLiteral("FK-005 setup: a scan proxy counted, jobs reserve memory"), false, state());
+        restore();
+        return;
+    }
+    // a budget that leaves room for about two more proxies while a proxy is read (detection reserves at least
+    // as much: a scan of unknown size counts as a 1600 dpi A4 scan)
+    const uint64_t budget = jobReserve + L.fixedBytes() + 5 * proxy / 2;
+    app_->setCacheBudget(budget);
+
+    // 1. batch detection of the other four: proxies given back as they arrive, least recently used first
+    app_->importScans(beds.mid(2));
+    app_->waitIdle(600000);
+    QCoreApplication::processEvents();
+    int prints = 0;
+    scanIds.clear();
+    for (const auto& sc : app_->project().scans) {
+        prints += static_cast<int>(sc.items.size());
+        scanIds.push_back(toQ(sc.scanId));
+    }
+    const int heldAfterBatch = rep().value("displaysHeld").toInt();
+    check(QStringLiteral("FK-005 batch detection of 6 scans: proxies beyond the budget are given back"),
+          scanIds.size() == 6 && prints == 24 && heldAfterBatch < 6 && L.evictions() > 0 && within() &&
+              counted(),
+          QStringLiteral("%1 prints · job reservation %2 MB, proxy %3 MB · %4")
+              .arg(prints)
+              .arg(mb(jobReserve), mb(proxy), state()));
+
+    // 2. switching through every scan twice: each one is shown (its proxy read again when it was given back),
+    // the cache stays within the budget, nothing grows with the number of scans visited
+    bool allShown = true, allWithin = true, allCounted = true;
+    int maxHeld = 0;
+    double rssFirst = 0, rssSecond = 0;
+    for (int round = 0; round < 2; ++round) {
+        for (const QString& id : scanIds) {
+            app_->selectScan(id);
+            app_->waitIdle(120000);
+            QCoreApplication::processEvents();
+            allShown = allShown && app_->canvasScan().ready &&
+                       !(canvas && canvas->property("badge").toString().isEmpty());
+            allWithin = allWithin && within();
+            allCounted = allCounted && counted();
+            maxHeld = std::max(maxHeld, rep().value("displaysHeld").toInt());
+        }
+        (round == 0 ? rssFirst : rssSecond) = rep().value("residentMB").toDouble();
+    }
+    check(QStringLiteral("FK-005 switching through 6 scans twice: every scan shown, cache within the budget"),
+          allShown && allWithin && allCounted && maxHeld <= 3,
+          QStringLiteral("at most %1 proxies held · RSS after round 1 %2 MB, round 2 %3 MB · %4")
+              .arg(maxHeld)
+              .arg(rssFirst, 0, 'f', 0)
+              .arg(rssSecond, 0, 'f', 0)
+              .arg(state()));
+
+    // 3. full-resolution view on three scans: decoded strips are counted and given back like the proxies
+    bool fullShown = canvas != nullptr;
+    for (int i = 0; canvas && i < 3; ++i) {
+        app_->selectScan(scanIds[static_cast<size_t>(i)]);
+        app_->waitIdle(120000);
+        QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
+        fullShown =
+            fullShown &&
+            waitFor([&] { return canvas->property("badge").toString() == QLatin1String("Full"); }, 20000);
+        app_->waitIdle(60000);
+        QMetaObject::invokeMethod(canvas, "fit");
+    }
+    QCoreApplication::processEvents();
+    check(QStringLiteral("FK-005 full-resolution view on 3 scans: decoded strips counted, within the budget"),
+          fullShown && L.count("source:") >= 1 && L.bytes("canvas") > 0 && within() && counted(), state());
+
+    // 4. composite previews: four prints of the current scan, relinked unchanged; with room for about one
+    // more preview besides the one on screen, the others are given back and computed again when shown
+    const QString cur = app_->currentScanId();
+    QStringList items;
+    for (const auto& sc : app_->project().scans)
+        if (toQ(sc.scanId) == cur)
+            for (const auto& it : sc.items)
+                items << toQ(it.itemId);
+    app_->exportImageAreas(items);
+    app_->waitIdle(300000);
+    const QStringList edits = filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif"));
+    QVariantList rows;
+    auto conn = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+    QVariantList urls;
+    for (const auto& e : edits)
+        urls << e;
+    app_->relinkFiles(urls);
+    app_->waitIdle(300000);
+    disconnect(conn);
+    app_->applyRelink(rows);
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    QCoreApplication::processEvents();
+    std::vector<QImage> firstPreviews;
+    bool previewsShown = canvas != nullptr && items.size() == 4 && edits.size() == 4;
+    bool previewsWithin = true;
+    int heldAll = 0, heldShrunk = 0;
+    bool firstGivenBack = false, sameAgain = false;
+    if (previewsShown) {
+        // within the budget, every preview computed stays
+        canvas->setProperty("mode", QStringLiteral("composite"));
+        for (const QString& id : items) {
+            app_->selectItem(id); // the canvas asks for the preview (composite mode)
+            app_->waitIdle(120000);
+            QCoreApplication::processEvents();
+            const QImage p = app_->compositePreview(toStd(id));
+            previewsShown = previewsShown && !p.isNull();
+            firstPreviews.push_back(p);
+            previewsWithin = previewsWithin && within() && counted();
+        }
+        heldAll = rep().value("compositesHeld").toInt();
+        // a smaller budget: room for about one preview besides what is on screen; the oldest go first
+        app_->setCacheBudget(L.fixedBytes() + L.bytes("composite:" + toStd(items.back())) * 3 / 2);
+        heldShrunk = rep().value("compositesHeld").toInt();
+        firstGivenBack = app_->compositePreview(toStd(items.front())).isNull() &&
+                         !app_->compositePreview(toStd(items.back())).isNull();
+        previewsWithin = previewsWithin && within() && counted();
+        // shown again: computed again, identical
+        app_->selectItem(items.front());
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+        sameAgain = app_->compositePreview(toStd(items.front())) == firstPreviews.front();
+    }
+    check(
+        QStringLiteral("FK-005 composite previews of 4 prints: kept within the budget, the oldest given back "
+                       "beyond it, computed again identically when shown"),
+        previewsShown && heldAll == 4 && heldShrunk <= 2 && firstGivenBack && sameAgain && previewsWithin,
+        QStringLiteral("previews held %1 → %2 after the budget shrank · %3")
+            .arg(heldAll)
+            .arg(heldShrunk)
+            .arg(state()));
+    if (canvas) canvas->setProperty("mode", QStringLiteral("scan"));
+    app_->setCacheBudget(budget);
+
+    // 5. a job's working memory is reserved before it starts: the caches make room at once
+    for (int i = 3; i < 6; ++i) { // three scans visited: proxies held besides the current one
+        app_->selectScan(scanIds[static_cast<size_t>(i)]);
+        app_->waitIdle(120000);
+    }
+    QCoreApplication::processEvents();
+    const int heldBefore = rep().value("displaysHeld").toInt();
+    app_->setCacheBudget(L.bytes());         // exactly full: any reservation has to take room from the cache
+    app_->jobRunner()->setTestDelayMs(1500); // the export's work has not begun when we look
+    app_->exportFullPrints(items);
+    const uint64_t reservedAtStart = L.reserved();
+    const int heldAtStart = rep().value("displaysHeld").toInt();
+    const bool roomAtStart = within();
+    app_->waitIdle(600000);
+    app_->jobRunner()->setTestDelayMs(0);
+    QCoreApplication::processEvents();
+    check(QStringLiteral("FK-005 export: working memory reserved before the job starts, caches make room, "
+                         "released at the end"),
+          reservedAtStart > 0 && heldBefore > heldAtStart && heldAtStart >= 1 && roomAtStart &&
+              L.reserved() == 0,
+          QStringLiteral("reserved %1 MB · proxies %2 → %3 · after: reserved %4 MB")
+              .arg(mb(reservedAtStart))
+              .arg(heldBefore)
+              .arg(heldAtStart)
+              .arg(mb(L.reserved())));
+    app_->setCacheBudget(budget);
+
+    // 6. memory pressure: everything that can be rebuilt goes (also the current scan's decoded strips); the
+    // scan on screen stays shown and an output made afterwards is identical
+    for (int i = 0; i < 3; ++i) {
+        app_->selectScan(scanIds[static_cast<size_t>(i)]);
+        app_->waitIdle(120000);
+    }
+    if (canvas) {
+        QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
+        waitFor([&] { return canvas->property("badge").toString() == QLatin1String("Full"); }, 20000);
+        app_->waitIdle(60000);
+    }
+    QCoreApplication::processEvents();
+    const QString pressedScan = app_->currentScanId();
+    const QStringList fullsBefore = filesMatching(exportDir, QStringLiteral("*_FULL_v001.tif"));
+    const int heldBeforePressure = rep().value("displaysHeld").toInt(),
+              sourcesBeforePressure = rep().value("sourcesHeld").toInt(),
+              pressuresBefore = rep().value("pressureEvents").toInt();
+    app_->onMemoryPressure();
+    const QVariantMap afterPressure = rep();
+    if (canvas) QMetaObject::invokeMethod(canvas, "fit");
+    app_->exportFullPrints(items);
+    app_->waitIdle(600000);
+    const QStringList fullsAfter = filesMatching(exportDir, QStringLiteral("*_FULL_v002.tif"));
+    bool sameOutput = !fullsBefore.isEmpty() && fullsBefore.size() == fullsAfter.size();
+    QString why;
+    for (int i = 0; sameOutput && i < fullsBefore.size(); ++i)
+        sameOutput = samePixels(fullsBefore[i], fullsAfter[i], why);
+    check(
+        QStringLiteral("FK-005 memory pressure: rebuildable caches dropped, the scan on screen stays, output "
+                       "identical"),
+        heldBeforePressure > 1 && sourcesBeforePressure >= 1 &&
+            afterPressure.value("displaysHeld").toInt() == 1 &&
+            afterPressure.value("sourcesHeld").toInt() == 0 &&
+            afterPressure.value("pressureEvents").toInt() == pressuresBefore + 1 &&
+            app_->currentScanId() == pressedScan && app_->canvasScan().ready && sameOutput,
+        QStringLiteral("proxies %1 → %2, sources %3 → %4 · %5 outputs compared %6")
+            .arg(heldBeforePressure)
+            .arg(afterPressure.value("displaysHeld").toInt())
+            .arg(sourcesBeforePressure)
+            .arg(afterPressure.value("sourcesHeld").toInt())
+            .arg(fullsAfter.size())
+            .arg(why));
+
+    // 7. cancelled detection: nothing reserved afterwards, prints kept, cache within the budget
+    app_->jobRunner()->setTestDelayMs(300);
+    for (const QString& id : scanIds)
+        app_->detectScan(id);
+    waitFor([] { return false; }, 400);
+    const uint64_t reservedRunning = L.reserved();
+    app_->jobRunner()->cancelAll();
+    app_->waitIdle(300000);
+    app_->jobRunner()->setTestDelayMs(0);
+    QCoreApplication::processEvents();
+    int printsAfter = 0;
+    for (const auto& sc : app_->project().scans)
+        printsAfter += static_cast<int>(sc.items.size());
+    check(
+        QStringLiteral("FK-005 cancelled detection of 6 scans: reservation released, prints kept, within the "
+                       "budget"),
+        reservedRunning > 0 && L.reserved() == 0 && printsAfter == prints && within() && counted(),
+        QStringLiteral("reserved while queued %1 MB (one detection at a time) · %2")
+            .arg(mb(reservedRunning))
+            .arg(state()));
+    observe(QStringLiteral("FK-005 steady state"), QJsonObject::fromVariantMap(rep()));
+
+    // 8. a relink check never depends on what the cache still holds. A picture never exported (no export
+    // record): only a new alignment on the chosen print can take it, and its picture check compares the file
+    // with the print's current image area, sampled from the scan's proxy — on screen, then given back.
+    app_->newProject();
+    app_->importScans({beds.value(0), beds.value(1)});
+    app_->waitIdle(300000);
+    const fk::ItemRecord* target = nullptr;
+    std::string targetScan, otherScan;
+    for (const auto& sc : app_->project().scans) {
+        if (!target && !sc.items.empty()) {
+            target = &sc.items.front();
+            targetScan = sc.scanId;
+        } else {
+            otherScan = sc.scanId;
+        }
+    }
+    const QString picture = QDir(d).filePath(QStringLiteral("never-exported.tif"));
+    const fk::ScanRecord* tScan = target ? app_->scanOf(target->itemId) : nullptr;
+    const bool written = target && tScan && !otherScan.empty() &&
+                         writeCrop(toQ(tScan->path), fk::boundingRect(target->inner), picture);
+    if (written) {
+        const QString targetId = toQ(target->itemId);
+        auto assess = [&] {
+            QVariantList r;
+            auto c =
+                connect(app_, &AppController::relinkResults, this, [&](const QVariantList& x) { r = x; });
+            app_->relinkFiles({picture}, targetId);
+            app_->waitIdle(300000);
+            disconnect(c);
+            QMetaObject::invokeMethod(window_, "closeDialogs");
+            // a new alignment gets a fresh record id each time: compare everything else
+            QVariantMap row = r.value(0).toMap();
+            row.remove(QStringLiteral("editVersionId"));
+            QVariantList options;
+            for (const auto& o : row.value("options").toList()) {
+                QVariantMap om = o.toMap();
+                om.remove(QStringLiteral("editVersionId"));
+                options << om;
+            }
+            row[QStringLiteral("options")] = options;
+            return row;
+        };
+        auto pictureChecked = [](const QVariantMap& row) {
+            for (const auto& o : row.value("options").toList())
+                if (o.toMap().value("newAlignment").toBool() &&
+                    o.toMap().value("contentScore").toDouble() > 0)
+                    return true;
+            return false;
+        };
+        app_->selectItem(targetId);
+        app_->waitIdle(120000);
+        const QVariantMap shown = assess();
+        app_->selectScan(toQ(otherScan));
+        app_->waitIdle(120000);
+        app_->onMemoryPressure();
+        const bool givenBack = !L.contains("display:" + targetScan);
+        const QVariantMap reread = assess();
+        QStringList differs; // what differs, for the report
+        for (auto it = shown.begin(); it != shown.end(); ++it)
+            if (reread.value(it.key()) != it.value() && it.key() != QLatin1String("options"))
+                differs << it.key();
+        for (int i = 0; i < shown.value("options").toList().size(); ++i) {
+            const QVariantMap a = shown.value("options").toList().value(i).toMap(),
+                              b = reread.value("options").toList().value(i).toMap();
+            for (auto it = a.begin(); it != a.end(); ++it)
+                if (b.value(it.key()) != it.value())
+                    differs << QStringLiteral("option %1 %2: %3 / %4")
+                                   .arg(i)
+                                   .arg(it.key(), it.value().toString(), b.value(it.key()).toString());
+        }
+        check(QStringLiteral("FK-005 relink check (new alignment, picture compared with the print): the same "
+                             "assessment whether the target's proxy is held or given back"),
+              givenBack && pictureChecked(shown) && shown == reread,
+              shown.value("decision").toString() + QStringLiteral(" / ") +
+                  reread.value("decision").toString() +
+                  (pictureChecked(reread) ? QString()
+                                          : QStringLiteral(" (picture not compared the 2nd time)")) +
+                  (givenBack ? QString() : QStringLiteral(" (proxy still held)")) +
+                  (pictureChecked(shown) ? QString() : QStringLiteral(" (picture not compared)")) +
+                  (differs.isEmpty() ? QString()
+                                     : QStringLiteral(" · differs: ") + differs.join(QStringLiteral("; "))));
+    } else {
+        check(QStringLiteral("FK-005 relink check (new alignment, picture compared with the print): the same "
+                             "assessment whether the target's proxy is held or given back"),
+              false, QStringLiteral("setup: a picture of a print that was never exported"));
+    }
+    restore();
+}
+
+void SelfTest::runDisplayProfile() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("display"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QVariantMap saved = app_->settings();
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{
+             {"exportFolder", exportDir}, {"exportFormat", "tif"}, {"geometryMode", "crop"}})
+        app_->setSetting(k, v);
+    QObject* canvas = findCanvas();
+    auto restore = [&] {
+        for (const char* k : {"exportFolder", "exportFormat", "geometryMode"})
+            app_->setSetting(QString::fromLatin1(k), saved.value(QString::fromLatin1(k)));
+        app_->setDisplayProfileOverride(std::nullopt);
+        app_->refreshDisplayProfile(window_->screen());
+        app_->jobRunner()->setTestDelayMs(0);
+        if (canvas) QMetaObject::invokeMethod(canvas, "fit");
+    };
+    // two "monitors": sRGB and a wide-gamut one (Adobe RGB as its profile)
+    DisplayProfileInfo srgb;
+    srgb.source = QStringLiteral("self-test: sRGB monitor");
+    DisplayProfileInfo wide;
+    wide.profile = fk::Profile::adobeRGB1998();
+    wide.id = QString::fromStdString(wide.profile.sha256());
+    wide.description = QString::fromStdString(wide.profile.description());
+    wide.source = QStringLiteral("self-test: wide-gamut monitor");
+    // what the canvas must show for a profile: the same proxy pipeline, computed here independently
+    auto proxyOf = [&](const QString& path, const DisplayProfileInfo& p) {
+        auto src = fk::openTiff(toPath(path));
+        if (!src) return QImage();
+        fk::CancelToken cancel;
+        auto proxy = fk::buildProxy(**src, 3000, cancel, [](double, std::string_view) {});
+        DisplayConverter conv;
+        if (!proxy || !conv.init((*src)->info(), &p)) return QImage();
+        return conv.convertProxy(*proxy);
+    };
+    auto proxyFor = [&](const DisplayProfileInfo& p) { return proxyOf(scan_, p); };
+    auto meanDiff = [](const QImage& a, const QImage& b) {
+        if (a.isNull() || b.isNull() || a.size() != b.size()) return 1e9;
+        double sum = 0;
+        for (int y = 0; y < a.height(); ++y)
+            for (int x = 0; x < a.width(); ++x) {
+                const QRgb p = a.pixel(x, y), q = b.pixel(x, y);
+                sum += std::abs(qRed(p) - qRed(q)) + std::abs(qGreen(p) - qGreen(q)) +
+                       std::abs(qBlue(p) - qBlue(q));
+            }
+        return sum / (3.0 * a.width() * a.height());
+    };
+    // waits, without running the UI thread, until a job has converted and its result is queued (large scans
+    // take longer than any fixed pause)
+    auto untilWorkEnded = [&](int job) {
+        QElapsedTimer t;
+        t.start();
+        while (!app_->jobRunner()->workEnded(job) && t.elapsed() < 300000)
+            QThread::msleep(20);
+        return app_->jobRunner()->workEnded(job);
+    };
+    app_->setDisplayProfileOverride(srgb);
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    QCoreApplication::processEvents();
+    const QString scanId = app_->currentScanId();
+    // a second scan, not on screen when the window moves: its thumbnail is converted, its proxy read again
+    // later
+    const QString other = QDir(d).filePath(QStringLiteral("other.tif"));
+    QString otherId;
+    if (const fk::ItemRecord* it = app_->item(toStd(app_->currentItemId()));
+        it && writeFourOrientations(scan_, it->outer, other)) {
+        app_->importScans({other});
+        app_->waitIdle(300000);
+        for (const auto& sc : app_->project().scans)
+            if (toQ(sc.scanId) != scanId) otherId = toQ(sc.scanId);
+        app_->selectScan(scanId);
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+    }
+    const QImage srgbExpected = proxyFor(srgb), wideExpected = proxyFor(wide);
+    const fk::ItemRecord* first = app_->item(toStd(app_->currentItemId()));
+    check(QStringLiteral("FK-011 setup: the scan shown for an sRGB monitor"),
+          first && !srgbExpected.isNull() && app_->canvasScan().display == srgbExpected &&
+              meanDiff(srgbExpected, wideExpected) > 0.5,
+          QStringLiteral("sRGB vs wide-gamut conversion differ by %1 levels")
+              .arg(meanDiff(srgbExpected, wideExpected)));
+    if (!first || srgbExpected.isNull()) {
+        restore();
+        return;
+    }
+    const std::string itemId = first->itemId;
+    // the Full patch of the print's image area, reduced to the proxy's scale, against the proxy
+    auto fullVsPreview = [&] {
+        const fk::RectI b = fk::boundingRect(first->inner);
+        const int k = std::max(1, app_->canvasScan().proxyScale);
+        const QRectF r(b.x, b.y, (b.w / k) * k, (b.h / k) * k);
+        QImage patch;
+        app_->requestDetail(r, static_cast<int>(r.width()) / k, static_cast<int>(r.height()) / k, 0,
+                            [&](QImage img, QRectF, quint64) { patch = img; });
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+        const QImage proxy = app_->canvasScan().display.copy(
+            QRect(b.x / k, b.y / k, static_cast<int>(r.width()) / k, static_cast<int>(r.height()) / k));
+        return patch.size() == proxy.size() ? meanDiff(patch.convertToFormat(QImage::Format_RGB32), proxy)
+                                            : 1e9;
+    };
+    const double agreeSrgb = fullVsPreview();
+    // an output made now, to compare with one made for the other monitor
+    app_->exportImageAreas({toQ(itemId)});
+    app_->waitIdle(300000);
+    const QImage thumbBefore = app_->thumbnail(QStringLiteral("scan/") + scanId);
+    const QImage otherBefore = app_->thumbnail(QStringLiteral("scan/") + otherId);
+
+    // 1. the window moves to the wide-gamut monitor
+    const quint64 genBefore = app_->displayGeneration();
+    app_->setDisplayProfileOverride(wide);
+    app_->waitIdle(120000);
+    QCoreApplication::processEvents();
+    const bool proxyConverted = app_->canvasScan().display == wideExpected;
+    const double agreeWide = fullVsPreview();
+    const QImage thumbAfter = app_->thumbnail(QStringLiteral("scan/") + scanId);
+    const double thumbVsProxy = meanDiff(thumbAfter, boxDownscale(wideExpected, 320));
+    // the other scan's thumbnail: converted from the old display profile (not read again): close to what the
+    // scan converted for the new profile gives
+    const QImage otherAfter = app_->thumbnail(QStringLiteral("scan/") + otherId);
+    // (thumbnails: the proxy reduced to 320 px on the long side, as the controller makes them)
+    const double otherVsExpected = meanDiff(otherAfter, boxDownscale(proxyOf(other, wide), 320));
+    check(QStringLiteral(
+              "FK-011 another monitor's profile: the proxy is converted again, Preview and Full agree, "
+              "thumbnails follow"),
+          app_->displayGeneration() > genBefore && proxyConverted && agreeSrgb < 3 && agreeWide < 3 &&
+              meanDiff(thumbBefore, thumbAfter) > 0.3 && thumbVsProxy < 3 && !otherId.isEmpty() &&
+              meanDiff(otherBefore, otherAfter) > 0.3 && otherVsExpected < 3,
+          QStringLiteral("Full vs Preview %1 (sRGB) / %2 (wide) levels · thumbnail vs proxy %3 · other "
+                         "scan's thumbnail vs expected %4 · profile: %5")
+              .arg(agreeSrgb, 0, 'f', 2)
+              .arg(agreeWide, 0, 'f', 2)
+              .arg(thumbVsProxy, 0, 'f', 2)
+              .arg(otherVsExpected, 0, 'f', 2)
+              .arg(app_->displayProfileName()));
+    if (canvas) {
+        // at 100 % on the sRGB monitor, then the window moves: the patch on screen is replaced by one made
+        // for the new profile
+        auto fullFor = [&](const QString& id) {
+            return waitFor(
+                [&] {
+                    return canvas->property("badge").toString() == QLatin1String("Full") &&
+                           canvas->property("detailProfile").toString() == id;
+                },
+                20000);
+        };
+        app_->setDisplayProfileOverride(srgb);
+        app_->waitIdle(120000);
+        QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
+        const bool before = fullFor(srgb.id);
+        app_->setDisplayProfileOverride(wide);
+        // at once: the patch made for the previous profile is no longer drawn (no colour jump while the new
+        // one is being made)
+        const QString meanwhile = canvas->property("detailProfile").toString();
+        app_->waitIdle(120000);
+        const bool after = fullFor(wide.id);
+        const QString badge = canvas->property("badge").toString() + QStringLiteral(" · ") +
+                              canvas->property("detailProfile").toString().left(12);
+        snapshot(QStringLiteral("U025-wide-gamut-100pct"));
+        QMetaObject::invokeMethod(canvas, "fit");
+        check(QStringLiteral("FK-011 full resolution at 100 %: the patch on screen is made again for the new "
+                             "profile"),
+              before && meanwhile != srgb.id && after, badge);
+    }
+
+    // 2. outputs never depend on the monitor
+    app_->exportImageAreas({toQ(itemId)});
+    app_->waitIdle(300000);
+    const QStringList edits = filesMatching(exportDir, QStringLiteral("*_EDIT_v00*.tif"));
+    QString why;
+    check(QStringLiteral("FK-011 outputs are the same whatever the display profile"),
+          edits.size() == 2 && samePixels(edits[0], edits[1], why), why);
+
+    // 3. back to the sRGB monitor: exactly as before
+    app_->setDisplayProfileOverride(srgb);
+    app_->waitIdle(120000);
+    QCoreApplication::processEvents();
+    check(QStringLiteral("FK-011 back on the first monitor: the same picture as before"),
+          app_->canvasScan().display == srgbExpected);
+
+    // 4. a proxy converted for the old profile while it was being read is never shown: the window moves again
+    // after the job converted (the UI thread does not run in between) and before its result arrives
+    app_->setDisplayProfileOverride(wide); // reads the scan again (a job)
+    const int job = app_->jobRunner()->lastJobId();
+    const bool converted = untilWorkEnded(job); // converted for "wide", result not delivered yet
+    app_->setDisplayProfileOverride(srgb);
+    app_->waitIdle(120000);
+    QCoreApplication::processEvents();
+    check(QStringLiteral(
+              "FK-011 a proxy converted for the previous monitor is not shown (outdated, read again)"),
+          converted && app_->jobRunner()->finalState(job) == QLatin1String("outdated") &&
+              app_->canvasScan().display == srgbExpected,
+          app_->jobRunner()->finalState(job));
+
+    // 5. the same for a full-resolution patch and a composite preview converted for the previous monitor
+    {
+        const fk::RectI b = fk::boundingRect(first->inner);
+        bool delivered = false;
+        app_->requestDetail(QRectF(b.x, b.y, b.w, b.h), b.w / 4, b.h / 4, 0,
+                            [&](QImage, QRectF, quint64) { delivered = true; });
+        const bool patchConverted = untilWorkEnded(app_->jobRunner()->lastJobId()); // converted for sRGB
+        app_->setDisplayProfileOverride(wide);
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+        check(
+            QStringLiteral("FK-011 a full-resolution patch converted for the previous monitor is not shown"),
+            patchConverted && !delivered);
+        // composite: the unchanged second export relinked to the print
+        QVariantList rows;
+        auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+        app_->relinkFiles({edits.value(1)});
+        app_->waitIdle(300000);
+        disconnect(c);
+        app_->applyRelink(rows);
+        QMetaObject::invokeMethod(window_, "closeDialogs");
+        app_->selectItem(toQ(itemId));
+        app_->requestCompositePreview(toQ(itemId));
+        const int previewJob = app_->jobRunner()->lastJobId();
+        const bool previewConverted = untilWorkEnded(previewJob); // converted for "wide"
+        app_->setDisplayProfileOverride(srgb);
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+        const QString state = app_->jobRunner()->finalState(previewJob);
+        const bool dropped = app_->compositePreview(itemId).isNull();
+        app_->requestCompositePreview(toQ(itemId));
+        app_->waitIdle(120000);
+        check(QStringLiteral(
+                  "FK-011 a composite preview converted for the previous monitor is not shown; asked "
+                  "again, it comes for the current one"),
+              previewConverted && state == QLatin1String("outdated") && dropped &&
+                  !app_->compositePreview(itemId).isNull(),
+              QStringLiteral("%1 · %2").arg(state,
+                                            dropped ? QStringLiteral("not shown") : QStringLiteral("shown")));
+    }
+    restore();
+}
+
 int SelfTest::scenarioMinIsWhite() {
-    // FK-011: rows from the TIFF reader are already in normal polarity; the display converter inverts
-    // MinIsWhite again, so Preview (proxy) and Full (rows) disagree.
+    // FK-011 (fixed in U025): rows from the TIFF reader are already in normal polarity; the display converter
+    // inverted MinIsWhite again, so Preview (proxy) and Full (rows) disagreed (15.8 vs 239.2 before the fix).
     app_->importScans({scan_});
     app_->waitIdle(300000);
     auto src = fk::openTiff(toPath(scan_));
@@ -2078,8 +3238,9 @@ int SelfTest::scenarioMinIsWhite() {
     }
     observe(QStringLiteral("M1 MinIsWhite preview vs full"),
             {{"minIsWhite", miw}, {"fullMean", fullMean}, {"proxyMean", proxyMean}});
-    known(QStringLiteral("FK-011"), QStringLiteral("MinIsWhite full-resolution display is inverted"),
-          miw && std::abs(fullMean - proxyMean) > 64,
+    check(QStringLiteral("FK-011 MinIsWhite %1-bit: Preview and Full show the same brightness")
+              .arg(info.bitsPerSample),
+          miw && std::abs(fullMean - proxyMean) < 6,
           QStringLiteral("full %1 vs preview %2").arg(fullMean, 0, 'f', 1).arg(proxyMean, 0, 'f', 1));
     return allOk_ ? 0 : 1;
 }
@@ -2104,6 +3265,8 @@ int SelfTest::runScenario(const QString& name) {
         rc = scenarioUpright();
     else if (name == QLatin1String("miniswhite"))
         rc = scenarioMinIsWhite();
+    else if (name == QLatin1String("memory"))
+        rc = scenarioMemory();
     QJsonObject report{
         {"scenario", name},
         {"version", app_->version()},
@@ -2112,10 +3275,127 @@ int SelfTest::runScenario(const QString& name) {
         {"scan", scan_},
         {"observations", observations_},
         {"knownIssues", known_},
-        {"note", "Observations of current behaviour (Stage A reproduction), not pass/fail checks."}};
+        {"checks", checks_},
+        {"ok", allOk_},
+        {"note",
+         "Observations of current behaviour (Stage A reproduction); checks, when a scenario has them, decide "
+         "the exit code."}};
     QFile f(QDir(dir_).filePath(QStringLiteral("scenario-%1.json").arg(name)));
     if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(report).toJson());
     return rc;
+}
+
+int SelfTest::scenarioMemory() {
+    // FK-005 measurement: `--scan <directory>` of scans (e.g. an fkfixture corpus), FK_BENCH_SCANS=N takes
+    // the first N. Records memoryReport() after each stage; the comparison across N is in
+    // PERFORMANCE-BUDGET.md.
+    QStringList files = filesMatching(scan_, QStringLiteral("*.tif"));
+    std::sort(files.begin(), files.end());
+    const int n = qEnvironmentVariableIntValue("FK_BENCH_SCANS");
+    if (n > 0 && n < files.size()) files = files.mid(0, n);
+    if (files.isEmpty()) return 1;
+    app_->setSetting(QStringLiteral("exportFormat"), QStringLiteral("tif"));
+    app_->setSetting(QStringLiteral("geometryMode"), QStringLiteral("crop"));
+    app_->setSetting(QStringLiteral("applyUpright"), false);
+    QObject* canvas = findCanvas();
+    // waiting for jobs as the event loop would: deferred deletes too (see `stage`)
+    auto idle = [&](int ms) {
+        app_->waitIdle(ms);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    };
+    QElapsedTimer t;
+    t.start();
+    auto stage = [&](const QString& name) {
+        waitFor([] { return false; }, 1000); // settle: timers
+        // the self-test runs before the application's event loop starts, and objects deleted later (QML
+        // delegates scrolled away while switching scans) are only deleted by that loop: do what it does, or
+        // they pile up and look like a leak (≈ 1.3 MB per switch on the VM)
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVariantMap r = app_->memoryReport();
+        r["seconds"] = static_cast<double>(t.elapsed()) / 1000.0;
+        r["scans"] = static_cast<int>(files.size());
+        int prints = 0;
+        for (const auto& sc : app_->project().scans)
+            prints += static_cast<int>(sc.items.size());
+        r["prints"] = prints;
+        observe(name, QJsonObject::fromVariantMap(r));
+    };
+    app_->newProject();
+    stage(QStringLiteral("0-idle"));
+    QVariantList urls;
+    for (const auto& f : files)
+        urls << f;
+    app_->importScans(urls);
+    idle(7200000);
+    stage(QStringLiteral("1-detected"));
+    std::vector<QString> ids;
+    for (const auto& sc : app_->project().scans)
+        ids.push_back(toQ(sc.scanId));
+    // FK_BENCH_ROUNDS=R switches through every scan R times (default 2) and records each round when R > 2:
+    // growth per round separates a leak from memory that settles
+    const int rounds = std::max(2, qEnvironmentVariableIntValue("FK_BENCH_ROUNDS"));
+    for (int round = 0; round < rounds; ++round) {
+        for (const auto& id : ids) {
+            app_->selectScan(id);
+            idle(600000);
+        }
+        if (rounds > 2) stage(QStringLiteral("2-switched-round-%1").arg(round + 1));
+    }
+    stage(QStringLiteral("2-switched-twice"));
+    for (const auto& id : ids) {
+        app_->selectScan(id);
+        idle(600000);
+        if (!canvas) break;
+        QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
+        waitFor([&] { return canvas->property("badge").toString() == QLatin1String("Full"); }, 30000);
+        idle(600000);
+        QMetaObject::invokeMethod(canvas, "fit");
+    }
+    stage(QStringLiteral("3-full-resolution-each"));
+    // composite previews for the prints of the first 10 scans (exported unchanged, relinked)
+    QStringList items;
+    for (size_t i = 0; i < ids.size() && i < 10; ++i)
+        for (const auto& sc : app_->project().scans)
+            if (toQ(sc.scanId) == ids[i])
+                for (const auto& it : sc.items)
+                    items << toQ(it.itemId);
+    const QString exportDir = app_->settings().value("exportFolder").toString();
+    app_->exportImageAreas(items);
+    idle(3600000);
+    QVariantList rows;
+    auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+    QVariantList edits;
+    for (const auto& e : filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif")))
+        edits << e;
+    app_->relinkFiles(edits);
+    idle(3600000);
+    disconnect(c);
+    app_->applyRelink(rows);
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    if (canvas) canvas->setProperty("mode", QStringLiteral("composite"));
+    for (const auto& id : items) {
+        app_->selectItem(id);
+        idle(600000);
+    }
+    if (canvas) canvas->setProperty("mode", QStringLiteral("scan"));
+    stage(QStringLiteral("4-composite-previews"));
+    for (const auto& id : ids)
+        app_->detectScan(id);
+    waitFor([] { return false; }, 2000);
+    app_->jobRunner()->cancelAll();
+    idle(600000);
+    stage(QStringLiteral("5-detection-cancelled"));
+    if (!ids.empty()) app_->selectScan(ids.front());
+    idle(600000);
+    waitFor([] { return false; }, 3000);
+    stage(QStringLiteral("6-steady"));
+#if defined(__GLIBC__)
+    // what of the steady RSS is memory the app already freed (glibc keeps freed heap pages): measurement
+    // only, the product does not trim
+    malloc_trim(0);
+    stage(QStringLiteral("7-steady-after-malloc-trim"));
+#endif
+    return 0;
 }
 
 int SelfTest::scenarioRelink() {
@@ -2417,6 +3697,10 @@ int SelfTest::run() {
     runCountSetting();
     runShapeEditing();
     runScanRotation();
+    runMaskDefaults();
+    runScrubFields();
+    runMemoryBudget();
+    runDisplayProfile();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},
@@ -2427,6 +3711,7 @@ int SelfTest::run() {
                        {"scan", scan_},
                        {"checks", checks_},
                        {"knownIssues", known_},
+                       {"observations", observations_}, // measurements recorded alongside the checks (FK-005)
                        {"ok", allOk_},
                        {"scope",
                         "Offscreen QPA, software scene graph. Does not prove monitor colour accuracy or "

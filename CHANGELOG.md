@@ -3,6 +3,40 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.9 — U023: simpler app icon (UX-11)
+- The sun is gone from the icon; the print, its frame and the corner brackets stay (same colours, no rebranding).
+  Every ICO / ICNS size is drawn on its own with strokes kept visible at 16–32 px, and the ICNS now has the 1×
+  16 / 32 / 64 px entries too. `tools/check-icons.py` checks the shipped icons in CI. Notes:
+  docs/release-notes/v0.7.0-alpha.9.md.
+
+## 0.7.0-alpha.8 — U025: display colour follows the window's monitor; MinIsWhite full resolution fixed (FK-011)
+- Windows: the canvas converts to the ICC profile of the monitor the window is on, read again when the window
+  moves to another screen, screens are added or removed, or the monitor's profile changes (5 s poll); the proxy,
+  the 100 % patch, the composite preview and the thumbnails follow, and nothing converted for the previous profile
+  is shown. MinIsWhite scans are no longer shown as negatives at full resolution. The About dialog names the
+  display profile. Outputs never depend on the display. Notes: docs/release-notes/v0.7.0-alpha.8.md.
+
+## 0.7.0-alpha.7 — U017: one memory budget for the caches (FK-005)
+- Scan proxies, decoded strips of the full-resolution view and composite previews share one byte budget sized
+  by the device's RAM (8 GB → 512 MB, 16 GB → 1 GB); what is not on screen is given back least recently used
+  first and rebuilt from the files when shown again; thumbnails and canvas images are counted. Jobs reserve
+  their estimated working memory before they start; OS memory pressure drops every rebuildable cache (output
+  unchanged). Before, every scan visited kept its decoded strips (up to 96 MB each) and every composite preview
+  stayed for the whole session. Notes: docs/release-notes/v0.7.0-alpha.7.md.
+
+## 0.7.0-alpha.6 — U016: drag to adjust, double-click to type (UX-09)
+- The mask width can be adjusted by dragging left/right on the value (past a 4 px threshold; Shift ×10, Alt ×0.1)
+  and typed after a double-click (Enter / focus loss commits, Esc cancels, invalid characters refused); one drag is
+  one undo step; at most one composite preview per print runs while dragging. Also fixed: on 2× displays the canvas
+  showed the preview proxy at 100 %. Notes: docs/release-notes/v0.7.0-alpha.6.md.
+
+## 0.7.0-alpha.5 — U015: natural-blend mask by default, saved per print (UX-08)
+- New prints composite with a natural blend: a 0.05 mm feather inside the image area (converted with the scan's
+  DPI; px without one), chosen with the new `fkcli maskeval` on real scans (worst-case seam at 50 %: 6.61 → 3.64
+  ΔE00). Preserve edge 0.02 mm and hard edge 0 px (archival exact) remain. The mask is saved per print; applying it
+  to other prints is explicit; older projects keep their setting. Unchanged graded files stay bit-exact; preview and
+  final use the same mask; strong edge changes are flagged. Notes: docs/release-notes/v0.7.0-alpha.5.md.
+
 ## 0.7.0-alpha.4 — U014: rotate the whole scan (UX-04)
 - Print ▸ Rotate Whole Scan 90° Counterclockwise / Clockwise (also in the left rail and the scan list menu): every
   print, its boundaries, the canvas, scan thumbnails, hits and edits follow; the scan file is never rewritten (a

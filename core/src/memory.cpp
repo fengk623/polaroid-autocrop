@@ -11,6 +11,7 @@
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <sys/resource.h>
+#include <sys/sysctl.h>
 #else
 #include <cstdio>
 #include <fstream>
@@ -187,6 +188,43 @@ MemoryStats currentMemoryStats() {
     }
 #endif
     return s;
+}
+
+SystemMemory systemMemory() {
+    SystemMemory m;
+#if defined(_WIN32)
+    MEMORYSTATUSEX st{};
+    st.dwLength = sizeof(st);
+    if (GlobalMemoryStatusEx(&st)) {
+        m.totalBytes = st.ullTotalPhys;
+        m.availableBytes = st.ullAvailPhys;
+    }
+#elif defined(__APPLE__)
+    uint64_t total = 0;
+    size_t len = sizeof(total);
+    if (sysctlbyname("hw.memsize", &total, &len, nullptr, 0) == 0) m.totalBytes = total;
+    vm_statistics64_data_t vm{};
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    if (host_statistics64(mach_host_self(), HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm), &count) ==
+        KERN_SUCCESS)
+        m.availableBytes = (static_cast<uint64_t>(vm.free_count) + vm.inactive_count + vm.purgeable_count) *
+                           static_cast<uint64_t>(vm_page_size);
+#else
+    std::ifstream f("/proc/meminfo");
+    std::string key;
+    while (f >> key) {
+        uint64_t kb = 0;
+        if (key == "MemTotal:") {
+            f >> kb;
+            m.totalBytes = kb * 1024;
+        } else if (key == "MemAvailable:") {
+            f >> kb;
+            m.availableBytes = kb * 1024;
+        }
+        f.ignore(256, '\n');
+    }
+#endif
+    return m;
 }
 
 } // namespace fk

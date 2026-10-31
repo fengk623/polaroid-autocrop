@@ -47,13 +47,20 @@ Implementation status (2026-10-28): core library `fkcore` (Phase 2) implemented 
 UI thread: QML + O(1) getters. `JobQueue` lanes: export (1), detect (2), thumb (2), io-light (2). Each job
 opens its own `ImageSource`. Results posted back with generation tags; stale results dropped.
 
-## 4. Memory **[planned]**
+## 4. Memory
 Accounted buffers (`BufferAccounting`) by category: proxy, strip/tile cache, band buffers, region buffers,
-display tiles. Budgets: PERFORMANCE-BUDGET.md. Memory pressure shrinks caches only.
+display tiles. Budgets: PERFORMANCE-BUDGET.md.
+**Implemented (U017, FK-005):** one byte budget for the app's in-memory caches (`fk::CacheLedger`, RFC-0014
+§Memory budget): scan proxies, decoded strips of the full-resolution view and composite previews are dropped
+least recently used first, never what is on screen; thumbnails and the canvas images are counted. Budget =
+RAM / 16 (256 MB … 2 GB). Jobs reserve their estimated working memory from the moment they are queued
+(`JobRunner`, per lane). Memory pressure (`app/src/MemoryPressure.cpp`: macOS dispatch source, Windows memory
+resource notification, Linux available memory) drops every rebuildable cache, never output quality.
 
-## 5. Cache **[planned]**
-Disk: proxies + thumbnails, content-addressed, LRU, capped (ADR-0006). Memory: decoded strip/tile LRU per
-source (128 MB default), display tile LRU (256 MB default).
+## 5. Cache
+Disk **[planned]**: proxies + thumbnails, content-addressed, LRU, capped (ADR-0006). Memory: decoded strip/tile
+LRU per source (128 MB default for jobs; the full-resolution view's source min(96 MB, budget / 4)), all app
+caches under the memory budget of §4.
 
 ## 6. Colour **[planned]**
 `docs/color-pipeline.md`.

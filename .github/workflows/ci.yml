@@ -38,6 +38,8 @@ jobs:
         run: tools/check-format.sh
       - name: Every UI string translated (zh_CN)
         run: python3 tools/check-i18n.py
+      - name: App icons complete, no sun (UX-11)
+        run: python3 tools/check-icons.py
 
   core:
     name: Core ${{ matrix.name }}
@@ -218,13 +220,49 @@ jobs:
           esac
           FK_SETTINGS_DIR="$PWD/build/selftest-settings" QT_QPA_PLATFORM=offscreen \
             "$APP" --self-test "$PWD/build/selftest" --scan "$PWD/build/selftest-scan.tif" 2>&1 | tee build/selftest.log
-          # FK-011 known issue: MinIsWhite grey scan, Preview vs Full display (docs/v1/TRACEABILITY.md)
-          build/app/bin/fkfixture --out build/selftest-miw.tif --dpi 300 --count 2 --seed 4 --channels 1 --miniswhite --bits 16
-          QT_QPA_PLATFORM=offscreen "$APP" --self-test "$PWD/build/selftest/miniswhite" --scan "$PWD/build/selftest-miw.tif" \
-            --scenario miniswhite 2>&1 | tee -a build/selftest.log
+          # FK-011 (U025): MinIsWhite grey scans, 8- and 16-bit: Preview and Full show the same brightness
+          for b in 8 16; do
+            build/app/bin/fkfixture --out build/selftest-miw$b.tif --dpi 300 --count 2 --seed 4 --channels 1 --miniswhite --bits $b
+            QT_QPA_PLATFORM=offscreen "$APP" --self-test "$PWD/build/selftest/miniswhite$b" --scan "$PWD/build/selftest-miw$b.tif" \
+              --scenario miniswhite 2>&1 | tee -a build/selftest.log
+          done
       - name: Self-test failures as annotations
         if: failure() && steps.selftest.outcome == 'failure'
         run: python3 tools/ci-annotate.py build/selftest.log || python tools/ci-annotate.py build/selftest.log
+      # FK-005 measurement (not a gate; the gates are the self-test's FK-005 checks): the same 20-scan corpus
+      # on every OS, batches of 5 and 20, memory after each stage (RSS, private bytes, accounted, cache); the
+      # budget is sized for an 8 GB device on every runner (FK_ASSUME_RAM_GB=8 → 512 MB) so the runs compare
+      - name: Memory batch (FK-005)
+        id: memory
+        if: always() && steps.selftest.outcome == 'success'
+        run: |
+          set -o pipefail
+          build/app/bin/fkfixture --corpus 20 --out-dir build/memcorpus --seed 18 --dpis 300 --bits 8 \
+            --compression deflate --predictor 2
+          case "$RUNNER_OS" in
+            macOS) APP=build/app/bin/FrameKeeper.app/Contents/MacOS/FrameKeeper ;;
+            Windows) APP=build/app/bin/FrameKeeper.exe ;;
+            *) APP=build/app/bin/FrameKeeper ;;
+          esac
+          for n in 5 20; do
+            FK_ASSUME_RAM_GB=8 FK_BENCH_SCANS=$n QT_QPA_PLATFORM=offscreen "$APP" --self-test "$PWD/build/memory/n$n" \
+              --scenario memory \
+              --scan "$PWD/build/memcorpus" > build/memory-n$n.log 2>&1
+          done
+          for n in 5 20; do [ -f build/memory/n$n/scenario-memory.json ] || { echo "::warning title=FK-005 memory::batch of $n produced no report"; tail -20 build/memory-n$n.log; }; done
+          python3 tools/memory-summary.py build/memory/n5/scenario-memory.json build/memory/n20/scenario-memory.json \
+            --markdown-out "$GITHUB_STEP_SUMMARY" --annotate "$RUNNER_OS" || python tools/memory-summary.py \
+            build/memory/n5/scenario-memory.json build/memory/n20/scenario-memory.json \
+            --markdown-out "$GITHUB_STEP_SUMMARY" --annotate "$RUNNER_OS"
+      - name: Upload memory batch
+        if: always() && steps.memory.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-${{ matrix.name }}
+          path: |
+            build/memory/*/scenario-memory.json
+            build/memory-n*.log
+          if-no-files-found: warn
       - name: Upload self-test report and snapshots
         if: always()
         uses: actions/upload-artifact@v4

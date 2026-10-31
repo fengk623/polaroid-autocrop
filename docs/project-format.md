@@ -30,7 +30,7 @@ All files: UTF-8 JSON, LF, 2-space indent, keys in lower camelCase. Unknown keys
                               "transform": {"rotate": 2, "rotateSource": "content", "scale": false,
                                             "lowerDepth": false, "contentScore": 0.97, "gradedSize": [w, h],
                                             "iccSource": "export", "iccSha256": "hex"}}}],
-      "composite": {"maskMode": "hard_edge", "featherPx": 0, "preserveEdgePx": 0, "strokes": [],
+      "composite": {"mask": {"mode": "feather", "width": 0.05, "unit": "mm"}, "strokes": [],
                     "lastOutput": null},
       "history": {"undo": [], "redo": []}
     }]
@@ -72,6 +72,11 @@ counted automatically (no count warning); `detection.expectedCount` is the manua
 their scans keep the manual count they were detected with (`autoCount` false); the project default for new scans
 is automatic. Earlier versions ignore both keys (and drop them on save): they show the stored warnings and use
 `expectedCount` when detecting again.
+`composite.mask` (since 0.7.0-alpha.5, UX-08, RFC-0007 §Natural blend): the print's own mask — `mode`
+(`hard_edge` / `feather` / `preserve_edge`), `width` (feather ramp or inset) and `unit` (`mm`, converted with the
+scan's DPI when compositing, or `px`). `null` or absent (older projects; their `maskMode`/`featherPx`/
+`preserveEdgePx` placeholders are ignored as before) = the print composites with the project's output settings
+(`settings.outputs` maskMode / featherPx / preserveEdgePx, px), as it did. Earlier versions ignore the key.
 `view.rotation` (since 0.7.0-alpha.4, UX-04, RFC-0011 §Whole-scan rotation): the whole-scan view, quarter turns
 clockwise 0–3 (other integers are taken modulo 4, anything else = 0). Display only: every boundary stays in the scan
 file's coordinates and the scan file is never rewritten; exports use it only when uprights are off

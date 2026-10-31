@@ -27,7 +27,8 @@ class SelfTest : public QObject {
     /// Runs synchronously (spinning the event loop); returns the process exit code.
     int run();
     /// `--scenario <name>`: reproduces reported user flows and records what actually happens (observations,
-    /// not assertions) in <dir>/scenario-<name>.json plus snapshots. Names: "relink", "count", "upright".
+    /// not assertions) in <dir>/scenario-<name>.json plus snapshots. Names: "relink", "count", "upright",
+    /// "miniswhite", "memory".
     int runScenario(const QString& name);
 
   private:
@@ -65,6 +66,24 @@ class SelfTest : public QObject {
     /// (clicks at the expected screen positions), count kept, four turns restore the view, one undo, exports
     /// before the turn relink bit-exact after it, uprights never doubled, saved, source file unchanged.
     void runScanRotation();
+    /// UX-08 (U015): natural-blend default for new prints, per-print mask (right rail, typed width, undo,
+    /// explicit batch), preview and final with the same mask, edge-change hint, saved, older projects
+    /// unchanged.
+    void runMaskDefaults();
+    /// UX-09 (U016): drag-to-adjust and double-click input on the mask width (real mouse and keys):
+    /// thresholds, bounds, Esc, invalid characters, Enter / focus loss, one undo step per drag, no preview
+    /// backlog.
+    void runScrubFields();
+    /// FK-005 (U017): one byte budget for the caches on six generated scans: batch detection, switching
+    /// scans, full-resolution view, composite previews given back and recomputed identically, job memory
+    /// reserved before the job starts, memory pressure (output unchanged), relink checks independent of the
+    /// cache, cancelled detection.
+    void runMemoryBudget();
+    /// FK-011 (U025): the window moves to a monitor with another profile (simulated): the proxy, the full
+    /// resolution and the thumbnails are converted again, Preview and Full agree, outputs unchanged, a proxy
+    /// converted for the previous monitor never shown; and back.
+    void runDisplayProfile();
+    void doubleClick(QQuickItem* item, QPointF local = QPointF(-1, -1));
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.
     void key(int key, Qt::KeyboardModifiers mods, bool press, const QString& text = {});
@@ -78,6 +97,8 @@ class SelfTest : public QObject {
     int scenarioRelink();
     int scenarioCount();
     int scenarioUpright();
+    /// FK-005: memory after each stage of a batch (`--scan <dir>`, FK_BENCH_SCANS=N).
+    int scenarioMemory();
     QJsonArray observations_;
 
     AppController* app_;

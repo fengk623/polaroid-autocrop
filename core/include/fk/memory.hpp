@@ -81,4 +81,13 @@ struct MemoryStats {
 };
 MemoryStats currentMemoryStats();
 
+/// Physical memory of the device (best effort; 0 when unavailable). Sizes the cache budget (FK-005) and
+/// tells memory pressure on platforms without a notification (Linux).
+struct SystemMemory {
+    uint64_t totalBytes = 0;
+    uint64_t availableBytes =
+        0; ///< Linux MemAvailable, Windows ullAvailPhys, macOS free + inactive + purgeable
+};
+SystemMemory systemMemory();
+
 } // namespace fk

@@ -419,3 +419,179 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   tagged scan); 14 UX-04 checks pass on all three. polaroid_92 failed "four orientations" at first (4 prints, one
   upright): the print fills that scan, so the "backing" copied from the scan border was its own white frame and the
   bed was white-on-white [test flaw] → a dark lid for scans filled by their print (≥ 60 % of the area).
+
+### 22:30–00:15 — PR #16 opened and green, PR #15 and #16 merged, U015
+- U014 committed (a535c93), PR #16 opened; all checks green. The owner merged PR #15 at 22:20 and PR #16 at 22:41.
+- U015 (branch `unit/U015-mask-defaults`, stacked on U014), UX-08.
+  - Measured before choosing: new `fkcli maskeval` composites each detected image area back exactly as the final
+    output, with synthetic grades, and measures frame contamination, ungraded rim and the seam at 50 %. First
+    version classified frame vs picture by colour: white picture content near the edge counted as "frame" and
+    inflated every number [weak metric] → the real-scan GT window edge decides (colour only without GT). ΔE00 moved
+    into the core and checked against the published CIEDE2000 test pairs.
+  - Result on the owner's 4 scans / 7 prints (826 and 1200 dpi): worst-case seam at 50 % hard edge 6.61, feather
+    0.03 mm (the suggested trial value) 4.71, 0.05 mm 3.64 (every print better than hard: 26–56 %), 0.08 mm 3.86;
+    rim at 0.05 mm ≤ 0.33 px; preserve edge best at 0.02 mm (3.96). Chosen: feather 0.05 mm natural default,
+    preserve 0.02 mm preset, px fallbacks 2.4 / 0.9. Remaining seam = true frame pixels inside the detected image
+    area (detection error); a mask cannot move the edge outward. Unchanged files: seam 0.
+  - Model: per-print `composite.mask` (mode, width, unit); prints of older projects keep the project setting;
+    `resolveMask` shared by preview and final; explicit batch; strong-edge hint from the preview (`edgeChange`).
+  - Self-test first run: the "strong grade" (gains only) gave ΔE00 2 on a dark print [test flaw: gains do not change
+    near-black] → a red offset; normal 1.49, strong 16.47. A snapshot showed the mask controls widened the right
+    rail (caption and buttons on one row) → caption on its own line, buttons in a Flow. (The rail's other rows also
+    overflow at 300 px — FK-009, U024.)
+- Tests: ctest 206/206 (+ `NaturalBlend.*` ×3, `MaskChoice.*`, `DeltaE2000.*`); self-test `runMaskDefaults`.
+- Mutations (each caught): mm widths treated as px (core test + self-test; the first self-test run predated the
+  independent px expectation and passed [weak check] → expectation computed without `resolveMask`, rerun caught
+  it); preview using the project setting instead of the print's mask; no default for new prints; hint never shown;
+  batch applied to every print; mask not saved. Restored; no markers left.
+- Self-test results: fixture 157 pass; polaroid_92 153 pass + 2 UX-08 skipped (one print: no batch, no second
+  print for the strong grade — the strong-grade check was first silently left out on single-print scans, now
+  recorded as skipped); img20260702_0005 151 pass + 4 FK-003 skips. UX-08: 11 / 9 / 11 pass.
+- Not verified: 100 % / 200 % visual review by the owner (review sheets from `maskeval --crops` stay local); no 1600
+  dpi or round real samples; GT is a draft.
+
+### 00:15–01:25 — PR #17 opened and green, U016
+- U015 committed (35beda9), PR #17 opened; all checks green, including the packaged self-test on Windows and macOS.
+  Not merged yet at the time of writing; U016 is stacked on it.
+- U016 (branch `unit/U016-scrub-fields`, stacked on U015), UX-09.
+  - Scope: `NumField.scrubbable`, used only by the mask width (feather / inset). UX-09 asks for a consistency review
+    before the behaviour spreads to other value controls, so the other fields keep their current behaviour.
+  - Field: a press does nothing until the pointer moves 4 logical px (a click is never a drag, no text selection);
+    then 2 logical px per step, Shift ×10, Alt ×0.1, clamped to the range; the value shows live and is reported at
+    most every 100 ms. Release commits; Esc (or losing the grab / focus) cancels and restores. Double-click (or Enter
+    with the focus) opens keyboard input with a validator: Enter or focus loss commits, Esc cancels.
+  - Undo: `beginMaskEdit` records the mask at the start, `setItemMaskWidthLive` changes it without an undo step,
+    `endMaskEdit(commit)` pushes one step holding the start state, or restores it on cancel.
+  - Preview jobs: the first self-test of a 0.6 s drag showed up to 4 composite previews running at once [backlog] →
+    one preview per print in flight; a new request cancels it and is remembered; when the cancelled job stops the
+    preview is recomputed from the current state. The re-request was first queued as an event and raced with the
+    test's wait for idle → started directly from the job's completion callback.
+  - HiDPI: the run with `QT_SCALE_FACTOR=2` showed the badge "Preview" at 100 %: the canvas compared the logical
+    zoom with the proxy scale, so on a 2× display the full-resolution patch was never requested at 100 % [bug, older
+    than this unit] → zoom × device pixel ratio in the detail request, the badge and the level choice.
+- Tests: ctest unchanged (core untouched); self-test `runScrubFields` 11 checks with real mouse and key events
+  (drag right/left, a 3 px move, both range ends, Esc during a drag, double-click + letters refused, Enter, Esc
+  while typing, focus loss, arrow keys, preview jobs during a drag) + snapshot `U016-scrub`. The UX-08 typing check
+  now double-clicks the field first.
+- Mutations (each → the self-test fails at the targeted check): no drag threshold ("a 3 px move is not a drag");
+  every move committed as its own step (first caught only by the Esc check [weak check] → "one undo step" now also
+  asserts nothing else is left to undo on a fresh print; rerun caught at that check); Esc not restoring; field not
+  read-only outside keyboard input (UX-08 typing check); preview backlog ("never more than 2 at once"); no validator
+  ("letters are refused", "Esc cancels keyboard input"). Restored; no markers left.
+- Self-test results: fixture 169 pass (also 169 with `QT_SCALE_FACTOR=2`); polaroid_92 165 pass + 2 UX-08 skips
+  (one print); img20260702_0005 163 pass + 4 FK-003 skips (untagged scan). UX-09: 11 / 11 pass on all four runs.
+- Not verified: a real trackpad (offscreen, a trackpad drag produces the same events as a mouse), macOS tap-to-drag,
+  a real window on a 2× display.
+
+### 01:25–05:35 — PR #18 opened and green, U017
+- U016 committed (88a28a7), PR #18 opened (stacked on #17); all checks green, including the packaged self-test on
+  Windows and macOS. PR #17 not merged yet.
+- U017 (branch `unit/U017-memory-budget`, stacked on U016), FK-005.
+  - Found before changing anything: proxies were limited to 4 only when re-opened (detection kept every scan's
+    proxy, ≈ 14–40 MB each); every scan viewed at 100 % kept its own decoded-strip cache (up to 96 MB each) for the
+    rest of the session; composite previews (up to 2400 px, ≈ 20 MB) were never dropped; jobs reserved nothing.
+    RFC-0014 named a `ByteBudgetLru` that was never implemented; ARCHITECTURE §4 and the platform table described
+    memory pressure that did not exist.
+  - Design: one `fk::CacheLedger` (core, no Qt) over all caches, because the values live with different owners
+    (QImages in the controller, decoded strips inside `TiffSource`); the owner frees what the ledger drops. Pinned
+    = on screen; kept = thumbnails and canvas images (counted, never dropped). Budget RAM/16, 256 MB … 2 GB.
+    Rejected: a separate LRU per cache (no shared budget); blocking jobs until memory is free (lanes already bound
+    concurrency, and a wait in the UI thread could deadlock with shutdown).
+  - Reservations: per lane, the largest estimates of queued and running jobs (as many as the lane runs at once),
+    reserved from the moment a job is queued, released after `done`. 100 queued detections reserve one.
+  - Dropping must never change a result: a relink check whose target proxy was dropped reads the same proxy again
+    in its job (before, it silently skipped the picture check when the proxy was missing — possible with the old
+    4-proxy limit too). Composite mode asks for the preview when a print without one is shown (before, switching
+    prints in composite mode showed no preview until something changed).
+  - Memory pressure: macOS dispatch source, Windows memory resource notification (polled), Linux MemAvailable.
+- Tests: ctest 213/213 (+ `CacheLedger.*` ×6, `Memory.SystemMemoryReported`); self-test `runMemoryBudget` 9 checks on
+  six generated four-print scans (each scan: the test scan's first print turned 0/90/180/270°, own noise).
+  - First self-test run: 2 of 9 failed [test flaw]: the test budget (3 proxies) was smaller than any job's
+    reservation (detection ≈ 240 MB), so every job emptied the cache and nothing could show the difference
+    between "room made for a job" and "everything dropped" → the budget is now measured: the jobs' reservation
+    observed while they run + what is pinned + 2.5 proxies; the export check sets the budget to exactly what is
+    cached, so any reservation must take room. The composite check first passed with a budget the canvas's own
+    decoded strips already filled [weak check] → it now shows all four previews kept within the budget, then the
+    oldest given back when the budget shrinks.
+  - Owner's scans: polaroid_92 and img20260702_0005 failed "switching … at most 3 proxies" [test flaw]: their 8-bit
+    beds reserve less to read a proxy than detection reserves for a scan of unknown size (counted as 1600 dpi A4
+    16-bit), so the measured reservation (the larger, detection's) left room for 5 proxies → the budget is now
+    based on the reservation of reading a proxy again, measured on its own.
+  - The first relink check passed with the reread disabled [weak check]: the graded copy matched its export record,
+    so the proxy never mattered → the check now uses a picture of a print that was never exported (only a new
+    alignment can take it, and its picture comparison needs the proxy); with the reread disabled the second
+    assessment turns "ambiguous" (content score 0.999 → 0).
+- Mutations (each → the self-test fails at the targeted check; M6 first survived, see above): M1 ledger never
+  drops; M2 nothing pinned (the scan on screen given back); M3 no estimate for full-print exports; M4 reservation
+  never released; M5 pressure keeps the current scan's decoded strips; M6 relink check without the reread;
+  M7 previews not counted; M8 composite mode does not ask for a missing preview; M9 decoded strips not counted.
+  Restored; build clean.
+- Self-test results: fixture 178 pass; polaroid_92 174 pass + 2 skips (one print); img20260702_0005 172 pass + 4
+  FK-003 skips. FK-005: 9/9 on all three (the generated beds are made from each scan's first print).
+- Batch measurements (`--scenario memory`, PERFORMANCE-BUDGET §3.1; corpus: 100 fkfixture scans, 300 dpi 8-bit):
+  steady cache 124 / 126 / 126 MB at 10 / 50 / 100 scans (budget 502 MB); with the budget off 2493 MB at 100.
+  - First runs showed RSS rising with the batch although the cache stayed put. Investigated before claiming
+    anything: (1) glibc keeps freed pages — `malloc_trim` at the end returned 450–780 MB; (2) memory still rising
+    per scan switch with nothing cached: the self-test runs before `app.exec()`, so deferred deletes (QML delegates
+    scrolled away) never ran [harness artifact, ≈ 1.3 MB per switch; flat once DeferredDelete is sent, a QML garbage
+    collection alone did not help] → the scenario sends them like the event loop (T22). A product change tried on
+    the way (collecting QML garbage after switching) did not help and was removed.
+  - Result: memory the app holds after the allocator returns its free pages 228 / 238 / 290 MB at 10 / 50 / 100
+    scans; what grows is the thumbnails (0.8 MB per scan, kept by design until the library's disk cache). Steady RSS
+    on glibc follows the run's peak (1078 MB at 50, 875 MB at 100), not the number of scans.
+  - CI (first run, runner budgets): macOS phys_footprint 95 → 94 MB from 5 to 20 scans (budget 448 MB; evicting);
+    Windows and Linux runners have 16 GB, so 20 scans fit their 1 GB budget (cache 681 MB kept) → the CI batch is
+    now sized for an 8 GB device on every runner (`FK_ASSUME_RAM_GB=8`).
+  - fkfixture hung on scan 41 of `--corpus 100 --seed 17` (a touching pair that cannot fit loops forever, T20) →
+    the corpus was completed in chunks with seeds 18–20.
+
+### 05:35–06:50 — PR #19 green, PR #20 (U018 RFC, draft), U025
+- U017: three commits on PR #19, all checks green; a fourth (docs) adds the CI memory batch at the 8 GB budget: steady
+  cache 253 → 136 MB from 5 to 20 scans on every OS; private bytes macOS 99 → 89, Windows 375 → 258 MB.
+- U018: the plan requires the library format and any change of save semantics to be reviewed first (PLAN §2 #3,
+  #4) → RFC-0018 and PRD F16 as a draft PR #20 with four questions for the owner (format, saving, old projects,
+  default location). No code until answered.
+- U025 (FK-011), done first because it does not depend on the library (version 0.7.0-alpha.8 by completion order).
+  - MinIsWhite: confirmed in the source — `DisplayConverter::convertRow` inverted rows that `readRows` had already
+    inverted. Fix: no inversion in the display; the known-issue observation becomes a check (8- and 16-bit in CI).
+  - Display profile: was read once from the primary monitor. Now per window screen (Windows:
+    `QWindowsScreen::handle()` → `CreateDCW` for that monitor → `GetICMProfileW`), on screen change, screens
+    added/removed, and a 5 s poll (no notification exists for an ICC changed in the settings). On a change: the
+    proxy on screen converted at once and read again (exact), 100 % patch and composite preview made again,
+    thumbnails converted old → new, other proxies dropped; results converted for the previous profile are
+    discarded (each job records the profile it converted to). Rejected: keeping proxies in sRGB and converting at
+    paint time (clips wide-gamut monitors to sRGB, contrary to ADR-0003).
+  - Self-test `runDisplayProfile` (8 checks + a snapshot) simulates the move with an override (Adobe RGB as the wide-gamut
+    monitor). Expected images are computed independently with the same proxy pipeline, so the comparisons are
+    exact. In-flight results are tested by letting the job convert while the UI thread sleeps, then changing the
+    profile before its result is delivered.
+  - Test flaws found on the way: thumbnail expectation compared at a different size (rounding of the 320 px
+    long side); the first "100 % patch" check zoomed after the change, so a canvas keeping the old patch passed
+    [weak check, mutation D7 survived] → zoom before the change, require the old patch gone at once and a new one
+    made for the new profile (canvas exposes `detailProfile`).
+- Tests: scenario `miniswhite` 8-bit 15.8 / 15.9, 16-bit 15.8 / 15.8 (Full / Preview); self-test 8 FK-011 checks.
+- Mutations (each → the targeted check fails): D1 MinIsWhite inverted again (both scenarios); D2 proxy on screen
+  not read again; D3 stale proxy used; D4 stale patch delivered; D5 stale composite preview used; D6 thumbnails not
+  converted; D7 canvas keeps the old patch (first survived, see above; rerun caught). Restored.
+- Self-test results: fixture 187 pass (all sections). On the owner's scans the in-flight composite check failed
+  ("succeeded · shown") [test flaw]: the fixed 5 s pause was shorter than a preview of polaroid_92 /
+  img20260702_0005, so the job converted after the change, correctly for the new profile → the three in-flight
+  checks now wait until the job's work has ended without running the UI thread (`JobRunner::workEnded`, test hook).
+  Display section rerun: 8/8 on the fixture, polaroid_92 and img20260702_0005; the full runs before this test-only
+  change passed every other check (polaroid_92 182 + 2 skips, img20260702_0005 180 + 4 skips).
+- Not verified: real second monitor, hot-plug, changing the ICC in Windows settings, macOS window colour tag,
+  colorimeter (HV-04).
+
+### 06:50–07:10 — PR #21 opened (U025), U023
+- U025 committed (03dc75c), PR #21 opened (stacked on #19).
+- U023 (UX-11), independent of the library; version 0.7.0-alpha.9 by completion order.
+  - The icon is generated by `tools/make-icons.py` (our own artwork). Removed the sun only — the requirement asks not
+    to rename or rebrand — so the print, frame, corner brackets and colours stay.
+  - Found while looking at the sizes: every ICO size was scaled down from the 1024 px image (the brackets blurred
+    at 16–24 px), and Pillow's ICNS writer left out the 1× 16/32/64 px entries. Each size is now rendered on its
+    own with strokes kept at least ~1 target pixel wide; the ICNS is written directly with all 1× and 2× entries.
+  - Check first, then the change: `tools/check-icons.py` (standard library only: its own PNG decoder, ICO and ICNS
+    parsers) run on the previous icons reports 11 problems (7682 sun-coloured pixels in the 1024 px icon, sun at
+    every large size, missing ICNS entries); on the new icons it passes. Added to the CI docs job.
+  - Small sizes compared enlarged (×8) against the old ones; the comparison sheets stay local.
+- Not verified: the taskbar / Start menu / Dock icon after installing over an older version (system icon caches).

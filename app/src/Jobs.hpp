@@ -72,9 +72,15 @@ class JobRunner : public QObject {
     ~JobRunner() override;
     JobModel* model() const { return model_; }
     /// Returns the job id. `done` runs on the UI thread after `work`, also when the job was cancelled or
-    /// failed.
+    /// failed. `estimateBytes` (FK-005): the job's expected working memory; see reservedBytes().
     int start(Lane lane, const QString& title, std::function<void(JobContext&)> work,
-              std::function<JobDone(const JobOutcome&)> done = {});
+              std::function<JobDone(const JobOutcome&)> done = {}, uint64_t estimateBytes = 0);
+    /// FK-005: memory the queued and running jobs may need at once — per lane, the largest estimates of
+    /// its active jobs, as many as the lane runs in parallel. Reserved before a job starts (it is counted
+    /// from the moment it is queued), released when its `done` has run.
+    uint64_t reservedBytes() const;
+    /// Called on the UI thread whenever reservedBytes() changes (the cache budget makes room for it).
+    void setReservationHandler(std::function<void(uint64_t)> f) { onReservation_ = std::move(f); }
     Q_INVOKABLE void cancel(int id);
     void cancelAll();
     bool busy() const;
@@ -89,6 +95,8 @@ class JobRunner : public QObject {
     int lastJobId() const { return nextId_ - 1; }
     /// Final state of a finished job ("succeeded", "failed", "cancelled", "outdated"), empty while running.
     QString finalState(int id) const;
+    /// Test hook: the job's work has ended and its result is waiting for the UI thread (`done` not run yet).
+    bool workEnded(int id) const;
 
   Q_SIGNALS:
     void busyChanged();
@@ -99,6 +107,9 @@ class JobRunner : public QObject {
     JobModel* model_;
     std::vector<std::shared_ptr<Job>> jobs_;
     std::vector<std::pair<int, QString>> finished_; ///< id → final state (bounded, for tests and the UI)
+    std::function<void(uint64_t)> onReservation_;
+    uint64_t lastReserved_ = 0;
+    void reservationChanged();
     int nextId_ = 1;
     int testDelayMs_ = 0;
     friend class JobModel;

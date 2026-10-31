@@ -90,3 +90,18 @@ TEST(Color, SrgbToLabWhiteAndBlack) {
     srgbToLab(k, lab);
     EXPECT_NEAR(lab[0], 0, 0.01);
 }
+
+TEST(DeltaE2000, MatchesThePublishedTestData) {
+    // Sharma, Wu, Dalal (2005), test pairs 1, 7, 17, 18, 19, 20
+    const float pairs[][7] = {{50.0f, 2.6772f, -79.7751f, 50.0f, 0.0f, -82.7485f, 2.0425f},
+                              {50.0f, 0.0f, 0.0f, 50.0f, -1.0f, 2.0f, 2.3669f},
+                              {50.0f, 2.5f, 0.0f, 73.0f, 25.0f, -18.0f, 27.1492f},
+                              {50.0f, 2.5f, 0.0f, 61.0f, -5.0f, 29.0f, 22.8977f},
+                              {50.0f, 2.5f, 0.0f, 56.0f, -27.0f, -3.0f, 31.9030f},
+                              {50.0f, 2.5f, 0.0f, 58.0f, 24.0f, 15.0f, 19.4535f}};
+    for (const auto& p : pairs) {
+        EXPECT_NEAR(fk::deltaE2000(p, p + 3), p[6], 1e-3) << p[3] << " " << p[4] << " " << p[5];
+        EXPECT_NEAR(fk::deltaE2000(p + 3, p), p[6], 1e-3); // symmetric
+    }
+    EXPECT_EQ(fk::deltaE2000(pairs[0], pairs[0]), 0.0);
+}
