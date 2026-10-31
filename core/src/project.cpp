@@ -286,6 +286,47 @@ MaskMode maskModeFrom(const std::string& s) {
     return MaskMode::hard_edge;
 }
 
+// FK-014 (rollback): a later version only adds keys (the schema number stays 1). What this version does not
+// read is kept as the "unknown part" of the object it belongs to and written back unchanged, so opening and
+// saving a project here after a rollback keeps everything the later version wrote. Objects are compared key
+// by key, nested objects recursively; list entries (edit versions, strokes) are not.
+json unknownPart(const json& raw, const json& known) {
+    json out = json::object();
+    if (!raw.is_object()) return out;
+    for (auto it = raw.begin(); it != raw.end(); ++it) {
+        const auto k = known.is_object() ? known.find(it.key()) : known.end();
+        if (!known.is_object() || k == known.end()) {
+            out[it.key()] = it.value();
+        } else if (it.value().is_object() && k->is_object()) {
+            json sub = unknownPart(it.value(), *k);
+            if (!sub.empty()) out[it.key()] = std::move(sub);
+        }
+    }
+    return out;
+}
+std::string unknownOf(const json& raw, const json& known) {
+    const json u = unknownPart(raw, known);
+    return u.empty() ? std::string() : u.dump();
+}
+// adds the keys this version did not read; a key this version writes keeps this version's value
+void mergeInto(json& j, const json& extra) {
+    for (auto it = extra.begin(); it != extra.end(); ++it) {
+        const auto k = j.find(it.key());
+        if (k == j.end())
+            j[it.key()] = it.value();
+        else if (k->is_object() && it.value().is_object())
+            mergeInto(*k, it.value());
+    }
+}
+void mergeUnknown(json& j, const std::string& unknown) {
+    if (unknown.empty()) return;
+    try {
+        const json extra = json::parse(unknown);
+        if (extra.is_object()) mergeInto(j, extra);
+    } catch (...) {
+    }
+}
+
 json itemJson(const ItemRecord& it) {
     json edits = json::array();
     for (const auto& e : it.edits) {
@@ -321,7 +362,7 @@ json itemJson(const ItemRecord& it) {
     outer["cornerRadiusPx"] = it.cornerRadiusPx;
     json inner = shapeJson(it.inner);
     inner["source"] = boundarySourceName(it.innerSource);
-    return json{
+    json out{
         {"itemId", it.itemId},
         {"index", it.index},
         {"label", it.label},
@@ -346,6 +387,8 @@ json itemJson(const ItemRecord& it) {
           {"lastOutputAt", it.composite.lastOutputAt}}},
         {"finalExport", it.finalExport},
         {"history", {{"undo", it.undo}, {"redo", it.redo}}}};
+    mergeUnknown(out, it.unknownJson);
+    return out;
 }
 
 ItemRecord itemFrom(const json& j) {
@@ -420,6 +463,12 @@ ItemRecord itemFrom(const json& j) {
         it.undo = j["history"].value("undo", std::vector<std::string>{});
         it.redo = j["history"].value("redo", std::vector<std::string>{});
     }
+    // retired keys are not carried along: the per-print placeholders of versions before 0.7.0-alpha.5
+    json raw = j;
+    if (raw.contains("composite") && raw["composite"].is_object())
+        for (const char* key : {"maskMode", "featherPx", "preserveEdgePx"})
+            raw["composite"].erase(key);
+    it.unknownJson = unknownOf(raw, itemJson(it));
     return it;
 }
 
@@ -427,29 +476,31 @@ json scanJson(const ScanRecord& s) {
     json items = json::array();
     for (const auto& it : s.items)
         items.push_back(itemJson(it));
-    return json{{"scanId", s.scanId},
-                {"path", s.path},
-                {"relPath", s.relPath},
-                {"fingerprint", fpJson(s.fingerprint)},
-                {"info",
-                 {{"width", s.info.width},
-                  {"height", s.info.height},
-                  {"channels", s.info.channels},
-                  {"bits", s.info.bitsPerSample},
-                  {"compression", compressionName(s.info.compression)},
-                  {"dpiX", s.info.dpiX},
-                  {"dpiY", s.info.dpiY},
-                  {"iccDescription", s.info.iccDescription},
-                  {"iccSha256", s.iccSha256}}},
-                {"detection",
-                 {{"at", s.detectedAt},
-                  {"expectedCount", s.expectedCount},
-                  {"autoCount", s.autoCount},
-                  {"dpiUsed", s.dpiUsed},
-                  {"proxyScale", s.proxyScale},
-                  {"warnings", s.warnings}}},
-                {"view", {{"rotation", s.rotation}}},
-                {"items", items}};
+    json out{{"scanId", s.scanId},
+             {"path", s.path},
+             {"relPath", s.relPath},
+             {"fingerprint", fpJson(s.fingerprint)},
+             {"info",
+              {{"width", s.info.width},
+               {"height", s.info.height},
+               {"channels", s.info.channels},
+               {"bits", s.info.bitsPerSample},
+               {"compression", compressionName(s.info.compression)},
+               {"dpiX", s.info.dpiX},
+               {"dpiY", s.info.dpiY},
+               {"iccDescription", s.info.iccDescription},
+               {"iccSha256", s.iccSha256}}},
+             {"detection",
+              {{"at", s.detectedAt},
+               {"expectedCount", s.expectedCount},
+               {"autoCount", s.autoCount},
+               {"dpiUsed", s.dpiUsed},
+               {"proxyScale", s.proxyScale},
+               {"warnings", s.warnings}}},
+             {"view", {{"rotation", s.rotation}}},
+             {"items", items}};
+    mergeUnknown(out, s.unknownJson);
+    return out;
 }
 
 ScanRecord scanFrom(const json& j) {
@@ -484,7 +535,28 @@ ScanRecord scanFrom(const json& j) {
     s.rotation = rot.is_number_integer() ? ((rot.get<int>() % 4) + 4) % 4 : 0;
     for (const auto& it : j.value("items", json::array()))
         s.items.push_back(itemFrom(it));
+    s.unknownJson = unknownOf(j, scanJson(s));
     return s;
+}
+
+json settingsJson(const ProjectSettings& s) {
+    json j = {{"expectedCount", s.expectedCount},
+              {"autoCount", s.autoCount},
+              {"safetyMarginPx", s.safetyMarginPx},
+              {"exportFolder", s.exportFolder},
+              {"exportFormat", s.exportFormat},
+              {"exportBits", s.exportBits},
+              {"exportCompression", s.exportCompression},
+              {"colorPolicy", s.colorPolicy},
+              {"privacy", s.privacy}};
+    if (!s.outputJson.empty()) {
+        try {
+            j["output"] = json::parse(s.outputJson);
+        } catch (...) {
+        }
+    }
+    mergeUnknown(j, s.unknownJson);
+    return j;
 }
 
 int schemaVersion(const std::string& schema, const std::string& prefix) {
@@ -519,21 +591,7 @@ std::string projectToJson(const Project& p) {
     j["createdAt"] = p.createdAt;
     j["modifiedAt"] = p.modifiedAt;
     j["app"] = {{"name", product::kName}, {"version", product::kVersion}};
-    j["settings"] = {{"expectedCount", p.settings.expectedCount},
-                     {"autoCount", p.settings.autoCount},
-                     {"safetyMarginPx", p.settings.safetyMarginPx},
-                     {"exportFolder", p.settings.exportFolder},
-                     {"exportFormat", p.settings.exportFormat},
-                     {"exportBits", p.settings.exportBits},
-                     {"exportCompression", p.settings.exportCompression},
-                     {"colorPolicy", p.settings.colorPolicy},
-                     {"privacy", p.settings.privacy}};
-    if (!p.settings.outputJson.empty()) {
-        try {
-            j["settings"]["output"] = json::parse(p.settings.outputJson);
-        } catch (...) {
-        }
-    }
+    j["settings"] = settingsJson(p.settings);
     j["scans"] = json::array();
     for (const auto& s : p.scans)
         j["scans"].push_back(scanJson(s));
@@ -590,6 +648,9 @@ Result<Project> projectFromJson(const std::string& text, OpenMode* mode) {
         p.name = j.value("name", "");
         p.createdAt = j.value("createdAt", "");
         p.modifiedAt = j.value("modifiedAt", "");
+        if (j.contains("app") && j["app"].is_object() && j["app"].contains("version") &&
+            j["app"]["version"].is_string())
+            p.savedBy = j["app"]["version"].get<std::string>();
         if (j.contains("settings")) {
             const auto& s = j["settings"];
             p.settings.expectedCount = s.value("expectedCount", 4);
@@ -602,6 +663,7 @@ Result<Project> projectFromJson(const std::string& text, OpenMode* mode) {
             p.settings.colorPolicy = s.value("colorPolicy", "keep");
             p.settings.privacy = s.value("privacy", "keep_all_safe");
             if (s.contains("output") && s["output"].is_object()) p.settings.outputJson = s["output"].dump();
+            p.settings.unknownJson = unknownOf(s, settingsJson(p.settings));
         }
         for (const auto& s : j.value("scans", json::array()))
             p.scans.push_back(scanFrom(s));
@@ -913,6 +975,7 @@ json sidecarJson(const Sidecar& s) {
     j["software"] = s.software;
     j["exportedAt"] = s.exportedAt;
     if (s.origin != "export") j["origin"] = s.origin; // absent = export (files of earlier versions)
+    mergeUnknown(j, s.unknownJson);
     return j;
 }
 
@@ -965,6 +1028,9 @@ Result<Sidecar> sidecarFromJson(const json& j) {
         s.software = j.value("software", "");
         s.exportedAt = j.value("exportedAt", "");
         s.origin = j.value("origin", "export");
+        json known = sidecarJson(s);
+        known["origin"] = s.origin; // read even when it is the default
+        s.unknownJson = unknownOf(j, known);
         return s;
     } catch (const std::exception& e) {
         return makeError(Errc::parse_error, "The sidecar file is damaged", e.what());

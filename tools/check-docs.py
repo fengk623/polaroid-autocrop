@@ -8,6 +8,9 @@ bad = []
 for md in ROOT.rglob("*.md"):
     if any(part.startswith(("build", ".git")) for part in md.relative_to(ROOT).parts):
         continue
+    # licence texts copied verbatim from upstream keep their own links (licenses/README.md is ours)
+    if md.parent == ROOT / "licenses" and md.name != "README.md":
+        continue
     for m in LINK.finditer(md.read_text(encoding="utf-8")):
         target = m.group(1)
         if "://" in target or target.startswith("mailto:"):

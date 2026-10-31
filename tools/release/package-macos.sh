@@ -14,6 +14,8 @@ mkdir -p "$OUT"
 mkdir -p "$APP/Contents/PlugIns/platforms"
 cp "$QT_ROOT_DIR/plugins/platforms/libqoffscreen.dylib" "$APP/Contents/PlugIns/platforms/" || true
 cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-LICENSES.md" "$APP/Contents/Resources/"
+rm -rf "$APP/Contents/Resources/licenses"
+cp -R "$ROOT/licenses" "$APP/Contents/Resources/licenses"  # full licence texts (FK-014, licenses/README.md)
 "$ROOT/tools/release/buildinfo.sh" "$APP/Contents/Resources/BUILDINFO.txt" "macOS universal (arm64, x86_64)"
 cp "$APP/Contents/Resources/BUILDINFO.txt" "$OUT/BUILDINFO-macos.txt"
 codesign --force --deep --sign - "$APP"

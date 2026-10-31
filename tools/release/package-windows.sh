@@ -18,6 +18,7 @@ cp "$QT/plugins/platforms/qoffscreen.dll" "$STAGE/platforms/" || true
 CRT=$(cygpath -u "${VCToolsRedistDir:?run inside the MSVC environment}")x64/Microsoft.VC143.CRT
 cp "$CRT"/msvcp140*.dll "$CRT"/vcruntime140*.dll "$CRT"/concrt140.dll "$STAGE/" 2>/dev/null || cp "$CRT"/*.dll "$STAGE/"
 cp "$ROOT/LICENSE" "$ROOT/THIRD-PARTY-LICENSES.md" "$STAGE/"
+cp -R "$ROOT/licenses" "$STAGE/licenses"  # full licence texts (FK-014, licenses/README.md)
 cp "$ROOT/docs/INSTALL.md" "$STAGE/README.md"
 "$ROOT/tools/release/buildinfo.sh" "$STAGE/BUILDINFO.txt" "Windows x64"
 cp "$STAGE/BUILDINFO.txt" "$OUT/BUILDINFO-windows.txt"

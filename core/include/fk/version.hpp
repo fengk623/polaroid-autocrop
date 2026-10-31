@@ -17,4 +17,7 @@ std::string buildId();
 std::string buildInfoLine();
 /// API version as major*1000 + minor.
 int apiVersion();
+/// SemVer 2.0 precedence (FK-014): -1 when `a` is older than `b`, 1 when newer, 0 when equal — and 0 when
+/// either is not MAJOR.MINOR.PATCH[-prerelease][+build]. "0.7.0-alpha.9" < "0.7.0-alpha.15" < "0.7.0".
+int compareVersions(const std::string& a, const std::string& b);
 } // namespace fk
