@@ -71,6 +71,12 @@ P.MenuBar {
         P.MenuSeparator {}
         P.MenuItem { text: qsTr("Mark Reviewed and Next"); shortcut: "Ctrl+Return"; onTriggered: App.reviewAndNext() }
         P.MenuItem { text: qsTr("Exclude / Include") + "   X"; onTriggered: App.toggleExcludedSelection() }
+        P.MenuSeparator {}
+        // UX-03: the same as the tool buttons and the Shift tap
+        P.MenuItem { text: qsTr("Edit Outer") + "   O"; onTriggered: canvas.tool = "outer" }
+        P.MenuItem { text: qsTr("Edit Inner") + "   I"; onTriggered: canvas.tool = "inner" }
+        P.MenuItem { text: qsTr("Switch Outer ↔ Inner") + "   " + qsTr("tap ⇧"); onTriggered: win.switchBoundary(false) }
+        P.MenuSeparator {}
         P.MenuItem { text: qsTr("Rotate Upright Left"); shortcut: "Ctrl+["; onTriggered: App.rotateUpright(App.currentItemId, -1) }
         P.MenuItem { text: qsTr("Rotate Upright Right"); shortcut: "Ctrl+]"; onTriggered: App.rotateUpright(App.currentItemId, 1) }
         P.MenuItem { text: qsTr("Snap Outer to Edges"); onTriggered: App.snapOuter(App.currentItemId) }

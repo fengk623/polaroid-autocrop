@@ -203,3 +203,141 @@ TEST(Geometry, Mat3InverseRoundTrip) {
     EXPECT_NEAR(p.x, 3.25, 1e-12);
     EXPECT_NEAR(p.y, -9.5, 1e-12);
 }
+
+// ---- boundary editing (UX-03, RFC-0002 §Editing) --------------------------------------------
+
+namespace {
+double rightAngleError(const Quad& q) {
+    double worst = 0;
+    for (int i = 0; i < 4; ++i) {
+        const Vec2 a = normalized(q.p[(i + 1) % 4] - q.p[i]);
+        const Vec2 b = normalized(q.p[(i + 3) % 4] - q.p[i]);
+        worst = std::max(worst, std::abs(dot(a, b)));
+    }
+    return worst; // |cos| of the worst corner angle
+}
+double aspect(const Quad& q) {
+    const auto s = quadSideLengths(q);
+    return s[0] / s[1];
+}
+} // namespace
+
+TEST(Edit, FreeCornerMovesOnlyThatCorner) {
+    const Shape start = Shape::fromQuad(rotatedRect({500, 400}, 300, 200, 0.12));
+    const auto r = editShape(start, {EditHandle::corner, 2, {17, -9}, false});
+    ASSERT_TRUE(r);
+    for (int k = 0; k < 4; ++k)
+        EXPECT_EQ(r->quad.p[k], (k == 2 ? start.quad.p[2] + Vec2{17, -9} : start.quad.p[k])) << k;
+}
+
+TEST(Edit, ShiftCornerKeepsRectangleAspectRotationAndOppositeCorner) {
+    // a tilted rectangle: every corner, dragged in any direction, stays a rectangle of the same proportions
+    // and rotation scaled about the opposite corner; the opposite corner does not move at all
+    const double angle = 7.0 * kPi / 180;
+    const Shape start = Shape::fromQuad(rotatedRect({800, 600}, 420, 300, angle));
+    const double a0 = aspect(start.quad), t0 = frameAngle(start.quad);
+    for (int i = 0; i < 4; ++i) {
+        for (Vec2 d : {Vec2{40, 25}, Vec2{-60, 10}, Vec2{5, -80}, Vec2{-30, -30}}) {
+            const auto r = editShape(start, {EditHandle::corner, i, d, true});
+            ASSERT_TRUE(r) << i;
+            const Quad& q = r->quad;
+            EXPECT_EQ(q.p[(i + 2) % 4], start.quad.p[(i + 2) % 4]) << i;
+            EXPECT_LT(rightAngleError(q), 1e-9) << i;
+            EXPECT_NEAR(aspect(q), a0, 1e-9) << i;
+            EXPECT_NEAR(frameAngle(q), t0, 1e-9) << i;
+            // the dragged corner stays on the diagonal through the fixed corner
+            const Vec2 diag0 = start.quad.p[i] - start.quad.p[(i + 2) % 4];
+            EXPECT_NEAR(cross(normalized(diag0), q.p[i] - q.p[(i + 2) % 4]), 0.0, 1e-7) << i;
+            EXPECT_TRUE(isConvex(q));
+        }
+    }
+    // no movement: the same rectangle (a drag back to the start is a no-op)
+    const auto same = editShape(start, {EditHandle::corner, 1, {0, 0}, true});
+    for (int k = 0; k < 4; ++k)
+        EXPECT_NEAR(norm(same->quad.p[k] - start.quad.p[k]), 0.0, 1e-9);
+}
+
+TEST(Edit, ShiftCornerDraggedPastTheOppositeCornerKeepsAMinimalRectangle) {
+    const Shape start = Shape::fromQuad(rectQuad(100, 100, 400, 300));
+    const auto r = editShape(start, {EditHandle::corner, 0, {500, 400}, true});
+    ASSERT_TRUE(r);
+    const auto s = quadSideLengths(r->quad);
+    EXPECT_NEAR(std::min(s[0], s[1]), kMinEditSize, 1e-9);
+    EXPECT_NEAR(s[0] / s[1], 1.5, 1e-9);
+    EXPECT_EQ(r->quad.p[2], (Vec2{400, 300}));
+    EXPECT_TRUE(isConvex(r->quad)); // never flipped
+}
+
+TEST(Edit, ShiftMoveLocksToTheDominantAxis) {
+    const Shape start = Shape::fromQuad(rectQuad(10, 10, 110, 60));
+    const auto r = editShape(start, {EditHandle::move, 0, {30, 8}, true});
+    for (int k = 0; k < 4; ++k)
+        EXPECT_EQ(r->quad.p[k], (start.quad.p[k] + Vec2{30, 0}));
+    const Shape c = Shape::fromEllipse({{50, 50}, 20, 20, 0});
+    EXPECT_EQ(editShape(c, {EditHandle::center, 0, {-3, -9}, true})->ellipse.c, (Vec2{50, 41}));
+    EXPECT_EQ(editShape(c, {EditHandle::center, 0, {-3, -9}, false})->ellipse.c, (Vec2{47, 41}));
+}
+
+TEST(Edit, EdgeMovesAlongItsNormalAndNonConvexResultsAreRejected) {
+    const Shape start = Shape::fromQuad(rectQuad(0, 0, 100, 50));
+    const auto r = editShape(start, {EditHandle::edge, 1, {12, 33}, false}); // right edge: only x moves
+    EXPECT_EQ(r->quad.p[1], (Vec2{112, 0}));
+    EXPECT_EQ(r->quad.p[2], (Vec2{112, 50}));
+    EXPECT_FALSE(editShape(start, {EditHandle::corner, 0, {150, 70}, false})); // folds over
+}
+
+TEST(Edit, CircleStaysACircle) {
+    // UX-03: a round image area keeps rx = ry exactly whatever handle is dragged, in whatever direction, with
+    // or without Shift, and nudged by arrow keys (delta along either axis)
+    const Shape c = Shape::fromEllipse({{300, 300}, 120, 120, 0.3});
+    for (EditHandle h : {EditHandle::radiusX, EditHandle::radiusY})
+        for (Vec2 d : {Vec2{13, 40}, Vec2{-25, 3}, Vec2{1, 0}, Vec2{0, -1}})
+            for (bool shift : {false, true}) {
+                const auto r = editShape(c, {h, 0, d, shift});
+                ASSERT_TRUE(r);
+                EXPECT_EQ(r->ellipse.rx, r->ellipse.ry);
+                EXPECT_EQ(r->ellipse.c, c.ellipse.c);
+                EXPECT_EQ(r->ellipse.angleRad, c.ellipse.angleRad);
+            }
+    // the radius follows the handle along its axis
+    const Vec2 ax{std::cos(0.3), std::sin(0.3)};
+    EXPECT_NEAR(editShape(c, {EditHandle::radiusX, 0, ax * 10.0, false})->ellipse.rx, 130.0, 1e-9);
+    // never below the minimum
+    EXPECT_EQ(editShape(c, {EditHandle::radiusX, 0, ax * -500.0, false})->ellipse.rx, kMinEditSize);
+}
+
+TEST(Edit, RotatedEllipseHandlesFollowTheAxes) {
+    const Ellipse e{{200, 100}, 80, 40, kPi / 6};
+    const Vec2 hx = ellipseHandle(e, true), hy = ellipseHandle(e, false);
+    EXPECT_NEAR(norm(hx - e.c), 80, 1e-9);
+    EXPECT_NEAR(norm(hy - e.c), 40, 1e-9);
+    EXPECT_NEAR(signedDistance(Shape::fromEllipse(e), hx), 0.0, 1e-6);
+    EXPECT_NEAR(signedDistance(Shape::fromEllipse(e), hy), 0.0, 1e-6);
+    const Vec2 ax = normalized(hx - e.c);
+    const auto free = editShape(Shape::fromEllipse(e), {EditHandle::radiusX, 0, ax * 20.0, false});
+    EXPECT_NEAR(free->ellipse.rx, 100, 1e-9);
+    EXPECT_EQ(free->ellipse.ry, 40);
+    const auto shift = editShape(Shape::fromEllipse(e), {EditHandle::radiusX, 0, ax * 20.0, true});
+    EXPECT_NEAR(shift->ellipse.rx, 100, 1e-9);
+    EXPECT_NEAR(shift->ellipse.ry, 50, 1e-9); // proportions kept
+}
+
+TEST(Edit, TransformsKeepACircleExactlyRound) {
+    // translation + rotation: the two radii go through different rounding (without the rule 9 in 10 of these
+    // differ in the last bits)
+    for (int k = 0; k < 50; ++k) {
+        const double r = 333.3 + 0.01 * k;
+        const Shape c = Shape::fromEllipse({{1234.567 + k, 987.25}, r, r, 0.01 * k});
+        const Shape t = transformShape(c, Mat3::translate(4321.5 + k, -77.7) * Mat3::rotate(0.0137 * k));
+        EXPECT_EQ(t.ellipse.rx, t.ellipse.ry) << k;
+    }
+    Shape c = Shape::fromEllipse({{1234.5, 987.25}, 333.3, 333.3, 0});
+    for (int k = 0; k < 4; ++k)
+        c = transformShape(c, Mat3::translate(5000, 0) * Mat3::rotate(kPi / 2));
+    EXPECT_EQ(c.ellipse.rx, c.ellipse.ry);
+    c = transformShape(c, Mat3::rotate(0.123) * Mat3::scale(1.7, 1.7));
+    EXPECT_EQ(c.ellipse.rx, c.ellipse.ry);
+    EXPECT_TRUE(isCircle(c.ellipse));
+    // a non-uniform scale makes a real ellipse
+    EXPECT_FALSE(isCircle(transformShape(c, Mat3::scale(2, 1)).ellipse));
+}

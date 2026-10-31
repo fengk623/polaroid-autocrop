@@ -22,6 +22,11 @@ class ScanCanvas : public QQuickPaintedItem {
     Q_PROPERTY(QObject* app READ app WRITE setApp NOTIFY appChanged)
     Q_PROPERTY(QString mode READ mode WRITE setMode NOTIFY modeChanged) // scan, print, image, composite
     Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged) // select, hand, outer, inner
+    /// The boundary whose handles the tool edits: "outer", "inner" or "" (hand) — shown on the canvas
+    /// (UX-03).
+    Q_PROPERTY(QString editTarget READ editTarget NOTIFY toolChanged)
+    /// A handle is selected: arrow keys nudge it instead of stepping through prints and scans.
+    Q_PROPERTY(bool handleActive READ handleActive NOTIFY handleChanged)
     Q_PROPERTY(bool showOverlays READ showOverlays WRITE setShowOverlays NOTIFY showOverlaysChanged)
     Q_PROPERTY(bool compare READ compare WRITE setCompare NOTIFY compareChanged)
     Q_PROPERTY(bool showOriginal READ showOriginal WRITE setShowOriginal NOTIFY compareChanged)
@@ -44,6 +49,8 @@ class ScanCanvas : public QQuickPaintedItem {
     void setMode(const QString& m);
     QString tool() const { return tool_; }
     void setTool(const QString& t);
+    QString editTarget() const;
+    bool handleActive() const { return handle_.has_value(); }
     bool showOverlays() const { return overlays_; }
     void setShowOverlays(bool v);
     bool compare() const { return compare_; }
@@ -69,7 +76,11 @@ class ScanCanvas : public QQuickPaintedItem {
     Q_INVOKABLE void toggleFit();
     Q_INVOKABLE void centerOnRelative(double rx, double ry);
     Q_INVOKABLE void nudge(int dx, int dy);
-    Q_INVOKABLE bool hasHandle() const { return handle_.has_value(); }
+    /// UX-03: switches the edited boundary (Outer ↔ Inner; from Select or Hand to Inner). Refused while a
+    /// drag is in progress.
+    Q_INVOKABLE bool switchBoundary();
+    /// Scan coordinates → this item's coordinates (self-test input at handle positions).
+    Q_INVOKABLE QPointF mapFromScan(double x, double y) const { return toScreen({x, y}); }
     /// Renders the current view into an image (self-test snapshots).
     Q_INVOKABLE QImage grab();
 
@@ -83,6 +94,7 @@ class ScanCanvas : public QQuickPaintedItem {
     void compareChanged();
     void viewChanged();
     void badgeChanged();
+    void handleChanged();
     void itemClicked(const QString& itemId);
 
   protected:
@@ -90,15 +102,18 @@ class ScanCanvas : public QQuickPaintedItem {
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     void mouseDoubleClickEvent(QMouseEvent* e) override;
+    void mouseUngrabEvent() override;
+    void keyPressEvent(QKeyEvent* e) override;
+    void keyReleaseEvent(QKeyEvent* e) override;
+    void focusOutEvent(QFocusEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
     void hoverMoveEvent(QHoverEvent* e) override;
     bool event(QEvent* e) override;
     void geometryChange(const QRectF& n, const QRectF& o) override;
 
   private:
-    enum class HandleKind { corner, edge, center, radiusX, radiusY, move };
     struct Handle {
-        HandleKind kind;
+        fk::EditHandle kind;
         int index = 0;
         bool outer = true;
     };
@@ -119,6 +134,8 @@ class ScanCanvas : public QQuickPaintedItem {
     void updateBadge();
     std::optional<Handle> hitHandle(QPointF pos) const;
     void applyDrag(QPointF pos);
+    void setHandle(std::optional<Handle> h);
+    void cancelDrag(); ///< an interrupted drag changes nothing
     const fk::Shape* currentShape(bool outer) const;
     void drawOverlays(QPainter* p);
     void drawShape(QPainter* p, const fk::Shape& s, const QPen& pen, bool ticks) const;
@@ -151,8 +168,10 @@ class ScanCanvas : public QQuickPaintedItem {
     std::optional<Handle> handle_;
     bool dragging_ = false, panning_ = false, compareDrag_ = false;
     QPointF pressPos_, lastPos_;
-    fk::Shape dragShape_{};
+    fk::Shape dragShape_{}, dragStart_{};
     std::string dragItem_;
+    bool dragOuter_ = true;
+    bool constrain_ = false; ///< Shift held during the drag (UX-03)
 };
 
 } // namespace fkapp

@@ -75,6 +75,12 @@ ExportGeometry computeExportGeometry(const Shape& region, const Quad& frame, Geo
 double maskWeight(const Shape&, const MaskParams&, double x, double y);
 RectI boundingRect(const Shape&); bool isValid(const Shape&);
 Shape expandShape(const Shape&, double px);  double frameAngle(const Quad&);
+// boundary editing (UX-03): one geometry for canvas preview, commit and nudges
+enum class EditHandle { corner = 0, edge = 1, move = 2, center = 3, radiusX = 4, radiusY = 5 };
+struct EditInput { EditHandle handle; int index; Vec2 delta; bool constrain; };
+inline constexpr double kMinEditSize = 4.0;
+std::optional<Shape> editShape(const Shape& start, const EditInput&);
+Vec2 ellipseHandle(const Ellipse&, bool xAxis);  bool isCircle(const Ellipse&);
 ```
 
 ## 5. Detection (`fk/detection.hpp`) — RFC-0004

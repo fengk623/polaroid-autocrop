@@ -38,3 +38,26 @@ What shipped differs from the plan above in these ways:
   saved with the project.
 - Translations: `app/i18n/<lang>.json` loaded by `JsonTranslator`; `tools/check-i18n.py` fails CI when a
   `qsTr`/`tr` string or core error message lacks a zh_CN translation.
+
+## Boundary editing input (v0.7.0-alpha.3, U013, UX-03)
+
+Status: Accepted, implemented in U013.
+- **Shift tap.** `ShiftTap` (C++, QML element) watches the application's input for the main window and emits
+  `tapped` only for a lone Shift: pressed with no other modifier and no mouse button held, released within 1 s,
+  with no key, shortcut (`ShortcutOverride`/`Shortcut` — a shortcut consumes its key press before the window sees
+  it), mouse press, wheel, touch, gesture, focus loss or window deactivation in between. It never consumes events.
+  `Main.qml` acts on the tap only when Settings allow it (`shiftSwitchesBoundary`, default on), nothing is being
+  typed (typing guard), no dialog is open and the focus is not in a popup or menu; `ScanCanvas.switchBoundary()`
+  refuses during a drag. Tool buttons, `O`/`I` and Print ▸ Edit Outer / Edit Inner / Switch Outer ↔ Inner reach
+  the same state.
+- **Mode always visible.** `ScanCanvas.editTarget` ("outer" / "inner" / "") drives a capsule at the canvas's top
+  centre with the boundary's outline colour and words (not colour alone), plus the Shift hint when enabled.
+- **Drags.** The canvas keeps the start shape and previews `fk::editShape(start, {handle, index, delta,
+  constrain})` (RFC-0002 §Editing); Shift pressed or released mid-drag updates the preview at once. Release
+  commits the shape once (one undo step; unchanged shapes add none). Focus loss, mouse ungrab, Esc, a tool or
+  selection change cancel the drag without committing. Radius handles sit on the rotated ellipse axes.
+- **Arrows.** `ScanCanvas.handleActive` (property) gates the ← → and ⇧← ⇧→ shortcuts, so a selected handle gets
+  the arrows (1 px, ⇧ 10 px) instead of stepping prints or scans.
+- **Self-test.** `runShapeEditing` drives all of this with injected key and mouse events (Qt Test's
+  `qt_handleKeyEvent` / `qt_handleMouseEvent`); focus loss is a `FocusOut` sent to the window. The macOS native
+  menu bar is not reachable offscreen (that check is recorded as skipped there).

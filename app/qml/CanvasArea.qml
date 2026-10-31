@@ -19,7 +19,7 @@ Item {
         surroundColor: Theme.surfaceCanvas
         focus: true
         Keys.onPressed: (e) => {
-            if (scanCanvas.hasHandle() && (e.key === Qt.Key_Left || e.key === Qt.Key_Right || e.key === Qt.Key_Up || e.key === Qt.Key_Down)) {
+            if (scanCanvas.handleActive && (e.key === Qt.Key_Left || e.key === Qt.Key_Right || e.key === Qt.Key_Up || e.key === Qt.Key_Down)) {
                 const s = (e.modifiers & Qt.ShiftModifier) ? 10 : 1
                 scanCanvas.nudge(e.key === Qt.Key_Left ? -s : e.key === Qt.Key_Right ? s : 0,
                                  e.key === Qt.Key_Up ? -s : e.key === Qt.Key_Down ? s : 0)
@@ -50,6 +50,39 @@ Item {
             visible: scanCanvas.mode === "composite" && App.currentItem.relinked !== true && App.currentItemId.length > 0
             text: qsTr("No graded file relinked")
             anchors.right: parent.right
+        }
+    }
+    // UX-03: which boundary the handles edit, always stated (colour of its outline + words), with the Shift hint
+    Rectangle {
+        objectName: "editTargetBadge"
+        visible: App.currentItemId.length > 0 && scanCanvas.editTarget.length > 0 && scanCanvas.status.length === 0
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: 10
+        implicitHeight: Theme.badgeH
+        implicitWidth: editRow.implicitWidth + 16
+        radius: height / 2
+        color: Theme.badgeFill
+        property string text: editText.text
+        Row {
+            id: editRow
+            anchors.centerIn: parent
+            spacing: 6
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 10; height: 10; radius: 2
+                color: "transparent"
+                border.width: 2
+                border.color: scanCanvas.editTarget === "inner" ? "#F2C744" : "#3D8BFF"
+            }
+            Text {
+                id: editText
+                text: (scanCanvas.editTarget === "inner" ? qsTr("Editing Inner (image area)") : qsTr("Editing Outer (paper edge)"))
+                      + (App.settings.shiftSwitchesBoundary === true ? "  ·  " + qsTr("tap Shift to switch") : "")
+                font.pixelSize: Theme.fontBadge
+                font.weight: Font.DemiBold
+                color: Theme.textPrimary
+            }
         }
     }
     // chips: ICC · depth · DPI

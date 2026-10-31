@@ -365,3 +365,28 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   `dpi_rescaled` 306 and an Instax Mini inner 47 px off on one side (low confidence; identical on the baseline).
 - Blocked: no white-backing regression sample (img20260702, 679 MB), no round/dark/1600 dpi real samples; GT drafts
   need the owner's review before they count as evidence.
+
+### 20:40–21:40 — PR #14 opened and green, U013
+- U012 committed (13616be) and PR #14 opened via the REST API; an extra docs-only commit (b1fa3b8) brings the
+  RFC-0002 export-geometry table in line with the exact straightening. All checks green (Publish release skipped).
+- U013 (branch `unit/U013-shift-shapes`, stacked on U012), UX-03. PRD F04 A5–A9, RFC-0002 §Editing, RFC-0011
+  §Boundary editing input, CONTRACT-ui-core §4, API-SPEC §4 written with the code.
+  - Core: `fk::editShape` (one geometry for preview, commit and nudges), `ellipseHandle`, `isCircle`;
+    `transformShape` keeps circles round — measured first: translation + rotation made rx ≠ ry in the last bits
+    for 1820 of 2000 sampled maps. The first version of the transform test used maps that happen to be exact and
+    passed with the rule removed [weak test] → 50 translation + rotation maps, now fails without the rule.
+  - App: `ShiftTap` watches the application's events for the main window. A window-only filter would miss
+    Shift+→: the shortcut consumes the key press before the window sees it, so `ShortcutOverride`/`Shortcut` also
+    disarm. Arming is refused while a mouse button is held (otherwise Shift pressed during a drag and released
+    after it counts as a tap). `ScanCanvas`: `editTarget` badge, `switchBoundary`, Shift mid-drag, focus-out /
+    ungrab / Esc cancel, `handleActive` property for the arrow shortcuts, radius handles on the rotated axes.
+    Main.qml did not import the app module (`ShiftTap is not a type`) → fixed at the first run.
+  - Found by reading the old code, now covered: Shift+←/→ stepped scans although a handle was selected (the plain
+    ←/→ guard called a non-reactive function); nudging a circle's radius changed only rx or ry.
+- Tests: core 197/197 (+8 `Edit.*`). Self-test `runShapeEditing`: 33 checks with real key and mouse events
+  (fixture: all pass at the first complete run). Mutations, each guard removed → the self-test fails at the
+  targeted check: mouse disarm (Shift+click), shortcut disarm (Shift+→ next scan), focus-out cancel (focus lost
+  mid-drag), typing guard, dialog/popup guard, Shift+→ handle guard (nudge moved 0 px = the old bug), constraint
+  off (rectangle checks), mouse-held arming (Shift pressed during a drag). Restored; no markers left.
+- Self-test results (app from this branch): fixture 126 pass; owner's polaroid_92 124 pass; img20260702_0005 120 pass + 4 skipped (FK-003 conversion checks need a tagged scan); the 33 UX-03 checks pass on all three.
+- Not verified: real window feel, macOS native menu (skipped offscreen), Shift with an input method active.

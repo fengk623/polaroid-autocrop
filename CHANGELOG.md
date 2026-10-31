@@ -3,6 +3,15 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.3 — U013: Shift switches Outer/Inner, constrained rectangle and circle editing (UX-03)
+- A lone Shift tap switches the edited boundary (Outer ↔ Inner); the canvas always says which one is edited.
+  Holding Shift constrains a drag instead: rectangle corners keep right angles, side ratio and rotation about the
+  opposite corner; moves lock to an axis; circles always stay circles. Shift+click / arrows / wheel / letters,
+  typing, dialogs, menus and focus loss never switch; tool buttons, O / I and the Print menu do the same. One drag
+  = one undo step; an interrupted drag changes nothing. Also fixed: with a handle selected, Shift+← / → stepped
+  scans instead of nudging; an arrow nudge on a circle's radius turned it into an ellipse. Notes:
+  docs/release-notes/v0.7.0-alpha.3.md.
+
 ## 0.7.0-alpha.2 — U012: outer edges from the paper side, exact straightening, real-scan GT tools (UX-02)
 - The outer edge is found from the paper side: on a white lid the shadow band is no longer included (owner's
   scan: 0.9–1.9 mm → 0.1–0.5 mm), a single-print scan's side that leaves the scan becomes the scan border instead of

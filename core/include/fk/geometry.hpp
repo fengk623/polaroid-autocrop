@@ -100,7 +100,8 @@ bool contains(const Shape& s, Vec2 p);
 double signedDistance(const Shape& s, Vec2 p);
 /// Moves every edge outward by `px` (negative = inward).
 Shape expandShape(const Shape& s, double px);
-Shape transformShape(const Shape& s, const Mat3& m); ///< affine maps only
+/// Affine maps only. A circle stays an exact circle under maps that keep it round (rotation, uniform scale).
+Shape transformShape(const Shape& s, const Mat3& m);
 double area(const Shape& s);
 Vec2 centroid(const Shape& s);
 /// Tilt of the frame in radians, clockwise positive, in (-π/4, π/4].
@@ -108,6 +109,29 @@ double frameAngle(const Quad& q);
 /// Average side lengths: {width (p0→p1, p3→p2), height (p1→p2, p0→p3)}.
 std::array<double, 2> quadSideLengths(const Quad& q);
 Quad rectQuad(double x0, double y0, double x1, double y1);
+
+// ---- boundary editing (RFC-0002 §Editing, UX-03) ------------------------------------------
+/// Handles the canvas drags. Quads: corner i (p[i]), edge i (p[i]→p[i+1]), move. Ellipses: centre, the end of
+/// the rotated rx axis (radiusX), of the ry axis (radiusY), move.
+enum class EditHandle : int { corner = 0, edge = 1, move = 2, center = 3, radiusX = 4, radiusY = 5 };
+struct EditInput {
+    EditHandle handle = EditHandle::move;
+    int index = 0;          ///< corner / edge index of a quad
+    Vec2 delta{};           ///< pointer movement since the press, scan px
+    bool constrain = false; ///< Shift held: a corner keeps the rectangle's aspect ratio, right angles and
+                            ///< rotation about the opposite corner; move/centre lock to the dominant axis;
+                            ///< an ellipse's radii scale together
+};
+/// Smallest side or radius an edit leaves (scan px).
+inline constexpr double kMinEditSize = 4.0;
+/// The shape after dragging a handle of `start` by `in.delta`, or nullopt when the result would be invalid
+/// (a quad that is not convex). Without `constrain` a corner moves freely and an edge moves along its normal.
+/// Circles (rx = ry) stay circles; radius handles act along the rotated axes.
+std::optional<Shape> editShape(const Shape& start, const EditInput& in);
+/// Position of an ellipse's radius handle: the end of the rotated rx (`xAxis`) or ry axis.
+Vec2 ellipseHandle(const Ellipse& e, bool xAxis);
+/// rx = ry up to floating-point noise (relative 1e-9): edited as a circle, kept a circle by transforms.
+bool isCircle(const Ellipse& e);
 
 // ---- lines ---------------------------------------------------------------------------------
 struct Line {

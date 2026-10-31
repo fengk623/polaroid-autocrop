@@ -30,6 +30,9 @@ Contract version: **1** · RFC-0011 · Applies to `app/` (Qt Quick) and any futu
 - Overlays are drawn from `fk::Shape` values; colours: Outer `#3D8BFF` solid, Inner `#F2C744` solid with inward
   corner ticks (so Outer and Inner differ by shape, not only colour), manual `#FF8A3D` dashed, low confidence
   `#FF4D4D` dash-dot + warning icon, relinked `#38C172` solid + link icon.
+- Boundary edits (UX-03): handles drag through `fk::editShape` only (preview = committed value); one complete
+  drag = one `commitShape` = one undo step; an unchanged shape adds no step; an interrupted drag (focus lost,
+  Esc, tool or selection change) commits nothing. The edited boundary is always shown (`editTarget`).
 
 ## 5. Errors shown to users
 Messages come from core `Error.message` (English) mapped through the translation table `app/i18n` by `Errc`.

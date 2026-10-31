@@ -30,7 +30,7 @@ Implementation status (2026-10-28): core library `fkcore` (Phase 2) implemented 
 | Module | Owns | RFC |
 | --- | --- | --- |
 | core/image_io | TIFF/PNG/JPEG/DNG read & write, integrity | RFC-0003 |
-| core/geometry | coordinates, shapes, matrices, export geometry | RFC-0002 |
+| core/geometry | coordinates, shapes, matrices, export geometry, boundary edits (`editShape`, UX-03) | RFC-0002 |
 | core/detection | proxy, CV primitives, outer/inner detection, templates apply | RFC-0004 |
 | core/export | export pipeline, naming | RFC-0005 |
 | core/relink | matching, signatures, checks | RFC-0006 |

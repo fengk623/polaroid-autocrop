@@ -417,7 +417,8 @@ All values are sRGB hex. Contrast ratios are WCAG 2.x, computed for this spec.
 - **Sampling.** Nearest-neighbour at ≥ 100 %, linear below.
 - **Resolution state.** `Preview` while scale ≤ (1 / proxyScale) × 1.05. Above that, full-resolution 256 px tiles are requested after a 150 ms idle (RFC-0010/0011): `Full…` while loading, `Full` when every visible tile is from the original.
 - **Edit tools stay zoomable.**
-- **Arrow keys.** With a handle selected, arrows nudge it 1 scan px (⇧: 10 px). With no handle selected, they navigate prints.
+- **Arrow keys.** With a handle selected, arrows nudge it 1 scan px (⇧: 10 px), also ⇧← / ⇧→ (which otherwise step scans). With no handle selected, they navigate prints.
+- **Outer / Inner (UX-03, U013).** A lone tap of ⇧ (pressed and released with nothing else in between, within 1 s) switches the edited boundary Outer ↔ Inner; from Select or Hand it goes to Inner. Holding ⇧ only constrains a drag: a quad corner keeps the rectangle (right angles, side ratio, rotation) about the opposite corner, a move or centre drag locks to the dominant axis, an ellipse's radii scale together; a circle always stays a circle. ⇧+click, ⇧+arrows, ⇧+wheel, ⇧+letter, shortcuts, a mouse button held, typing, an open dialog or menu, the window losing focus, and a drag in progress never switch. The canvas states the edited boundary at the top centre ("Editing Outer (paper edge) · tap Shift to switch"); Print ▸ Edit Outer / Edit Inner / Switch Outer ↔ Inner and the tool buttons do the same. Settings can turn the tap off. One complete drag is one undo step; a drag interrupted by focus loss or Esc changes nothing.
 
 ### 4.6 Keyboard shortcuts
 
@@ -458,6 +459,8 @@ Single-key shortcuts (marked †) are disabled while a text or number field has 
 | Tools: Select / Hand / Edit Outer / Edit Inner | V / H / O / I † | V / H / O / I † |
 | Temporary Hand | hold Space † | hold Space † |
 | Nudge selected handle 1 px / 10 px | arrows / ⇧ arrows † | arrows / Shift+arrows † |
+| Switch Outer ↔ Inner | tap ⇧ † | tap Shift † |
+| Constrain a drag (rectangle corner, axis, uniform radii) | hold ⇧ while dragging | hold Shift while dragging |
 | Commit numeric entry / cancel drag or leave tool | ↩ / Esc | Enter / Esc |
 | Help | ⌘? | F1 |
 

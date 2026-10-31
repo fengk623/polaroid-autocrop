@@ -239,7 +239,8 @@ void AppController::loadSettings() {
                                {"jpegQuality", 95},
                                {"writeSidecar", false}, // portable .fk.json beside exports (UX-07: optional)
                                {"expectedCount", 4},
-                               {"autoCount", true}, // UX-01: new scans are counted automatically
+                               {"autoCount", true},             // UX-01: new scans are counted automatically
+                               {"shiftSwitchesBoundary", true}, // UX-03: a Shift tap switches Outer/Inner
                                {"safetyMargin", 1.0},
                                {"finalMode", "real"},
                                {"finalFormat", "tif"},
@@ -1269,6 +1270,7 @@ void AppController::commitShape(const std::string& itemId, bool outer, const fk:
     fk::ItemRecord* it = findItemMut(itemId, &scan);
     if (!it || !fk::isValid(s)) return;
     const fk::Shape& cur = outer ? it->outer : it->inner;
+    if (cur == s) return; // nothing changed (e.g. a radius nudged across its axis): no undo step
     if (cur.kind == s.kind && cur.kind == fk::ShapeKind::quad) {
         bool same = true;
         for (int i = 0; i < 4; ++i)
