@@ -162,6 +162,19 @@ ApplicationWindow {
     }
 
     // ---------------------------------------------------------------- layout
+    // UX-06: the centre column keeps Theme.centreMin; when the window is too narrow for the rails' widths, both
+    // rails narrow (towards their minimums, in proportion to what they can give) without changing the stored widths
+    readonly property var railWidths: {
+        const showL = App.settings.showLeftRail, showR = App.settings.showRightRail
+        const L = showL ? App.settings.leftRailWidth : 0, R = showR ? App.settings.rightRailWidth : 0
+        const room = width - 2 * Theme.edgeStrip - (showL ? 1 : 0) - (showR ? 1 : 0) - Theme.centreMin
+        const excess = L + R - room
+        if (excess <= 0) return [L, R]
+        const gl = showL ? L - Theme.leftRailMin : 0, gr = showR ? R - Theme.rightRailMin : 0
+        if (gl + gr <= 0) return [L, R]
+        const k = Math.min(1, excess / (gl + gr))
+        return [Math.round(L - gl * k), Math.round(R - gr * k)]
+    }
     // UX-10 (ui-reference §4.1): left rail · centre column (top bar, canvas) · right rail above a filmstrip that
     // spans the whole window; each panel folds with a strip on the window edge outside it (also View menu and
     // shortcuts). The canvas refits when its size changes at fit.
@@ -186,10 +199,10 @@ ApplicationWindow {
                 objectName: "leftRail"
                 visible: App.settings.showLeftRail
                 cmd: cmd
-                Layout.preferredWidth: App.settings.leftRailWidth
+                Layout.preferredWidth: win.railWidths[0]
                 Layout.fillHeight: true
             }
-            RailGrip { visible: leftRail.visible; target: "leftRailWidth"; minW: Theme.leftRailMin; maxW: Theme.leftRailMax; defW: Theme.leftRailDefault; sign: 1 }
+            RailGrip { visible: leftRail.visible; target: "leftRailWidth"; current: win.railWidths[0]; minW: Theme.leftRailMin; maxW: Theme.leftRailMax; defW: Theme.leftRailDefault; sign: 1 }
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -209,14 +222,14 @@ ApplicationWindow {
                     }
                 }
             }
-            RailGrip { visible: rightRail.visible; target: "rightRailWidth"; minW: Theme.rightRailMin; maxW: Theme.rightRailMax; defW: Theme.rightRailDefault; sign: -1 }
+            RailGrip { visible: rightRail.visible; target: "rightRailWidth"; current: win.railWidths[1]; minW: Theme.rightRailMin; maxW: Theme.rightRailMax; defW: Theme.rightRailDefault; sign: -1 }
             RightRail {
                 id: rightRail
                 objectName: "rightRail"
                 visible: App.settings.showRightRail
                 cmd: cmd
                 canvas: canvasArea.canvas
-                Layout.preferredWidth: App.settings.rightRailWidth
+                Layout.preferredWidth: win.railWidths[1]
                 Layout.fillHeight: true
             }
             EdgeStrip {

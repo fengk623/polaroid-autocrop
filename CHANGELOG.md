@@ -3,6 +3,16 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.12 — U021 part 1: view switch between the eye and the zoom; the top bar fits narrow windows; workflow steps (UX-06)
+- The Scan · Print · Image · Composite switch sits between the overlays button and the zoom field (keys 1–4 and the
+  View menu unchanged). In a narrow centre column the top bar gives up the file buttons, then shows the view switch
+  as a menu button, then drops − / +, always keeping eye → view → zoom and staying inside its column; the rails
+  narrow (not below their minimums, stored widths kept) so the canvas stays at least 480 px wide. Fixes the
+  overflow at 1100×700 found in U022 (known issue → regular check).
+- The right rail shows the current print's five workflow steps (import, detect / review, export image area, relink,
+  composite / final output): done, next, not done; a click goes to the step. Self-test `runToolbar`.
+- Part 2 (the Library / Edit workspaces) follows the library units. Notes: docs/release-notes/v0.7.0-alpha.12.md.
+
 ## 0.7.0-alpha.11 — U022: edge strips fold the panels; the filmstrip spans the window (UX-10)
 - The left rail, the right rail and the filmstrip each fold and unfold with an 8 px strip on the window edge outside
   them; the strip stays put when folded, its chevron shows where the panel goes, it takes keyboard focus and its hit

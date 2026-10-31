@@ -11,7 +11,7 @@ qt_add_qml_module(FrameKeeper
   QML_FILES
     qml/Main.qml qml/Theme.qml qml/Icon.qml qml/FkButton.qml qml/ToolBtn.qml qml/Segmented.qml
     qml/Section.qml qml/FieldRow.qml qml/NumField.qml qml/FkCombo.qml qml/FkCheck.qml qml/Badge.qml
-    qml/TopBar.qml qml/LeftRail.qml qml/RightRail.qml qml/Filmstrip.qml qml/CanvasArea.qml qml/RailGrip.qml qml/EdgeStrip.qml
+    qml/TopBar.qml qml/LeftRail.qml qml/RightRail.qml qml/Filmstrip.qml qml/CanvasArea.qml qml/RailGrip.qml qml/EdgeStrip.qml qml/WorkflowSteps.qml
     qml/FkDialog.qml qml/ExportDialog.qml qml/RelinkDialog.qml qml/FinalDialog.qml qml/SettingsDialog.qml
     qml/AboutDialog.qml qml/NameDialog.qml qml/Toasts.qml qml/AppMenuBar.qml qml/MacMenuBar.qml qml/FkSpin.qml
   SOURCES

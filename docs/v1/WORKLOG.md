@@ -655,3 +655,32 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     [platform-dependent part of the UX-06 issue] → the top bar is observed at each size in U022 and stays a known
     issue at 1100; U021 turns all of it into checks. `ci-annotate.py` keeps up to 1500 characters per line (the
     first attempt cut the detail at 400).
+
+### 08:30–09:30 — PR #24 opened (U022), U021 part 1
+- U022: PR #24 (stacked on #23). CI round 1: Windows app self-test failed with no detail — the annotation only found
+  "self-test FAILED": check lines start with "FAIL " (not matched) and, on Windows, a GUI program's `qInfo()` goes to
+  the debugger rather than the piped stderr [CI reporting gap] → `ci-annotate.py` matches "FAIL " lines and the
+  self-test step sets `QT_FORCE_STDERR_LOGGING=1` (see round 2 above; PR #24 then green on all platforms).
+- U021 split (the library RFC still waits for the owner): part 1 = edit-workspace top bar and workflow steps (no
+  library needed), part 2 = the Library / Edit workspaces after U018–U020. Version 0.7.0-alpha.12 for part 1.
+  - Owner's screenshot (fig. 13): the view switch moves to between the eye and the zoom value.
+  - Top bar: clusters in Rows; the bar computes what fits and gives up, in this order, the file buttons (File menu
+    and left rail keep them), the segmented view switch for a menu button with the same views, and − / + (zoom
+    field menu and shortcuts keep them); eye → view → zoom never changes. Measured needs (Linux fonts): 746 / 621 /
+    476 / 412 px (English), 703 / 578 / 476 / 412 (Chinese). The rails narrow in proportion (not below their
+    minimums, stored widths kept) so the canvas keeps 520 px — first 480, raised for margin over the 476 px of the
+    compact bar. The last step (− / + dropped) cannot happen at the minimum window on Linux; the test reaches it at
+    1000×700, below the minimum, which the offscreen platform allows (skipped where a platform keeps the minimum).
+  - Workflow steps in the right rail (import, detect / review, export image area, relink, composite / final): done
+    = filled with a check, next = ring, connectors; summary line; a click goes to the step.
+  - Self-test `runToolbar` (7 checks incl. setup and the below-minimum step; 20 size × rail combinations); the U022
+    known issue is now a regular check in `runLayout`.
+  - Mutations (each caught): E1 view switch back left of the eye (order + matrix); E2 file buttons never hidden
+    (overflow); E3 rails not narrowed (overflow at widest rails); E4 relink step never done (trail); E5 step 3
+    opens the Boundaries tab (click check); E6 compact switch not following the keys; E7 − / + never dropped
+    (below-minimum check). Working tree compared with the pre-mutation snapshot afterwards: identical.
+  - Seen in the offscreen snapshots: icons (Qt Quick Shapes) of rail content scrolled out of view are drawn over
+    the filmstrip — text is clipped, the Shape icons are not (software scene graph). Real windows use the GPU
+    renderer; to be checked with FK-009 / U024 before calling it a test artefact.
+  - Results (U021 build): fixture 214 pass (1×, 2× and Chinese each); polaroid_92 209 + 3 skips; img20260702_0005
+    207 + 5 skips. `runToolbar` 7/7 everywhere.

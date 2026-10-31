@@ -3533,46 +3533,27 @@ void SelfTest::runLayout() {
     click(eB);
     settle();
 
-    // ---- window sizes: minimum, default, large
+    // ---- window sizes: minimum, default, large (U021: the top bar fits at the minimum too; was a known
+    // issue)
     {
         QStringList bad;
-        QQuickItem* zoomIn = findItemIf([](QQuickItem* it) {
-            return it->property("iconName").toString() == QLatin1String("zoomIn") && it->isVisible();
-        });
-        auto topBarFits = [&] { return zoomIn && rect(zoomIn).right() <= rect(top).right() + 0.5; };
+        QQuickItem* zoom = findItem(QStringLiteral("topBarZoom"));
+        auto topBarFits = [&] { return zoom && rect(zoom).right() <= rect(top).right() + 0.5; };
         for (const QSize sz : {QSize(1100, 700), QSize(1440, 900), QSize(1920, 1080)}) {
             window_->resize(sz);
             settle();
             QString st, f;
-            const bool minimum = sz.width() == 1100;
-            // the top bar is UX-06 (U021 reorganises it): a known issue at the minimum width, and how it fits
-            // at the other sizes depends on the platform's fonts (CI Windows: wider than 868 px at 1440) →
-            // observed
-            const bool ok = structure(&st) && wholeAtFit(&f);
-            observe(QStringLiteral("UX-06 top bar at %1×%2").arg(sz.width()).arg(sz.height()),
-                    {{"fits", topBarFits()},
-                     {"zoomPlusRight", zoomIn ? rect(zoomIn).right() : -1},
-                     {"topBarRight", rect(top).right()}});
-            if (minimum) {
-                known(QStringLiteral("UX-06"),
-                      QStringLiteral(
-                          "the top bar is wider than its column at 1100×700 with both rails shown (its "
-                          "items run under the right rail)"),
-                      !topBarFits(),
-                      QStringLiteral("zoom + ends at x %1, the top bar's column at %2")
-                          .arg(zoomIn ? rect(zoomIn).right() : -1)
-                          .arg(rect(top).right()));
-                snapshot(QStringLiteral("U022-1100x700"));
-            }
+            const bool ok = structure(&st) && wholeAtFit(&f) && topBarFits();
+            if (sz.width() == 1100) snapshot(QStringLiteral("U022-1100x700"));
             if (!ok)
-                bad << QStringLiteral("%1×%2: %3; %4; zoom + at %5")
+                bad << QStringLiteral("%1×%2: %3; %4; zoom at %5, top bar %6")
                            .arg(sz.width())
                            .arg(sz.height())
-                           .arg(st, f, zoomIn ? r2s(rect(zoomIn)) : QStringLiteral("missing"));
+                           .arg(st, f, zoom ? r2s(rect(zoom)) : QStringLiteral("missing"), r2s(rect(top)));
         }
         check(QStringLiteral(
                   "UX-10 window at 1100×700 (minimum), 1440×900, 1920×1080: filmstrip full width, rails "
-                  "and canvas above it, strips on the edges, whole scan at fit"),
+                  "and canvas above it, strips on the edges, whole scan at fit, top bar fits"),
               bad.isEmpty(), bad.join(QStringLiteral(" | ")));
         window_->resize(1440, 900);
         settle();
@@ -3669,6 +3650,270 @@ void SelfTest::runLayout() {
                   film->isVisible() && std::abs(left->width() - 254) < 0.5 &&
                   std::abs(right->width() - 300) < 0.5,
               QStringLiteral("left %1 px, right %2 px").arg(left->width()).arg(right->width()));
+    }
+    restore();
+}
+
+void SelfTest::runToolbar() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    const QVariantMap saved = app_->settings();
+    const QStringList keys{"showLeftRail",   "showRightRail", "showFilmstrip", "leftRailWidth",
+                           "rightRailWidth", "rightTab",      "exportFolder",  "exportFormat",
+                           "geometryMode",   "applyUpright",  "finalMode",     "finalFormat"};
+    auto settle = [] { waitFor([] { return false; }, 250); };
+    auto restore = [&] {
+        for (const auto& k : keys)
+            app_->setSetting(k, saved.value(k));
+        window_->resize(1440, 900);
+        settle();
+    };
+    const QString d = QDir(dir_).filePath(QStringLiteral("toolbar"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{{"exportFolder", exportDir},
+                                                                        {"exportFormat", "tif"},
+                                                                        {"geometryMode", "crop"},
+                                                                        {"applyUpright", false},
+                                                                        {"finalMode", "real"},
+                                                                        {"finalFormat", "tif"},
+                                                                        {"showLeftRail", true},
+                                                                        {"showRightRail", true},
+                                                                        {"showFilmstrip", true},
+                                                                        {"leftRailWidth", 254},
+                                                                        {"rightRailWidth", 300},
+                                                                        {"rightTab", 0}})
+        app_->setSetting(k, v);
+    app_->newProject();
+    window_->resize(1440, 900);
+    settle();
+    QQuickItem* top = findItem(QStringLiteral("topBar"));
+    QQuickItem* file = findItem(QStringLiteral("topBarFile"));
+    QQuickItem* tools = findItem(QStringLiteral("topBarTools"));
+    QQuickItem* toggles = findItem(QStringLiteral("topBarToggles"));
+    QQuickItem* eye = findItem(QStringLiteral("overlaysButton"));
+    QQuickItem* view = findItem(QStringLiteral("viewSwitch"));
+    QQuickItem* viewCompact = findItem(QStringLiteral("viewSwitchCompact"));
+    QQuickItem* zoom = findItem(QStringLiteral("topBarZoom"));
+    QQuickItem* steps = findItem(QStringLiteral("workflowSteps"));
+    auto* canvas = qobject_cast<QQuickItem*>(findCanvas());
+    const bool present =
+        top && file && tools && toggles && eye && view && viewCompact && zoom && steps && canvas;
+    check(QStringLiteral("UX-06 setup: top bar clusters, view switch, workflow steps"), present);
+    if (!present) {
+        restore();
+        return;
+    }
+    auto rect = [](QQuickItem* it) { return it->mapRectToScene(QRectF(0, 0, it->width(), it->height())); };
+    auto r2s = [](const QRectF& r) {
+        return QStringLiteral("%1,%2 %3×%4").arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height());
+    };
+    auto shownView = [&] { return view->isVisible() ? view : viewCompact; };
+
+    // ---- workflow steps before anything is imported: step 1 is next
+    auto next = [&] { return steps->property("next").toInt(); };
+    const int nextEmpty = next();
+
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    settle();
+
+    // ---- order at a wide window: eye → view switch → zoom field, the view switch as one segmented control
+    {
+        const QRectF e = rect(eye), v = rect(view), z = rect(zoom), t = rect(top);
+        check(
+            QStringLiteral("UX-06 the view switch sits between the overlays button (eye) and the zoom field"),
+            view->isVisible() && !viewCompact->isVisible() && e.right() <= v.left() &&
+                v.right() <= z.left() && t.contains(e) && t.contains(v) && t.contains(z),
+            QStringLiteral("eye %1 · view %2 · zoom %3").arg(r2s(e), r2s(v), r2s(z)));
+    }
+
+    // ---- every window size × rail widths: inside the bar, no overlap, eye → view → zoom, centre ≥ minimum
+    {
+        struct Rails {
+            QString name;
+            bool left, right;
+            int lw, rw;
+        };
+        const std::vector<Rails> rails{{QStringLiteral("default rails"), true, true, 254, 300},
+                                       {QStringLiteral("widest rails"), true, true, 380, 420},
+                                       {QStringLiteral("left rail folded"), false, true, 254, 300},
+                                       {QStringLiteral("both rails folded"), false, false, 254, 300}};
+        QStringList bad, levels;
+        // 1000×700 is below the window's minimum: only where the platform allows it (offscreen does), to
+        // reach the last compaction step (− / + dropped)
+        for (const QSize sz :
+             {QSize(1000, 700), QSize(1100, 700), QSize(1280, 800), QSize(1440, 900), QSize(1920, 1080)}) {
+            for (const auto& r : rails) {
+                app_->setSetting(QStringLiteral("showLeftRail"), r.left);
+                app_->setSetting(QStringLiteral("showRightRail"), r.right);
+                app_->setSetting(QStringLiteral("leftRailWidth"), r.lw);
+                app_->setSetting(QStringLiteral("rightRailWidth"), r.rw);
+                window_->resize(sz);
+                settle();
+                if (sz.width() < 1100 && window_->width() != sz.width())
+                    continue; // the platform keeps the minimum
+                const QRectF t = rect(top);
+                std::vector<std::pair<QString, QRectF>> shown;
+                for (auto [name, item] : std::vector<std::pair<QString, QQuickItem*>>{{"file", file},
+                                                                                      {"tools", tools},
+                                                                                      {"toggles", toggles},
+                                                                                      {"view", shownView()},
+                                                                                      {"zoom", zoom}})
+                    if (item->isVisible()) shown.emplace_back(name, rect(item));
+                QStringList why;
+                for (size_t i = 0; i < shown.size(); ++i) {
+                    if (shown[i].second.left() < t.left() - 0.5 || shown[i].second.right() > t.right() + 0.5)
+                        why << shown[i].first + QStringLiteral(" outside the bar");
+                    if (i > 0 && shown[i - 1].second.right() > shown[i].second.left() + 0.5)
+                        why << shown[i - 1].first + QStringLiteral(" overlaps ") + shown[i].first;
+                }
+                const QRectF e = rect(eye), v = rect(shownView()), z = rect(zoom);
+                if (!(e.right() <= v.left() + 0.5 && v.right() <= z.left() + 0.5))
+                    why << QStringLiteral("order eye → view → zoom");
+                // the canvas keeps 520 px (less below the window's minimum, where the rails are at their
+                // minimums)
+                if (sz.width() >= 1100 && canvas->width() < 520 - 0.5)
+                    why << QStringLiteral("canvas %1 px").arg(canvas->width());
+                const int level = top->property("level").toInt();
+                if (level == 3 && findItemIf([](QQuickItem* it) {
+                        return it->property("iconName").toString() == QLatin1String("zoomIn") &&
+                               it->isVisible();
+                    }))
+                    why << QStringLiteral("− / + still shown at the last step");
+                levels << QStringLiteral("%1×%2 %3: level %4")
+                              .arg(sz.width())
+                              .arg(sz.height())
+                              .arg(r.name)
+                              .arg(level);
+                if (!why.isEmpty())
+                    bad << QStringLiteral("%1×%2 %3 (level %4, bar %5): %6")
+                               .arg(sz.width())
+                               .arg(sz.height())
+                               .arg(r.name)
+                               .arg(level)
+                               .arg(r2s(t), why.join(QStringLiteral(", ")));
+                if (sz.width() == 1100 && r.lw == 380) snapshot(QStringLiteral("U021-1100-widest-rails"));
+            }
+        }
+        QStringList needed;
+        for (const auto& v : top->property("neededWidths").toList())
+            needed << QString::number(v.toDouble());
+        observe(QStringLiteral("UX-06 top bar levels"),
+                {{"levels", QJsonArray::fromStringList(levels)},
+                 {"neededWidths", needed.join(QStringLiteral(" / "))}});
+        const bool reachedLast = levels.join(QLatin1Char(' ')).contains(QLatin1String("level 3"));
+        check(QStringLiteral(
+                  "UX-06 top bar at 1100×700 … 1920×1080 with default, widest and folded rails: nothing "
+                  "outside the bar or overlapping, eye → view → zoom, canvas at least 520 px wide"),
+              bad.isEmpty(), bad.join(QStringLiteral(" | ")));
+        if (reachedLast)
+            check(QStringLiteral(
+                      "UX-06 below the window's minimum (1000×700): − / + dropped, still inside the bar"),
+                  bad.isEmpty());
+        else
+            skip(QStringLiteral(
+                     "UX-06 below the window's minimum (1000×700): − / + dropped, still inside the bar"),
+                 QStringLiteral("the platform keeps the window at its minimum size"));
+    }
+
+    // ---- the compact view switch (narrowest case) changes the view; the 1–4 keys still update it
+    {
+        app_->setSetting(QStringLiteral("showLeftRail"), true);
+        app_->setSetting(QStringLiteral("showRightRail"), true);
+        app_->setSetting(QStringLiteral("leftRailWidth"), 380);
+        app_->setSetting(QStringLiteral("rightRailWidth"), 420);
+        window_->resize(1100, 700);
+        settle();
+        canvas->setProperty("mode", QStringLiteral("scan"));
+        settle();
+        bool picked = false, keyed = false;
+        if (viewCompact->isVisible()) {
+            viewCompact->forceActiveFocus();
+            key(Qt::Key_Down, Qt::NoModifier, true);
+            key(Qt::Key_Down, Qt::NoModifier, false);
+            settle();
+            picked = canvas->property("mode").toString() == QLatin1String("print");
+            canvas->forceActiveFocus();
+            key(Qt::Key_4, Qt::NoModifier, true, QStringLiteral("4"));
+            key(Qt::Key_4, Qt::NoModifier, false, QStringLiteral("4"));
+            settle();
+            keyed = canvas->property("mode").toString() == QLatin1String("composite") &&
+                    viewCompact->property("currentText").toString() ==
+                        top->property("modes").toList().at(3).toMap().value("text").toString();
+            key(Qt::Key_1, Qt::NoModifier, true, QStringLiteral("1"));
+            key(Qt::Key_1, Qt::NoModifier, false, QStringLiteral("1"));
+            settle();
+        }
+        check(QStringLiteral(
+                  "UX-06 narrow window: the compact view switch changes the view (keyboard) and follows "
+                  "the 1–4 keys"),
+              viewCompact->isVisible() && picked && keyed,
+              QStringLiteral("compact shown %1, picked %2, keys %3 (%4)")
+                  .arg(viewCompact->isVisible())
+                  .arg(picked)
+                  .arg(keyed)
+                  .arg(viewCompact->property("currentText").toString()));
+        app_->setSetting(QStringLiteral("leftRailWidth"), 254);
+        app_->setSetting(QStringLiteral("rightRailWidth"), 300);
+        window_->resize(1440, 900);
+        settle();
+    }
+
+    // ---- workflow steps follow the current print; a click leads to the step
+    {
+        const QString id = app_->currentItemId();
+        QStringList trail;
+        trail << QString::number(nextEmpty);
+        trail << QString::number(next()); // imported (reviewed when the detection is sure)
+        app_->setReviewed(id, true);
+        settle();
+        trail << QString::number(next());
+        app_->exportImageAreas({id});
+        app_->waitIdle(300000);
+        settle();
+        trail << QString::number(next());
+        QVariantList rows;
+        auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+        QVariantList urls;
+        for (const auto& f : filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif")))
+            urls << f;
+        app_->relinkFiles(urls);
+        app_->waitIdle(300000);
+        disconnect(c);
+        app_->applyRelink(rows);
+        QMetaObject::invokeMethod(window_, "closeDialogs");
+        settle();
+        trail << QString::number(next());
+        app_->exportFinal({id}, {});
+        app_->waitIdle(300000);
+        settle();
+        trail << QString::number(next());
+        const QString summary = findItem(QStringLiteral("workflowSummary"))
+                                    ? findItem(QStringLiteral("workflowSummary"))->property("text").toString()
+                                    : QString();
+        // the importing step counts as done once a scan is in; detection of the fixture is sure (reviewed)
+        const bool trailOk = trail.size() == 6 && trail.at(0) == QLatin1String("0") &&
+                             (trail.at(1) == QLatin1String("1") || trail.at(1) == QLatin1String("2")) &&
+                             trail.at(2) == QLatin1String("2") && trail.at(3) == QLatin1String("3") &&
+                             trail.at(4) == QLatin1String("4") && trail.at(5) == QLatin1String("5");
+        check(QStringLiteral(
+                  "UX-06 workflow steps follow the print: import → detect/review → export → relink → "
+                  "composite/final"),
+              trailOk, trail.join(QStringLiteral(" → ")) + QStringLiteral(" · ") + summary);
+        QQuickItem* s3 = findItem(QStringLiteral("workflowStep3"));
+        QQuickItem* s5 = findItem(QStringLiteral("workflowStep5"));
+        app_->setSetting(QStringLiteral("rightTab"), 0);
+        canvas->setProperty("mode", QStringLiteral("scan"));
+        settle();
+        const bool toExport = s3 && click(s3) && app_->settings().value("rightTab").toInt() == 1;
+        const bool toComposite = s5 && click(s5) && app_->settings().value("rightTab").toInt() == 2 &&
+                                 canvas->property("mode").toString() == QLatin1String("composite");
+        check(QStringLiteral("UX-06 a click on a workflow step leads to it (Export tab; Return tab with the "
+                             "Composite view)"),
+              toExport && toComposite);
+        snapshot(QStringLiteral("U021-steps"));
+        canvas->setProperty("mode", QStringLiteral("scan"));
     }
     restore();
 }
@@ -4139,6 +4384,7 @@ int SelfTest::run() {
     runDisplayProfile();
     runFormats();
     runLayout();
+    runToolbar();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

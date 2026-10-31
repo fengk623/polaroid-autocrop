@@ -65,6 +65,13 @@ Rectangle {
                 color: Theme.textTertiary
             }
         }
+        // UX-06: where this print is in the workflow; a click goes to the step
+        WorkflowSteps {
+            objectName: "workflowSteps"
+            Layout.fillWidth: true
+            cmd: rail.cmd
+            canvas: rail.canvas
+        }
         Segmented {
             Layout.alignment: Qt.AlignHCenter
             Layout.bottomMargin: 8
