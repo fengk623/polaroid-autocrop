@@ -9,8 +9,10 @@ the same generated scans (seed 5: two round prints, seed 8: two Polaroid 600). T
    the DNG's camera space is linear sRGB): per channel gain within 0.5 %, correlation >= 0.9999, mean absolute error
    after the gain <= 0.1 % of full scale. This covers layout, size, orientation, white and black level and the
    linearisation.
-2. Colour matrix (gate): the ColorMatrix1 LibRaw reads equals the inverse of the scan profile's colorants (D50, as
-   written, CalibrationIlluminant1 = D50) within 1e-4.
+2. Colour matrix (gate): LibRaw read our ColorMatrix1 (the inverse of the scan profile's D50 colorants, written with
+   CalibrationIlluminant1 = D50): either its camera matrix (`rgb_xyz_matrix`) equals it within 1e-4, or its output
+   matrix (`color_matrix`, camera to sRGB) equals the one LibRaw derives from it (rows of ColorMatrix1 x sRGB
+   normalised to 1, inverted) within 1e-3.
 
 Reported, not a gate: LibRaw's own sRGB rendering. LibRaw treats a DNG colour matrix as if it were relative to
 D65 and ignores CalibrationIlluminant1, so its colours differ slightly from a DNG-conformant reader's (Adobe Camera
@@ -51,6 +53,19 @@ def icc_colorants(icc: bytes):
 
     r, g, b = xyz(b"rXYZ"), xyz(b"gXYZ"), xyz(b"bXYZ")
     return [[r[k], g[k], b[k]] for k in range(3)]
+
+
+# LibRaw's xyz_rgb (sRGB primaries, D65 white): its camera-to-output matrix is built from this
+XYZ_RGB = [[0.412453, 0.357580, 0.180423], [0.212671, 0.715160, 0.072169], [0.019334, 0.119193, 0.950227]]
+
+
+def libraw_rgb_cam(cam_xyz):
+    """The camera-to-sRGB matrix LibRaw derives from a camera matrix (dcraw cam_xyz_coeff)."""
+    import numpy as np
+
+    cam_rgb = np.array(cam_xyz) @ np.array(XYZ_RGB)
+    cam_rgb = cam_rgb / cam_rgb.sum(axis=1, keepdims=True)
+    return np.linalg.inv(cam_rgb)
 
 
 def compare(ref, dec, mask):
@@ -105,13 +120,14 @@ def main() -> int:
                                "white_level": int(raw.white_level),
                                "black_level_per_channel": [int(v) for v in raw.black_level_per_channel],
                                "camera_whitebalance": [round(float(v), 5) for v in raw.camera_whitebalance]}
-            cam_xyz = np.array(raw.rgb_xyz_matrix, dtype=np.float64)[:3, :3]
             camera = raw.postprocess(output_color=rawpy.ColorSpace.raw, gamma=(1, 1), no_auto_bright=True,
                                      output_bps=16, user_wb=[1.0, 1.0, 1.0, 1.0], adjust_maximum_thr=0.0,
                                      user_flip=0)
         with rawpy.imread(dng) as raw:
             rendered = raw.postprocess(output_color=rawpy.ColorSpace.sRGB, gamma=(1, 1), no_auto_bright=True,
                                        output_bps=16, use_camera_wb=True, adjust_maximum_thr=0.0, user_flip=0)
+            cam_xyz = np.array(raw.rgb_xyz_matrix, dtype=np.float64)[:3, :3]
+            out_matrix = np.array(raw.color_matrix, dtype=np.float64)[:3, :3]
         dec = camera.astype(np.float64) / 65535.0
         if dec.shape != ref.shape:
             entry["error"] = f"size {dec.shape} vs TIFF {ref.shape}"
@@ -125,9 +141,13 @@ def main() -> int:
         if icc:
             expected = np.linalg.inv(np.array(icc_colorants(icc)))
             err = float(np.abs(cam_xyz - expected).max())
-            entry["colorMatrix"] = {"read": np.round(cam_xyz, 5).tolist(), "expected": np.round(expected, 5).tolist(),
-                                    "maxError": round(err, 7)}
-            matrix_ok = err <= 1e-4
+            err_out = float(np.abs(out_matrix - libraw_rgb_cam(expected)).max())
+            entry["colorMatrix"] = {"expected": np.round(expected, 5).tolist(),
+                                    "rgb_xyz_matrix": np.round(cam_xyz, 5).tolist(), "maxError": round(err, 7),
+                                    "color_matrix": np.round(out_matrix, 5).tolist(),
+                                    "color_matrix_expected": np.round(libraw_rgb_cam(expected), 5).tolist(),
+                                    "maxErrorOutput": round(err_out, 7)}
+            matrix_ok = err <= 1e-4 or err_out <= 1e-3
         else:
             entry["colorMatrix"] = {"error": "the TIFF reference has no ICC profile"}
             matrix_ok = False
@@ -153,7 +173,9 @@ def main() -> int:
         m = e["colorMatrix"]
         print(f"::notice title=FK-012 LibRaw decode of {e['dng']}::pixel data "
               f"{'OK' if e['pixelDataOk'] else 'OUT OF TOLERANCE'} ({fmt(e['pixelData'])}); colour matrix "
-              f"{'OK' if e['colorMatrixOk'] else 'DIFFERS'} (max error {m.get('maxError', m.get('error'))}); "
+              f"{'OK' if e['colorMatrixOk'] else 'DIFFERS'} (camera matrix max error {m.get('maxError', m.get('error'))}"
+              f", output matrix max error {m.get('maxErrorOutput')}; read {m.get('rgb_xyz_matrix')} / "
+              f"{m.get('color_matrix')}); "
               f"LibRaw sRGB rendering, not a gate: {fmt(e['librawSrgbRendering'])}; "
               f"white {e['libraw']['white_level']}, black {e['libraw']['black_level_per_channel'][:3]}, "
               f"camera WB {e['libraw']['camera_whitebalance'][:3]}")
