@@ -72,8 +72,10 @@ int main(int argc, char* argv[]) {
                                                : QStringLiteral("added ") + added.join(QStringLiteral(", "));
         std::fprintf(stderr, "self-test fonts: %s\n", qPrintable(report));
         QFont f = QGuiApplication::font();
+        // symbols such as ⚠ inside Chinese text come from Segoe UI Symbol, as in a real window
         f.setFamilies({QStringLiteral("Segoe UI"), QStringLiteral("Microsoft YaHei UI"),
-                       QStringLiteral("Microsoft YaHei"), QStringLiteral("SimSun")});
+                       QStringLiteral("Microsoft YaHei"), QStringLiteral("SimSun"),
+                       QStringLiteral("Segoe UI Symbol")});
         QGuiApplication::setFont(f);
     }
 #endif

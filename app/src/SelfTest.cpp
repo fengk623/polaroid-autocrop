@@ -4166,10 +4166,44 @@ int SelfTest::runTextLayout() {
             QStringList top;
             for (size_t i = 0; i < wide.size() && i < 6; ++i)
                 top << wide[i].second;
-            problems.insert(QStringLiteral("wider than the rail · %1 (%2 px) · %3 · %4")
+            // the cause usually sits inside the rail: the innermost item whose own (implicit) width reaches
+            // past the rail's right edge, and its widest part with the texts in it (parts of a layout that do
+            // not fill keep their own width, so one long value widens the whole rail)
+            QStringList rows;
+            {
+                QQuickItem* over = nullptr;
+                for (QQuickItem* d : order) {
+                    if (!rail->isAncestorOf(d) || !shown(d) || d->implicitWidth() <= 0) continue;
+                    if (d->mapToScene(QPointF(0, 0)).x() + d->implicitWidth() <= rr.right() + 1) continue;
+                    if (!over || over->isAncestorOf(d)) over = d;
+                }
+                QQuickItem* part = nullptr;
+                if (over)
+                    for (QQuickItem* c : over->childItems())
+                        if (shown(c) && (!part || c->implicitWidth() > part->implicitWidth())) part = c;
+                if (over) {
+                    QStringList texts;
+                    for (const QQuickItem* e : order)
+                        if ((part ? part : over)->isAncestorOf(e) && isTextItem(e) && shown(e) &&
+                            texts.size() < 4)
+                            texts << QStringLiteral("\"%1\" %2 px")
+                                         .arg(e->property("text").toString().left(32))
+                                         .arg(e->implicitWidth(), 0, 'f', 0);
+                    rows << QStringLiteral("%1 asks %2 px, widest part %3 px: %4")
+                                .arg(where(over))
+                                .arg(over->implicitWidth(), 0, 'f', 0)
+                                .arg(part ? part->implicitWidth() : 0.0, 0, 'f', 0)
+                                .arg(texts.join(QStringLiteral(", ")));
+                }
+            }
+            problems.insert(QStringLiteral("wider than the rail · %1 (%2 px) · %3%4 · %5")
                                 .arg(QString::fromLatin1(railName))
                                 .arg(rr.width(), 0, 'f', 0)
-                                .arg(top.join(QStringLiteral("; ")), state));
+                                .arg(top.join(QStringLiteral("; ")),
+                                     rows.isEmpty()
+                                         ? QString()
+                                         : QStringLiteral(" · rows: ") + rows.join(QStringLiteral("; ")),
+                                     state));
         }
         // key controls: nothing painted later covers their middle
         QStringList keyNames{QStringLiteral("edgeLeft"),          QStringLiteral("edgeRight"),

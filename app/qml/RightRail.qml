@@ -112,7 +112,8 @@ Rectangle {
                         onReset: App.resetToDetected(rail.it.id)
                         FieldRow {
                             label: qsTr("Film type"); labelWidth: rail.lw
-                            Text { text: cmd.filmTypeName(rail.it.filmType); font.pixelSize: Theme.fontBody; color: Theme.textPrimary }
+                            // values fill the rest of the row and wrap: a fixed-width value would widen the rail (FK-009)
+                            Text { Layout.fillWidth: true; wrapMode: Text.Wrap; text: cmd.filmTypeName(rail.it.filmType); font.pixelSize: Theme.fontBody; color: Theme.textPrimary }
                         }
                         FieldRow {
                             label: qsTr("Confidence"); labelWidth: rail.lw
@@ -122,6 +123,8 @@ Rectangle {
                                 color: rail.it.confidenceClass === "high" ? Theme.accent : (rail.it.confidenceClass === "medium" ? Theme.warning : Theme.error)
                             }
                             Text {
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
                                 text: (rail.it.confidenceClass === "high" ? qsTr("High") : rail.it.confidenceClass === "medium" ? qsTr("Check recommended") : qsTr("Review required"))
                                       + "  " + Math.round((rail.it.confidence || 0) * 100) + " %"
                                 font.pixelSize: Theme.fontBody

@@ -749,3 +749,16 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   (Qt reads every face of a collection) and prints which ones it added, or that none was found.
 - Full self-test of the U024 build (Linux, before this change; Linux does not run the Windows-only code): fixture
   English 1×, 2× and Chinese: 222 passed, 0 skipped, 0 failed each; the owner's scans still running.
+- PR #26 CI round 4 (font collections): Windows Chinese down from 1168 texts without glyphs to 4 — one sentence,
+  "从不写入：GPS 位置… ⚠ = 可识别个人或计算机。", whose "⚠" is in none of Segoe UI, Microsoft YaHei and SimSun
+  [CI environment: a real window falls back to Segoe UI Symbol] → Segoe UI Symbol added to the offscreen fallback
+  families. Linux and macOS green.
+- U024 full self-test results (build before the rail fix below): fixture English 1×, 2×, Chinese: 222 passed each;
+  owner's scan img20260702_0005: 214 passed, 5 skipped (one print on the scan; untagged scan), 0 failed; owner's
+  scan polaroid_92: 215 passed, 3 skipped, **1 failed** — "no panel content wider than its rail": at 1100×700 the
+  right rail's content was 307 px in a 300 px rail [real defect, only with this scan's data]. The report only named
+  the stretched children, not the cause → the report now names the innermost item reaching past the rail and its
+  widest part with the texts in it. Re-run with the old QML once: "rightRail asks 307 px, widest part 279 px: Film
+  type 'Polaroid 600 / i-Type / SX-70' 165 px, Confidence 'Check recommended  80 %' 159 px" — value texts in field
+  rows kept their own width, and these two long values widened the Boundaries tab → value texts fill the row and
+  wrap. After the fix `--scenario text` passes on polaroid_92 and the fixture.

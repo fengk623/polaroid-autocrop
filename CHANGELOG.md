@@ -17,6 +17,10 @@ All notable changes. Versions follow `VERSION`; release notes with measurements 
   self-test now points it at the system fonts, and the glyph check recognises that box engine. CI Linux installs
   a CJK font for the Chinese checks. Real windows (Direct3D, Metal, 150/200 %, Retina) stay human verification.
   Notes: docs/release-notes/v0.7.0-alpha.13.md.
+- Found on the owner's scan polaroid_92: long values in the Boundaries tab (film type, confidence) kept their own
+  width and widened the right rail by 7 px at 1100×700 — value texts now fill the row and wrap; the overflow report
+  names the row that widens a rail. Windows offscreen self-test: Chinese font collections (.ttc) are loaded and the
+  fallback families set (the offscreen font database reads neither .ttc files nor falls back).
 
 ## 0.7.0-alpha.12 — U021 part 1: view switch between the eye and the zoom; the top bar fits narrow windows; workflow steps (UX-06)
 - The Scan · Print · Image · Composite switch sits between the overlays button and the zoom field (keys 1–4 and the
