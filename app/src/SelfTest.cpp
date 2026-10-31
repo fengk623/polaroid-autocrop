@@ -30,6 +30,10 @@
 #include <functional>
 #include <set>
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 // Exported by Qt GUI for input injection (declared, like this, by Qt Test's qtestmouse.h).
 Q_GUI_EXPORT void qt_handleMouseEvent(QWindow* window, const QPointF& local, const QPointF& global,
                                       Qt::MouseButtons state, Qt::MouseButton button, QEvent::Type type,
@@ -258,7 +262,8 @@ bool sameTurned(const QString& a, const QString& b, int k, QString& why) {
 }
 /// A scanner bed with the first print of `src` four times, turned 0°, 90°, 180° and 270° (UX-04 test scan),
 /// at about 300 dpi on the scan's own background.
-bool writeFourOrientations(const QString& src, const fk::Shape& outer, const QString& dst) {
+bool writeFourOrientations(const QString& src, const fk::Shape& outer, const QString& dst,
+                           uint32_t seed = 11) {
     fk::ImageInfo info;
     auto img = fk::readImageFile(toPath(src), &info);
     if (!img) return false;
@@ -290,7 +295,7 @@ bool writeFourOrientations(const QString& src, const fk::Shape& outer, const QSt
     const int64_t ow = 2 * cell + gap + cell / 2, oh = 2 * cell + gap; // not square: a turn changes the shape
     auto out = fk::ImageBuffer::create(ow, oh, ch, img->bits());
     if (!out) return false;
-    uint32_t rng = 11;
+    uint32_t rng = seed; // another seed: the same scene with other scanner noise (a different file)
     auto put = [&](int64_t x, int64_t y, int c, int v) {
         if (img->bits() == 8) {
             out->row(y)[x * ch + c] = static_cast<uint8_t>(v / 257);
@@ -477,6 +482,29 @@ bool rewriteWithoutMetadata(const QString& src, const QString& dst, fk::FileForm
     if (!(*sink)->begin({img->width(), img->height()}, img->channels(), img->bits())) return false;
     for (int64_t y = 0; y < img->height(); ++y)
         if (!(*sink)->writeRows(img->row(y), 1, img->rowBytes())) return false;
+    return static_cast<bool>((*sink)->finish());
+}
+/// Writes the pixels of `r` (scan px) of `src` without metadata: a print's picture that was never exported.
+bool writeCrop(const QString& src, const fk::RectI& r, const QString& dst) {
+    fk::ImageInfo info;
+    auto img = fk::readImageFile(toPath(src), &info);
+    if (!img) return false;
+    const int64_t x0 = std::clamp<int64_t>(r.x, 0, img->width()),
+                  y0 = std::clamp<int64_t>(r.y, 0, img->height());
+    const int64_t w = std::clamp<int64_t>(r.w, 0, img->width() - x0),
+                  h = std::clamp<int64_t>(r.h, 0, img->height() - y0);
+    if (w <= 0 || h <= 0) return false;
+    const size_t bpp = static_cast<size_t>(img->channels()) * static_cast<size_t>(img->bits() / 8);
+    fk::WriteOptions opt;
+    opt.bits = img->bits();
+    opt.icc = info.icc;
+    QFile::remove(dst);
+    auto sink = fk::createSink(toPath(dst), opt);
+    if (!sink || !(*sink)->begin({w, h}, img->channels(), img->bits())) return false;
+    for (int64_t y = 0; y < h; ++y)
+        if (!(*sink)->writeRows(img->row(y0 + y) + static_cast<size_t>(x0) * bpp, 1,
+                                static_cast<size_t>(w) * bpp))
+            return false;
     return static_cast<bool>((*sink)->finish());
 }
 /// Writes `src` rotated by 180° (lossless) without metadata.
@@ -2523,6 +2551,418 @@ void SelfTest::runScrubFields() {
     app_->newProject();
 }
 
+void SelfTest::runMemoryBudget() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("memory"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QVariantMap saved = app_->settings();
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{{"exportFolder", exportDir},
+                                                                        {"exportFormat", "tif"},
+                                                                        {"geometryMode", "crop"},
+                                                                        {"applyUpright", false},
+                                                                        {"autoCount", true}})
+        app_->setSetting(k, v);
+    QObject* canvas = findCanvas();
+    auto restore = [&] {
+        for (const char* k : {"exportFolder", "exportFormat", "geometryMode", "applyUpright", "autoCount"})
+            app_->setSetting(QString::fromLatin1(k), saved.value(QString::fromLatin1(k)));
+        app_->setCacheBudget(0);
+        app_->jobRunner()->setTestDelayMs(0);
+        if (canvas) {
+            canvas->setProperty("mode", QStringLiteral("scan"));
+            QMetaObject::invokeMethod(canvas, "fit");
+        }
+    };
+    const fk::CacheLedger& L = app_->cacheLedger();
+    auto rep = [&] { return app_->memoryReport(); };
+    // the ledger's rule: what can be dropped fits next to the jobs' reservation
+    auto within = [&] {
+        const uint64_t room = L.budget() > L.reserved() ? L.budget() - L.reserved() : 0;
+        return L.bytes() <= std::max(room, L.fixedBytes());
+    };
+    // every image the controller holds is in the ledger (nothing kept behind its back)
+    auto counted = [&] {
+        const QVariantMap r = rep();
+        return r.value("displaysHeld").toInt() == r.value("displayCount").toInt() &&
+               r.value("sourcesHeld").toInt() == r.value("sourceCount").toInt() &&
+               r.value("compositesHeld").toInt() == r.value("compositeCount").toInt();
+    };
+    auto mb = [](uint64_t b) { return QString::number(static_cast<double>(b) / 1048576.0, 'f', 1); };
+    auto state = [&] {
+        const QVariantMap r = rep();
+        return QStringLiteral("cache %1 / budget %2 MB (fixed %3, reserved %4) · proxies %5 · sources %6 · "
+                              "previews %7 · RSS %8 MB")
+            .arg(mb(L.bytes()), mb(L.budget()), mb(L.fixedBytes()), mb(L.reserved()))
+            .arg(r.value("displaysHeld").toInt())
+            .arg(r.value("sourcesHeld").toInt())
+            .arg(r.value("compositesHeld").toInt())
+            .arg(r.value("residentMB").toDouble(), 0, 'f', 0);
+    };
+
+    // setup: the first print of the test scan four times on a bed, six scans with different scanner noise
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    fk::Shape first;
+    if (!app_->project().scans.empty() && !app_->project().scans.front().items.empty())
+        first = app_->project().scans.front().items.front().outer;
+    QVariantList beds;
+    bool made = !app_->project().scans.empty();
+    for (uint32_t i = 0; made && i < 6; ++i) {
+        const QString f = QDir(d).filePath(QStringLiteral("bed-%1.tif").arg(i + 1));
+        made = writeFourOrientations(scan_, first, f, 101 + i);
+        beds << f;
+    }
+    check(QStringLiteral("FK-005 setup: six scans with four prints each"), made);
+    if (!made) {
+        restore();
+        return;
+    }
+    // the reservation of the job that reads a proxy again (what switching scans runs), measured while it runs
+    uint64_t jobReserve = 0;
+    auto waitAndWatch = [&](int ms) {
+        waitFor(
+            [&] {
+                jobReserve = std::max(jobReserve, L.reserved());
+                return !app_->busy();
+            },
+            ms);
+        app_->waitIdle(ms);
+        QCoreApplication::processEvents();
+    };
+    app_->newProject();
+    app_->importScans(beds.mid(0, 2));
+    waitAndWatch(300000);
+    std::vector<QString> scanIds;
+    for (const auto& sc : app_->project().scans)
+        scanIds.push_back(toQ(sc.scanId));
+    const uint64_t proxy = scanIds.size() == 2 ? L.bytes("display:" + toStd(scanIds[0])) : 0; // one proxy
+    if (proxy > 0) {
+        // the second scan's proxy goes: reading it again shows that job's reservation (detection reserved for
+        // a scan of unknown size, i.e. a large one: not what switching needs)
+        app_->selectScan(scanIds[0]);
+        app_->onMemoryPressure();
+        jobReserve = 0;
+        app_->selectScan(scanIds[1]);
+        waitAndWatch(300000);
+    }
+    if (proxy == 0 || jobReserve == 0) {
+        check(QStringLiteral("FK-005 setup: a scan proxy counted, jobs reserve memory"), false, state());
+        restore();
+        return;
+    }
+    // a budget that leaves room for about two more proxies while a proxy is read (detection reserves at least
+    // as much: a scan of unknown size counts as a 1600 dpi A4 scan)
+    const uint64_t budget = jobReserve + L.fixedBytes() + 5 * proxy / 2;
+    app_->setCacheBudget(budget);
+
+    // 1. batch detection of the other four: proxies given back as they arrive, least recently used first
+    app_->importScans(beds.mid(2));
+    app_->waitIdle(600000);
+    QCoreApplication::processEvents();
+    int prints = 0;
+    scanIds.clear();
+    for (const auto& sc : app_->project().scans) {
+        prints += static_cast<int>(sc.items.size());
+        scanIds.push_back(toQ(sc.scanId));
+    }
+    const int heldAfterBatch = rep().value("displaysHeld").toInt();
+    check(QStringLiteral("FK-005 batch detection of 6 scans: proxies beyond the budget are given back"),
+          scanIds.size() == 6 && prints == 24 && heldAfterBatch < 6 && L.evictions() > 0 && within() &&
+              counted(),
+          QStringLiteral("%1 prints · job reservation %2 MB, proxy %3 MB · %4")
+              .arg(prints)
+              .arg(mb(jobReserve), mb(proxy), state()));
+
+    // 2. switching through every scan twice: each one is shown (its proxy read again when it was given back),
+    // the cache stays within the budget, nothing grows with the number of scans visited
+    bool allShown = true, allWithin = true, allCounted = true;
+    int maxHeld = 0;
+    double rssFirst = 0, rssSecond = 0;
+    for (int round = 0; round < 2; ++round) {
+        for (const QString& id : scanIds) {
+            app_->selectScan(id);
+            app_->waitIdle(120000);
+            QCoreApplication::processEvents();
+            allShown = allShown && app_->canvasScan().ready &&
+                       !(canvas && canvas->property("badge").toString().isEmpty());
+            allWithin = allWithin && within();
+            allCounted = allCounted && counted();
+            maxHeld = std::max(maxHeld, rep().value("displaysHeld").toInt());
+        }
+        (round == 0 ? rssFirst : rssSecond) = rep().value("residentMB").toDouble();
+    }
+    check(QStringLiteral("FK-005 switching through 6 scans twice: every scan shown, cache within the budget"),
+          allShown && allWithin && allCounted && maxHeld <= 3,
+          QStringLiteral("at most %1 proxies held · RSS after round 1 %2 MB, round 2 %3 MB · %4")
+              .arg(maxHeld)
+              .arg(rssFirst, 0, 'f', 0)
+              .arg(rssSecond, 0, 'f', 0)
+              .arg(state()));
+
+    // 3. full-resolution view on three scans: decoded strips are counted and given back like the proxies
+    bool fullShown = canvas != nullptr;
+    for (int i = 0; canvas && i < 3; ++i) {
+        app_->selectScan(scanIds[static_cast<size_t>(i)]);
+        app_->waitIdle(120000);
+        QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
+        fullShown =
+            fullShown &&
+            waitFor([&] { return canvas->property("badge").toString() == QLatin1String("Full"); }, 20000);
+        app_->waitIdle(60000);
+        QMetaObject::invokeMethod(canvas, "fit");
+    }
+    QCoreApplication::processEvents();
+    check(QStringLiteral("FK-005 full-resolution view on 3 scans: decoded strips counted, within the budget"),
+          fullShown && L.count("source:") >= 1 && L.bytes("canvas") > 0 && within() && counted(), state());
+
+    // 4. composite previews: four prints of the current scan, relinked unchanged; with room for about one
+    // more preview besides the one on screen, the others are given back and computed again when shown
+    const QString cur = app_->currentScanId();
+    QStringList items;
+    for (const auto& sc : app_->project().scans)
+        if (toQ(sc.scanId) == cur)
+            for (const auto& it : sc.items)
+                items << toQ(it.itemId);
+    app_->exportImageAreas(items);
+    app_->waitIdle(300000);
+    const QStringList edits = filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif"));
+    QVariantList rows;
+    auto conn = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+    QVariantList urls;
+    for (const auto& e : edits)
+        urls << e;
+    app_->relinkFiles(urls);
+    app_->waitIdle(300000);
+    disconnect(conn);
+    app_->applyRelink(rows);
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    QCoreApplication::processEvents();
+    std::vector<QImage> firstPreviews;
+    bool previewsShown = canvas != nullptr && items.size() == 4 && edits.size() == 4;
+    bool previewsWithin = true;
+    int heldAll = 0, heldShrunk = 0;
+    bool firstGivenBack = false, sameAgain = false;
+    if (previewsShown) {
+        // within the budget, every preview computed stays
+        canvas->setProperty("mode", QStringLiteral("composite"));
+        for (const QString& id : items) {
+            app_->selectItem(id); // the canvas asks for the preview (composite mode)
+            app_->waitIdle(120000);
+            QCoreApplication::processEvents();
+            const QImage p = app_->compositePreview(toStd(id));
+            previewsShown = previewsShown && !p.isNull();
+            firstPreviews.push_back(p);
+            previewsWithin = previewsWithin && within() && counted();
+        }
+        heldAll = rep().value("compositesHeld").toInt();
+        // a smaller budget: room for about one preview besides what is on screen; the oldest go first
+        app_->setCacheBudget(L.fixedBytes() + L.bytes("composite:" + toStd(items.back())) * 3 / 2);
+        heldShrunk = rep().value("compositesHeld").toInt();
+        firstGivenBack = app_->compositePreview(toStd(items.front())).isNull() &&
+                         !app_->compositePreview(toStd(items.back())).isNull();
+        previewsWithin = previewsWithin && within() && counted();
+        // shown again: computed again, identical
+        app_->selectItem(items.front());
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+        sameAgain = app_->compositePreview(toStd(items.front())) == firstPreviews.front();
+    }
+    check(
+        QStringLiteral("FK-005 composite previews of 4 prints: kept within the budget, the oldest given back "
+                       "beyond it, computed again identically when shown"),
+        previewsShown && heldAll == 4 && heldShrunk <= 2 && firstGivenBack && sameAgain && previewsWithin,
+        QStringLiteral("previews held %1 → %2 after the budget shrank · %3")
+            .arg(heldAll)
+            .arg(heldShrunk)
+            .arg(state()));
+    if (canvas) canvas->setProperty("mode", QStringLiteral("scan"));
+    app_->setCacheBudget(budget);
+
+    // 5. a job's working memory is reserved before it starts: the caches make room at once
+    for (int i = 3; i < 6; ++i) { // three scans visited: proxies held besides the current one
+        app_->selectScan(scanIds[static_cast<size_t>(i)]);
+        app_->waitIdle(120000);
+    }
+    QCoreApplication::processEvents();
+    const int heldBefore = rep().value("displaysHeld").toInt();
+    app_->setCacheBudget(L.bytes());         // exactly full: any reservation has to take room from the cache
+    app_->jobRunner()->setTestDelayMs(1500); // the export's work has not begun when we look
+    app_->exportFullPrints(items);
+    const uint64_t reservedAtStart = L.reserved();
+    const int heldAtStart = rep().value("displaysHeld").toInt();
+    const bool roomAtStart = within();
+    app_->waitIdle(600000);
+    app_->jobRunner()->setTestDelayMs(0);
+    QCoreApplication::processEvents();
+    check(QStringLiteral("FK-005 export: working memory reserved before the job starts, caches make room, "
+                         "released at the end"),
+          reservedAtStart > 0 && heldBefore > heldAtStart && heldAtStart >= 1 && roomAtStart &&
+              L.reserved() == 0,
+          QStringLiteral("reserved %1 MB · proxies %2 → %3 · after: reserved %4 MB")
+              .arg(mb(reservedAtStart))
+              .arg(heldBefore)
+              .arg(heldAtStart)
+              .arg(mb(L.reserved())));
+    app_->setCacheBudget(budget);
+
+    // 6. memory pressure: everything that can be rebuilt goes (also the current scan's decoded strips); the
+    // scan on screen stays shown and an output made afterwards is identical
+    for (int i = 0; i < 3; ++i) {
+        app_->selectScan(scanIds[static_cast<size_t>(i)]);
+        app_->waitIdle(120000);
+    }
+    if (canvas) {
+        QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
+        waitFor([&] { return canvas->property("badge").toString() == QLatin1String("Full"); }, 20000);
+        app_->waitIdle(60000);
+    }
+    QCoreApplication::processEvents();
+    const QString pressedScan = app_->currentScanId();
+    const QStringList fullsBefore = filesMatching(exportDir, QStringLiteral("*_FULL_v001.tif"));
+    const int heldBeforePressure = rep().value("displaysHeld").toInt(),
+              sourcesBeforePressure = rep().value("sourcesHeld").toInt(),
+              pressuresBefore = rep().value("pressureEvents").toInt();
+    app_->onMemoryPressure();
+    const QVariantMap afterPressure = rep();
+    if (canvas) QMetaObject::invokeMethod(canvas, "fit");
+    app_->exportFullPrints(items);
+    app_->waitIdle(600000);
+    const QStringList fullsAfter = filesMatching(exportDir, QStringLiteral("*_FULL_v002.tif"));
+    bool sameOutput = !fullsBefore.isEmpty() && fullsBefore.size() == fullsAfter.size();
+    QString why;
+    for (int i = 0; sameOutput && i < fullsBefore.size(); ++i)
+        sameOutput = samePixels(fullsBefore[i], fullsAfter[i], why);
+    check(
+        QStringLiteral("FK-005 memory pressure: rebuildable caches dropped, the scan on screen stays, output "
+                       "identical"),
+        heldBeforePressure > 1 && sourcesBeforePressure >= 1 &&
+            afterPressure.value("displaysHeld").toInt() == 1 &&
+            afterPressure.value("sourcesHeld").toInt() == 0 &&
+            afterPressure.value("pressureEvents").toInt() == pressuresBefore + 1 &&
+            app_->currentScanId() == pressedScan && app_->canvasScan().ready && sameOutput,
+        QStringLiteral("proxies %1 → %2, sources %3 → %4 · %5 outputs compared %6")
+            .arg(heldBeforePressure)
+            .arg(afterPressure.value("displaysHeld").toInt())
+            .arg(sourcesBeforePressure)
+            .arg(afterPressure.value("sourcesHeld").toInt())
+            .arg(fullsAfter.size())
+            .arg(why));
+
+    // 7. cancelled detection: nothing reserved afterwards, prints kept, cache within the budget
+    app_->jobRunner()->setTestDelayMs(300);
+    for (const QString& id : scanIds)
+        app_->detectScan(id);
+    waitFor([] { return false; }, 400);
+    const uint64_t reservedRunning = L.reserved();
+    app_->jobRunner()->cancelAll();
+    app_->waitIdle(300000);
+    app_->jobRunner()->setTestDelayMs(0);
+    QCoreApplication::processEvents();
+    int printsAfter = 0;
+    for (const auto& sc : app_->project().scans)
+        printsAfter += static_cast<int>(sc.items.size());
+    check(
+        QStringLiteral("FK-005 cancelled detection of 6 scans: reservation released, prints kept, within the "
+                       "budget"),
+        reservedRunning > 0 && L.reserved() == 0 && printsAfter == prints && within() && counted(),
+        QStringLiteral("reserved while queued %1 MB (one detection at a time) · %2")
+            .arg(mb(reservedRunning))
+            .arg(state()));
+    observe(QStringLiteral("FK-005 steady state"), QJsonObject::fromVariantMap(rep()));
+
+    // 8. a relink check never depends on what the cache still holds. A picture never exported (no export
+    // record): only a new alignment on the chosen print can take it, and its picture check compares the file
+    // with the print's current image area, sampled from the scan's proxy — on screen, then given back.
+    app_->newProject();
+    app_->importScans({beds.value(0), beds.value(1)});
+    app_->waitIdle(300000);
+    const fk::ItemRecord* target = nullptr;
+    std::string targetScan, otherScan;
+    for (const auto& sc : app_->project().scans) {
+        if (!target && !sc.items.empty()) {
+            target = &sc.items.front();
+            targetScan = sc.scanId;
+        } else {
+            otherScan = sc.scanId;
+        }
+    }
+    const QString picture = QDir(d).filePath(QStringLiteral("never-exported.tif"));
+    const fk::ScanRecord* tScan = target ? app_->scanOf(target->itemId) : nullptr;
+    const bool written = target && tScan && !otherScan.empty() &&
+                         writeCrop(toQ(tScan->path), fk::boundingRect(target->inner), picture);
+    if (written) {
+        const QString targetId = toQ(target->itemId);
+        auto assess = [&] {
+            QVariantList r;
+            auto c =
+                connect(app_, &AppController::relinkResults, this, [&](const QVariantList& x) { r = x; });
+            app_->relinkFiles({picture}, targetId);
+            app_->waitIdle(300000);
+            disconnect(c);
+            QMetaObject::invokeMethod(window_, "closeDialogs");
+            // a new alignment gets a fresh record id each time: compare everything else
+            QVariantMap row = r.value(0).toMap();
+            row.remove(QStringLiteral("editVersionId"));
+            QVariantList options;
+            for (const auto& o : row.value("options").toList()) {
+                QVariantMap om = o.toMap();
+                om.remove(QStringLiteral("editVersionId"));
+                options << om;
+            }
+            row[QStringLiteral("options")] = options;
+            return row;
+        };
+        auto pictureChecked = [](const QVariantMap& row) {
+            for (const auto& o : row.value("options").toList())
+                if (o.toMap().value("newAlignment").toBool() &&
+                    o.toMap().value("contentScore").toDouble() > 0)
+                    return true;
+            return false;
+        };
+        app_->selectItem(targetId);
+        app_->waitIdle(120000);
+        const QVariantMap shown = assess();
+        app_->selectScan(toQ(otherScan));
+        app_->waitIdle(120000);
+        app_->onMemoryPressure();
+        const bool givenBack = !L.contains("display:" + targetScan);
+        const QVariantMap reread = assess();
+        QStringList differs; // what differs, for the report
+        for (auto it = shown.begin(); it != shown.end(); ++it)
+            if (reread.value(it.key()) != it.value() && it.key() != QLatin1String("options"))
+                differs << it.key();
+        for (int i = 0; i < shown.value("options").toList().size(); ++i) {
+            const QVariantMap a = shown.value("options").toList().value(i).toMap(),
+                              b = reread.value("options").toList().value(i).toMap();
+            for (auto it = a.begin(); it != a.end(); ++it)
+                if (b.value(it.key()) != it.value())
+                    differs << QStringLiteral("option %1 %2: %3 / %4")
+                                   .arg(i)
+                                   .arg(it.key(), it.value().toString(), b.value(it.key()).toString());
+        }
+        check(QStringLiteral("FK-005 relink check (new alignment, picture compared with the print): the same "
+                             "assessment whether the target's proxy is held or given back"),
+              givenBack && pictureChecked(shown) && shown == reread,
+              shown.value("decision").toString() + QStringLiteral(" / ") +
+                  reread.value("decision").toString() +
+                  (pictureChecked(reread) ? QString()
+                                          : QStringLiteral(" (picture not compared the 2nd time)")) +
+                  (givenBack ? QString() : QStringLiteral(" (proxy still held)")) +
+                  (pictureChecked(shown) ? QString() : QStringLiteral(" (picture not compared)")) +
+                  (differs.isEmpty() ? QString()
+                                     : QStringLiteral(" · differs: ") + differs.join(QStringLiteral("; "))));
+    } else {
+        check(QStringLiteral("FK-005 relink check (new alignment, picture compared with the print): the same "
+                             "assessment whether the target's proxy is held or given back"),
+              false, QStringLiteral("setup: a picture of a print that was never exported"));
+    }
+    restore();
+}
+
 int SelfTest::scenarioMinIsWhite() {
     // FK-011: rows from the TIFF reader are already in normal polarity; the display converter inverts
     // MinIsWhite again, so Preview (proxy) and Full (rows) disagree.
@@ -2581,6 +3021,8 @@ int SelfTest::runScenario(const QString& name) {
         rc = scenarioUpright();
     else if (name == QLatin1String("miniswhite"))
         rc = scenarioMinIsWhite();
+    else if (name == QLatin1String("memory"))
+        rc = scenarioMemory();
     QJsonObject report{
         {"scenario", name},
         {"version", app_->version()},
@@ -2593,6 +3035,105 @@ int SelfTest::runScenario(const QString& name) {
     QFile f(QDir(dir_).filePath(QStringLiteral("scenario-%1.json").arg(name)));
     if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(report).toJson());
     return rc;
+}
+
+int SelfTest::scenarioMemory() {
+    // FK-005 measurement: `--scan <directory>` of scans (e.g. an fkfixture corpus), FK_BENCH_SCANS=N takes
+    // the first N. Records memoryReport() after each stage; the comparison across N is in
+    // PERFORMANCE-BUDGET.md.
+    QStringList files = filesMatching(scan_, QStringLiteral("*.tif"));
+    std::sort(files.begin(), files.end());
+    const int n = qEnvironmentVariableIntValue("FK_BENCH_SCANS");
+    if (n > 0 && n < files.size()) files = files.mid(0, n);
+    if (files.isEmpty()) return 1;
+    app_->setSetting(QStringLiteral("exportFormat"), QStringLiteral("tif"));
+    app_->setSetting(QStringLiteral("geometryMode"), QStringLiteral("crop"));
+    app_->setSetting(QStringLiteral("applyUpright"), false);
+    QObject* canvas = findCanvas();
+    QElapsedTimer t;
+    t.start();
+    auto stage = [&](const QString& name) {
+        waitFor([] { return false; }, 1000); // settle: deferred deletes, timers
+        QVariantMap r = app_->memoryReport();
+        r["seconds"] = static_cast<double>(t.elapsed()) / 1000.0;
+        r["scans"] = static_cast<int>(files.size());
+        int prints = 0;
+        for (const auto& sc : app_->project().scans)
+            prints += static_cast<int>(sc.items.size());
+        r["prints"] = prints;
+        observe(name, QJsonObject::fromVariantMap(r));
+    };
+    app_->newProject();
+    stage(QStringLiteral("0-idle"));
+    QVariantList urls;
+    for (const auto& f : files)
+        urls << f;
+    app_->importScans(urls);
+    app_->waitIdle(7200000);
+    stage(QStringLiteral("1-detected"));
+    std::vector<QString> ids;
+    for (const auto& sc : app_->project().scans)
+        ids.push_back(toQ(sc.scanId));
+    for (int round = 0; round < 2; ++round)
+        for (const auto& id : ids) {
+            app_->selectScan(id);
+            app_->waitIdle(600000);
+        }
+    stage(QStringLiteral("2-switched-twice"));
+    for (const auto& id : ids) {
+        app_->selectScan(id);
+        app_->waitIdle(600000);
+        if (!canvas) break;
+        QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
+        waitFor([&] { return canvas->property("badge").toString() == QLatin1String("Full"); }, 30000);
+        app_->waitIdle(600000);
+        QMetaObject::invokeMethod(canvas, "fit");
+    }
+    stage(QStringLiteral("3-full-resolution-each"));
+    // composite previews for the prints of the first 10 scans (exported unchanged, relinked)
+    QStringList items;
+    for (size_t i = 0; i < ids.size() && i < 10; ++i)
+        for (const auto& sc : app_->project().scans)
+            if (toQ(sc.scanId) == ids[i])
+                for (const auto& it : sc.items)
+                    items << toQ(it.itemId);
+    const QString exportDir = app_->settings().value("exportFolder").toString();
+    app_->exportImageAreas(items);
+    app_->waitIdle(3600000);
+    QVariantList rows;
+    auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+    QVariantList edits;
+    for (const auto& e : filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif")))
+        edits << e;
+    app_->relinkFiles(edits);
+    app_->waitIdle(3600000);
+    disconnect(c);
+    app_->applyRelink(rows);
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    if (canvas) canvas->setProperty("mode", QStringLiteral("composite"));
+    for (const auto& id : items) {
+        app_->selectItem(id);
+        app_->waitIdle(600000);
+    }
+    if (canvas) canvas->setProperty("mode", QStringLiteral("scan"));
+    stage(QStringLiteral("4-composite-previews"));
+    for (const auto& id : ids)
+        app_->detectScan(id);
+    waitFor([] { return false; }, 2000);
+    app_->jobRunner()->cancelAll();
+    app_->waitIdle(600000);
+    stage(QStringLiteral("5-detection-cancelled"));
+    if (!ids.empty()) app_->selectScan(ids.front());
+    app_->waitIdle(600000);
+    waitFor([] { return false; }, 3000);
+    stage(QStringLiteral("6-steady"));
+#if defined(__GLIBC__)
+    // what of the steady RSS is memory the app already freed (glibc keeps freed heap pages): measurement
+    // only, the product does not trim
+    malloc_trim(0);
+    stage(QStringLiteral("7-steady-after-malloc-trim"));
+#endif
+    return 0;
 }
 
 int SelfTest::scenarioRelink() {
@@ -2896,6 +3437,7 @@ int SelfTest::run() {
     runScanRotation();
     runMaskDefaults();
     runScrubFields();
+    runMemoryBudget();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},
@@ -2906,6 +3448,7 @@ int SelfTest::run() {
                        {"scan", scan_},
                        {"checks", checks_},
                        {"knownIssues", known_},
+                       {"observations", observations_}, // measurements recorded alongside the checks (FK-005)
                        {"ok", allOk_},
                        {"scope",
                         "Offscreen QPA, software scene graph. Does not prove monitor colour accuracy or "

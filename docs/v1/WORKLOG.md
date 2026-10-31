@@ -482,3 +482,50 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   (one print); img20260702_0005 163 pass + 4 FK-003 skips (untagged scan). UX-09: 11 / 11 pass on all four runs.
 - Not verified: a real trackpad (offscreen, a trackpad drag produces the same events as a mouse), macOS tap-to-drag,
   a real window on a 2× display.
+
+### 01:25–UNTIL — PR #18 opened and green, U017
+- U016 committed (88a28a7), PR #18 opened (stacked on #17); all checks green, including the packaged self-test on
+  Windows and macOS. PR #17 not merged yet.
+- U017 (branch `unit/U017-memory-budget`, stacked on U016), FK-005.
+  - Found before changing anything: proxies were limited to 4 only when re-opened (detection kept every scan's
+    proxy, ≈ 14–40 MB each); every scan viewed at 100 % kept its own decoded-strip cache (up to 96 MB each) for the
+    rest of the session; composite previews (up to 2400 px, ≈ 20 MB) were never dropped; jobs reserved nothing.
+    RFC-0014 named a `ByteBudgetLru` that was never implemented; ARCHITECTURE §4 and the platform table described
+    memory pressure that did not exist.
+  - Design: one `fk::CacheLedger` (core, no Qt) over all caches, because the values live with different owners
+    (QImages in the controller, decoded strips inside `TiffSource`); the owner frees what the ledger drops. Pinned
+    = on screen; kept = thumbnails and canvas images (counted, never dropped). Budget RAM/16, 256 MB … 2 GB.
+    Rejected: a separate LRU per cache (no shared budget); blocking jobs until memory is free (lanes already bound
+    concurrency, and a wait in the UI thread could deadlock with shutdown).
+  - Reservations: per lane, the largest estimates of queued and running jobs (as many as the lane runs at once),
+    reserved from the moment a job is queued, released after `done`. 100 queued detections reserve one.
+  - Dropping must never change a result: a relink check whose target proxy was dropped reads the same proxy again
+    in its job (before, it silently skipped the picture check when the proxy was missing — possible with the old
+    4-proxy limit too). Composite mode asks for the preview when a print without one is shown (before, switching
+    prints in composite mode showed no preview until something changed).
+  - Memory pressure: macOS dispatch source, Windows memory resource notification (polled), Linux MemAvailable.
+- Tests: ctest 213/213 (+ `CacheLedger.*` ×6, `Memory.SystemMemoryReported`); self-test `runMemoryBudget` 9 checks on
+  six generated four-print scans (each scan: the test scan's first print turned 0/90/180/270°, own noise).
+  - First self-test run: 2 of 9 failed [test flaw]: the test budget (3 proxies) was smaller than any job's
+    reservation (detection ≈ 240 MB), so every job emptied the cache and nothing could show the difference
+    between "room made for a job" and "everything dropped" → the budget is now measured: the jobs' reservation
+    observed while they run + what is pinned + 2.5 proxies; the export check sets the budget to exactly what is
+    cached, so any reservation must take room. The composite check first passed with a budget the canvas's own
+    decoded strips already filled [weak check] → it now shows all four previews kept within the budget, then the
+    oldest given back when the budget shrinks.
+  - Owner's scans: polaroid_92 and img20260702_0005 failed "switching … at most 3 proxies" [test flaw]: their 8-bit
+    beds reserve less to read a proxy than detection reserves for a scan of unknown size (counted as 1600 dpi A4
+    16-bit), so the measured reservation (the larger, detection's) left room for 5 proxies → the budget is now
+    based on the reservation of reading a proxy again, measured on its own.
+  - The first relink check passed with the reread disabled [weak check]: the graded copy matched its export record,
+    so the proxy never mattered → the check now uses a picture of a print that was never exported (only a new
+    alignment can take it, and its picture comparison needs the proxy); with the reread disabled the second
+    assessment turns "ambiguous" (content score 0.999 → 0).
+- Mutations (each → the self-test fails at the targeted check; M6 first survived, see above): M1 ledger never
+  drops; M2 nothing pinned (the scan on screen given back); M3 no estimate for full-print exports; M4 reservation
+  never released; M5 pressure keeps the current scan's decoded strips; M6 relink check without the reread;
+  M7 previews not counted; M8 composite mode does not ask for a missing preview; M9 decoded strips not counted.
+  Restored; build clean.
+- Self-test results: fixture 178 pass; polaroid_92 174 pass + 2 skips (one print); img20260702_0005 172 pass + 4
+  FK-003 skips. FK-005: 9/9 on all three (the generated beds are made from each scan's first print).
+- BENCH

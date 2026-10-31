@@ -27,7 +27,8 @@ class SelfTest : public QObject {
     /// Runs synchronously (spinning the event loop); returns the process exit code.
     int run();
     /// `--scenario <name>`: reproduces reported user flows and records what actually happens (observations,
-    /// not assertions) in <dir>/scenario-<name>.json plus snapshots. Names: "relink", "count", "upright".
+    /// not assertions) in <dir>/scenario-<name>.json plus snapshots. Names: "relink", "count", "upright",
+    /// "miniswhite", "memory".
     int runScenario(const QString& name);
 
   private:
@@ -73,6 +74,11 @@ class SelfTest : public QObject {
     /// thresholds, bounds, Esc, invalid characters, Enter / focus loss, one undo step per drag, no preview
     /// backlog.
     void runScrubFields();
+    /// FK-005 (U017): one byte budget for the caches on six generated scans: batch detection, switching
+    /// scans, full-resolution view, composite previews given back and recomputed identically, job memory
+    /// reserved before the job starts, memory pressure (output unchanged), relink checks independent of the
+    /// cache, cancelled detection.
+    void runMemoryBudget();
     void doubleClick(QQuickItem* item, QPointF local = QPointF(-1, -1));
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.
@@ -87,6 +93,8 @@ class SelfTest : public QObject {
     int scenarioRelink();
     int scenarioCount();
     int scenarioUpright();
+    /// FK-005: memory after each stage of a batch (`--scan <dir>`, FK_BENCH_SCANS=N).
+    int scenarioMemory();
     QJsonArray observations_;
 
     AppController* app_;

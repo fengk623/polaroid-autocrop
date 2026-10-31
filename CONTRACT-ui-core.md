@@ -17,6 +17,10 @@ Contract version: **1** · RFC-0011 · Applies to `app/` (Qt Quick) and any futu
   code is `needs_confirmation`/`needs_review`.
 - Generations: each async result carries `(itemId, purpose, generation)`; the UI applies it only if generation
   equals the latest requested for that key.
+- Memory (FK-005, RFC-0014 §Memory budget): every cached image the UI holds (scan proxy, decoded strips of the
+  view, composite preview, thumbnails, canvas images) is counted in one byte budget; what is not on screen may
+  be dropped at any time and is rebuilt from the files when shown again. Jobs pass their estimated working
+  memory when started. `memoryReport()` returns the process and cache figures (diagnostics, self-test).
 
 ## 3. Item status (filmstrip badges) — derived, never stored separately
 `detection: none|auto|template|manual` · `confidence: high|medium|low` · `reviewed` · `excluded` ·

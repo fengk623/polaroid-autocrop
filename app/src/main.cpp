@@ -66,7 +66,8 @@ int main(int argc, char* argv[]) {
     parser.addOption(liveOpt);
     QCommandLineOption scenarioOpt(
         QStringLiteral("scenario"),
-        QStringLiteral("With --self-test: reproduce a reported flow (relink, count, upright)."),
+        QStringLiteral("With --self-test: reproduce a reported flow (relink, count, upright, miniswhite) or "
+                       "measure memory over a batch (memory; --scan <directory>)."),
         QStringLiteral("name"));
     parser.addOption(scenarioOpt);
     parser.addPositionalArgument(QStringLiteral("files"),

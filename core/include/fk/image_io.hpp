@@ -37,6 +37,9 @@ class TiffSource : public ImageSource {
   public:
     virtual TiffAccessPath accessPath() const = 0;
     virtual void setCacheBudget(uint64_t bytes) = 0;
+    /// Bytes held by the decoded strip/tile cache and line buffers now (FK-005: counted in the app's cache
+    /// budget). Not thread-safe against a concurrent readRows.
+    virtual uint64_t cachedBytes() const = 0;
     /// Number of strip/tile decodes and scanline restarts so far (diagnostics, tests).
     virtual uint64_t decodeCount() const = 0;
     virtual uint64_t restartCount() const = 0;

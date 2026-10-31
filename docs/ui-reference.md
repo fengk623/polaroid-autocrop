@@ -287,7 +287,7 @@ Paths below are relative to the SpektraLab repository at commit `fd891c6`.
 | DPI | Retina backing scale | Per-Monitor v2 manifest; scales 100–200 % (HV-07) |
 | Fonts | System UI font (SF Pro); Chinese PingFang SC | Segoe UI Variable Text (fallback Segoe UI); Chinese Microsoft YaHei UI |
 | Dialogs | Native file dialogs; Export, Relink and Final output in-window | Native file dialogs; all other dialogs in-window |
-| Memory pressure | dispatch source (`platform/macos`) | `CreateMemoryResourceNotification` (`platform/windows`) |
+| Memory pressure | dispatch source, warn/critical (`app/src/MemoryPressure.cpp`, FK-005) | `CreateMemoryResourceNotification`, polled every 2 s (same file) |
 | Unsigned dev build | Gatekeeper instructions (HV-09) | SmartScreen instructions |
 
 ## 4. FrameKeeper layout spec

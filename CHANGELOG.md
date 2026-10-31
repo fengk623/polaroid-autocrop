@@ -3,6 +3,14 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.7 — U017: one memory budget for the caches (FK-005)
+- Scan proxies, decoded strips of the full-resolution view and composite previews share one byte budget sized
+  by the device's RAM (8 GB → 512 MB, 16 GB → 1 GB); what is not on screen is given back least recently used
+  first and rebuilt from the files when shown again; thumbnails and canvas images are counted. Jobs reserve
+  their estimated working memory before they start; OS memory pressure drops every rebuildable cache (output
+  unchanged). Before, every scan visited kept its decoded strips (up to 96 MB each) and every composite preview
+  stayed for the whole session. Notes: docs/release-notes/v0.7.0-alpha.7.md.
+
 ## 0.7.0-alpha.6 — U016: drag to adjust, double-click to type (UX-09)
 - The mask width can be adjusted by dragging left/right on the value (past a 4 px threshold; Shift ×10, Alt ×0.1)
   and typed after a double-click (Enter / focus loss commits, Esc cancels, invalid characters refused); one drag is

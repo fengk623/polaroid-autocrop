@@ -6,6 +6,7 @@
 #include "Jobs.hpp"
 #include "Models.hpp"
 
+#include "fk/cache.hpp"
 #include "fk/composite.hpp"
 #include "fk/project.hpp"
 
@@ -186,6 +187,9 @@ class AppController : public QObject {
     Q_INVOKABLE QString defaultExportFolder() const;
     Q_INVOKABLE QString fileUrl(const QString& path) const;
     Q_INVOKABLE void notify(const QString& text, const QString& kind = QStringLiteral("info"));
+    /// FK-005: process memory (RSS, private, accounted buffers) and the cache budget with what it holds
+    /// (bytes and counts per kind, reserved job memory, evictions, memory-pressure events).
+    Q_INVOKABLE QVariantMap memoryReport() const;
 
     // ---- canvas support (C++ only) ----
     struct CanvasScan {
@@ -217,6 +221,14 @@ class AppController : public QObject {
     QImage thumbnail(const QString& id) const;
     JobRunner* jobRunner() { return jobs_; }
     bool waitIdle(int timeoutMs);
+    // ---- memory budget (FK-005) ----
+    /// The canvas's own images (pyramid levels above the proxy, the full-resolution patch): counted, kept.
+    void setCanvasBytes(uint64_t bytes);
+    /// Drops every cache that can be rebuilt (OS memory pressure; the self-test calls it directly).
+    void onMemoryPressure();
+    /// Test hook: another cache budget (0 = the device default).
+    void setCacheBudget(uint64_t bytes);
+    const fk::CacheLedger& cacheLedger() const { return cache_; }
     fk::Project& project() { return project_; }
 
   Q_SIGNALS:
@@ -314,6 +326,23 @@ class AppController : public QObject {
     void afterScanRotation(const std::string& scanId);
     std::map<std::string, std::pair<fk::Shape, fk::Shape>> detected_; ///< itemId → detected outer/inner
     std::map<std::string, QImage> compositePreviews_;
+    // ---- memory budget (FK-005, RFC-0014 §Memory budget) ----
+    /// One byte budget over the caches that can be rebuilt: scan display proxies ("display:<scan>"), decoded
+    /// strips of the full-resolution view ("source:<scan>"), composite previews ("composite:<item>"); counted
+    /// but kept: thumbnails ("thumb:<scan>"), the canvas's images ("canvas"). On screen = pinned.
+    fk::CacheLedger cache_;
+    uint64_t defaultBudget_ = 0;
+    uint64_t workToken_ = 0; ///< the jobs' reservation in the ledger
+    int pressureEvents_ = 0;
+    /// Records an entry's current size and drops what no longer fits (least recently used first).
+    void noteCache(const std::string& key, uint64_t bytes, bool kept = false);
+    void noteScanImages(const std::string& scanId);
+    void enforceCache();
+    void dropCacheEntry(const std::string& key);
+    void forgetScanCaches(const std::string& scanId);
+    /// Working memory a job on this scan / print is expected to need (reserved before it starts).
+    uint64_t scanWorkBytes(const fk::ScanRecord& s) const;
+    uint64_t itemWorkBytes(const fk::ScanRecord& s, const fk::ItemRecord& it, bool graded) const;
     // ---- task safety (RFC-0010 §Task safety, FK-006) ----
     /// Generations: a background result is applied only if what it was computed from is still current.
     struct JobSnapshot {
