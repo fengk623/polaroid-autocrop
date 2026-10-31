@@ -3985,8 +3985,12 @@ QString missingGlyphs(const QString& text, const QFont& font) {
     for (const QGlyphRun& run : layout.glyphRuns(-1, -1, QTextLayout::RetrieveAll)) {
         const QList<quint32> glyphs = run.glyphIndexes();
         const QList<qsizetype> at = run.stringIndexes();
+        // no font file behind the run: Qt's box engine (no fonts found at all) draws every character as a
+        // box, with the character code as "glyph" (Windows offscreen without QT_QPA_FONTDIR)
+        // (its raw font has no font tables; familyName() would crash on it)
+        const bool boxEngine = !run.rawFont().isValid() || run.rawFont().fontTable("cmap").isEmpty();
         for (qsizetype i = 0; i < glyphs.size(); ++i) {
-            if (glyphs[i] != 0) continue;
+            if (glyphs[i] != 0 && !boxEngine) continue;
             const qsizetype si = i < at.size() ? at[i] : -1;
             const QChar c = si >= 0 && si < text.size() ? text.at(si) : QChar(u'?');
             if (c.isSpace() || c.category() == QChar::Other_Control || c.category() == QChar::Other_Format)
@@ -4133,6 +4137,40 @@ int SelfTest::runTextLayout() {
                 break; // the nearest clipping parent decides
             }
         }
+        // a rail wider inside than outside: name what does not fit (the widest controls running past its
+        // edge)
+        for (const char* railName : {"leftRail", "rightRail"}) {
+            QQuickItem* rail = findItem(QString::fromLatin1(railName));
+            if (!rail || !shown(rail)) continue;
+            const QRectF rr = rect(rail);
+            std::vector<std::pair<double, QString>> wide;
+            for (QQuickItem* d : order) {
+                if (!rail->isAncestorOf(d) || !shown(d) || d->inherits("QQuickLayout")) continue;
+                if (!(d->inherits("QQuickControl") || isTextItem(d) || d->inherits("QQuickRectangle")))
+                    continue;
+                const QRectF dr = rect(d);
+                if (dr.right() <= rr.right() + 1 || visiblePart(d).isEmpty()) continue;
+                const QString t = d->property("text").toString().left(24);
+                wide.emplace_back(
+                    d->implicitWidth(),
+                    QStringLiteral("%1%2 %3 px (implicit %4) at %5–%6")
+                        .arg(where(d), t.isEmpty() ? QString() : QStringLiteral(" \"%1\"").arg(t))
+                        .arg(d->width(), 0, 'f', 0)
+                        .arg(d->implicitWidth(), 0, 'f', 0)
+                        .arg(dr.left(), 0, 'f', 0)
+                        .arg(dr.right(), 0, 'f', 0));
+            }
+            if (wide.empty()) continue;
+            std::sort(wide.begin(), wide.end(),
+                      [](const auto& a, const auto& b) { return a.first > b.first; });
+            QStringList top;
+            for (size_t i = 0; i < wide.size() && i < 6; ++i)
+                top << wide[i].second;
+            problems.insert(QStringLiteral("wider than the rail · %1 (%2 px) · %3 · %4")
+                                .arg(QString::fromLatin1(railName))
+                                .arg(rr.width(), 0, 'f', 0)
+                                .arg(top.join(QStringLiteral("; ")), state));
+        }
         // key controls: nothing painted later covers their middle
         QStringList keyNames{QStringLiteral("edgeLeft"),          QStringLiteral("edgeRight"),
                              QStringLiteral("edgeBottom"),        QStringLiteral("viewSwitch"),
@@ -4244,8 +4282,10 @@ int SelfTest::runTextLayout() {
               "and light, 3 window sizes"),
           byKind[0].isEmpty(),
           list(byKind[0]) + QStringLiteral(" · fonts: ") + fonts.join(QStringLiteral(", ")));
-    check(QStringLiteral("FK-009 no text wider than its box or outside the window"), byKind[1].isEmpty(),
-          list(byKind[1]));
+    check(
+        QStringLiteral("FK-009 no text wider than its box or outside the window, no panel content wider than "
+                       "its rail"),
+        byKind[1].isEmpty(), list(byKind[1]));
     check(QStringLiteral(
               "FK-009 no text cut at the side by its panel, no label, title or button text shortened"),
           byKind[2].isEmpty(), list(byKind[2]));

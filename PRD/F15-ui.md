@@ -54,7 +54,8 @@ RFC: `rfc/0011-ui-architecture.md`, `docs/ui-reference.md`, `CONTRACT-ui-core.md
   follows the library (U018–U020).
 - A7 (FK-009, U024) Every visible text — main window, Settings, About and Export dialogs; dark and light; 1100×700,
   1440×900, 1920×1080; rails shown and folded; the three right-rail tabs — has a glyph for every character in its
-  font or its fallbacks (no boxes), stays inside its own box and the window, is not cut at the side by its panel, and
+  font or its fallbacks (no boxes, also not Qt's box engine when no font is found), nothing in a rail is wider than
+  the rail, stays inside its own box and the window, is not cut at the side by its panel, and
   labels, section titles, segment and button texts are never shortened (values such as paths and file names may
   be); the strips, top-bar buttons, view switch, zoom field and workflow steps are not covered by anything painted
   later. CI runs it in English (1×) with the self-test and as `--scenario text` in Chinese (1×, 2×) and English

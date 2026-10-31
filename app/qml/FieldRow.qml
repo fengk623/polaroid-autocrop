@@ -15,9 +15,11 @@ RowLayout {
         text: r.label
         font.pixelSize: Theme.fontBody
         color: Theme.textSecondary
-        // the section's label column, wider when this label needs it (a translation, a larger font): never cut
-        Layout.preferredWidth: Math.max(r.labelWidth, implicitWidth)
-        Layout.minimumWidth: implicitWidth
+        // the section's label column; a longer label (a translation, a wider system font) wraps onto a second
+        // line instead of being cut or widening the row past its panel (FK-009)
+        Layout.preferredWidth: r.labelWidth
+        Layout.maximumWidth: r.labelWidth
+        wrapMode: Text.Wrap
     }
     RowLayout {
         id: holder

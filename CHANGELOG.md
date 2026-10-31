@@ -10,9 +10,13 @@ All notable changes. Versions follow `VERSION`; release notes with measurements 
   and Export dialogs; CI runs it in English (1×, 1.5×) and Chinese (1×, 2×) on all three platforms.
 - Found and fixed: the Return tab was wider than the right rail (two buttons in one row), cutting texts and buttons
   at its right edge — the buttons now wrap and the final-output frame choice sits under its label; a field label
-  in Settings was shortened — field labels widen instead; the 8-bit refusal ended with a note for programmers
-  ("set allowDepthReduction …") — confirmation details go to the log, not to the message. Real windows (Direct3D,
-  Metal, 150/200 %, Retina) stay human verification. Notes: docs/release-notes/v0.7.0-alpha.13.md.
+  in Settings was shortened — long field labels wrap; the 8-bit refusal ended with a note for programmers
+  ("set allowDepthReduction …") — confirmation details go to the log, not to the message.
+- The historical boxes in Windows offscreen self-test snapshots: Qt's offscreen platform on Windows found no fonts
+  (it reads QT_QPA_FONTDIR or Qt's own lib/fonts) and drew every character as a box as wide as the font size; the
+  self-test now points it at the system fonts, and the glyph check recognises that box engine. CI Linux installs
+  a CJK font for the Chinese checks. Real windows (Direct3D, Metal, 150/200 %, Retina) stay human verification.
+  Notes: docs/release-notes/v0.7.0-alpha.13.md.
 
 ## 0.7.0-alpha.12 — U021 part 1: view switch between the eye and the zoom; the top bar fits narrow windows; workflow steps (UX-06)
 - The Scan · Print · Image · Composite switch sits between the overlays button and the zoom field (keys 1–4 and the

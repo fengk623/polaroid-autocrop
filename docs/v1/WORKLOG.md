@@ -711,3 +711,22 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     last job summary) → T1c, U+10FFFD in the right rail's title: caught. A small Qt program confirmed that an
     uncovered character comes back as glyph 0.
   - CI: `--scenario text` in Chinese 1× / 2× and English 1.5× on all three platforms after the self-test.
+  - PR #26 CI round 1: macOS green (Chinese and 2× included). Linux: "位" and other Chinese characters without a
+    glyph (DejaVu Sans) — the Linux runner has no CJK font [CI environment] → install `fonts-noto-cjk` for the
+    app job. Windows: left-rail note "1 scans · 3 prints" 270 px wide (100–370, rail ends at 262), right-rail
+    content past the window, UX-01 clicks missing their controls, and PR #25's step 5 at 1434–1454 — while the
+    glyph check passed. Reproduced exactly on Linux with an empty fontconfig: Qt's offscreen platform on Windows
+    reads fonts with FreeType from `QT_QPA_FONTDIR` or Qt's own lib/fonts (absent from a Qt install), finds none and
+    uses the box engine — every character a box as wide as the font size, with the character code as glyph, so
+    "glyph 0" never shows it. This is the root cause of FK-009's historical "boxes in Windows offscreen snapshots"
+    → the self-test's offscreen start on Windows sets `QT_QPA_FONTDIR` to the system font folder (also applied to
+    PR #25, whose Windows failure had the same cause), and the glyph check treats a run without font tables as
+    boxes (`QRawFont::familyName()` crashes on the box engine — first attempt segfaulted).
+  - My first fix for the cut Settings label ("field labels widen to fit") was wrong for wide fonts: a label's
+    minimum width then pushes the whole rail column past the rail (seen in the same Windows run) → long labels wrap
+    within the label column instead. New diagnostic: when a rail's content is wider than the rail, the widest
+    controls past its edge are named (the CI annotations were too short to find them otherwise).
+  - With DejaVu Sans (the CI Linux font, much wider than Inter) all four FK-009 checks pass; without any font the
+    glyph check fails with 2274 boxes.
+  - Mistake: I rebuilt `build/app` while the U024 runner script was between scans, so the owner-scan runs would
+    have mixed two builds [process error] → stopped it (by PID) and reran everything on the final build. Trap T25.
