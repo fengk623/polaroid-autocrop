@@ -1,6 +1,6 @@
 # RFC-0003 — Image I/O
 
-Status: Accepted · Module: `core/image_io` · ADR-0002 · Tests: `tests/core/test_tiff_*.cpp`, `test_png.cpp`, `test_jpeg.cpp`, `test_dng.cpp`
+Status: Accepted · Module: `core/src/tiff_source.cpp`, `core/src/tiff_sink.cpp`, `core/src/image_file.cpp` · ADR-0002 · Tests: `tests/core/test_tiff_io.cpp`, `tests/core/test_png_jpeg.cpp`, `Export.LinearDngStructure`, CI `tools/dng-interop.py`
 
 ## Readers
 - `TiffSource` (implements `ImageSource`): `open(path)`, `info()`, `readRows(y0, nRows, x0, width, dst, dstStride)`

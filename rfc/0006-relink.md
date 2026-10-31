@@ -1,6 +1,6 @@
 # RFC-0006 — Relink
 
-Status: Accepted · Module: `core/relink` · ADR-0009 · PRD F06 · Tests: `tests/core/test_relink.cpp`
+Status: Accepted · Module: `core/src/relink.cpp`, `core/src/relink_assess.cpp` · ADR-0009 · PRD F06 · Tests: `tests/core/test_relink.cpp`
 
 - `Signature computeSignature(const ImageBuffer&)`: luma (Rec.709 weights on encoded values) → box-resample
   to 64×64 → rank transform (ties averaged) → zero-mean, unit-norm vector.

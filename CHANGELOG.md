@@ -3,6 +3,20 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.14 — U027: specifications name only what exists; outcomes counted apart (FK-013)
+- `tools/check-claims.py` (CI docs job): tests, test programs, self-test sections, scenarios, files and CI jobs
+  named in the PRDs, RFCs, test plan, acceptance matrix and traceability exist, and every name the API spec declares
+  exists in the core; what is not built says so on the same line. First run: 89 claims without code — tests that
+  never existed (`test_dng`, `test_roundtrip`, `test_export_*`, `test_templates`, `test_jobs`, `tests/app/*`, …), a
+  C ABI, disk cache, job queue, capability profiles and a `core-mobile-lite` CI job that were never built, an
+  architecture page saying the Qt app did not exist, seven API signatures that differed from the headers. All
+  corrected or marked planned; the acceptance matrix now names real tests with honest status.
+- `tests/core/test_api_contract.cpp`: the spec's enum values, constants and function signatures are checked at
+  compile time, stable names at run time.
+- Test reports: CTest outcomes passed / failed / skipped / not started / blocked (not started and unlisted skips
+  fail the report); the app self-test prints passed / failed / skipped / known issues / not applicable and writes
+  it to `report.json`. Notes: docs/release-notes/v0.7.0-alpha.14.md.
+
 ## 0.7.0-alpha.13 — U024: text and layout checks; right rail no longer wider than itself (FK-009)
 - Self-test `runTextLayout` (also `--scenario text`): every visible text has glyphs (no boxes), stays inside its box,
   the window and its panel's sides; labels, titles and button texts are never shortened; key controls are not

@@ -1,6 +1,6 @@
 # RFC-0008 — Synthetic frame
 
-Status: Accepted · Module: `core/compositing/synthetic_frame` · PRD F08 · Tests: `tests/core/test_synthetic_frame.cpp`
+Status: Accepted · Module: `core/src/composite.cpp` · PRD F08 · Tests: `tests/core/test_composite.cpp` (`SyntheticFrame.*`)
 
 `FrameLayout computeFrameLayout(SizeI picture, FrameSpec)` → canvas size and picture offset.
 `FrameSpec { mode: Equal|CanvasRatio|Sides; unit: PercentLongEdge|Pixels; top,right,bottom,left; ratio w:h;

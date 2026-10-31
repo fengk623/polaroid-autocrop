@@ -1,6 +1,6 @@
 # F15 — Desktop UI and platform conventions
 
-RFC: `rfc/0011-ui-architecture.md`, `docs/ui-reference.md`, `CONTRACT-ui-core.md` · Tests: `tests/app/*`, real-window captures (`docs/HUMAN-VERIFICATION.md`)
+RFC: `rfc/0011-ui-architecture.md`, `docs/ui-reference.md`, `CONTRACT-ui-core.md` · Tests: app self-test (`app/src/SelfTest.cpp`), real-window captures (`docs/HUMAN-VERIFICATION.md`)
 
 ## Layout (learned from SpektraLab's macOS interface; see `docs/ui-reference.md`)
 - Left rail: project & files, scan list, templates, detection mode, expected count, batch selection, jobs.
@@ -24,10 +24,10 @@ RFC: `rfc/0011-ui-architecture.md`, `docs/ui-reference.md`, `CONTRACT-ui-core.md
 
 ## Acceptance
 - A1 Automated snapshots (offscreen self-test, software renderer) are evidence for people to look at, never a pass by
-  themselves (FK-009). The `tests/app/snapshots` suite this line used to name was never built (FK-013); the checks
+  themselves (FK-009). The `tests/app/snapshots` suite this line used to name was never built (not built; FK-013); the checks
   are A7.
 - A2 Real-window captures on Windows (via the user's machine) and macOS (human verification list).
-- A3 UI stays responsive (< 50 ms frame) while a 1600 DPI export runs. (`tests/app/tst_responsiveness`)
+- A3 UI stays responsive (< 50 ms frame) while a 1600 DPI export runs. (not built: no frame-time measurement yet)
 - A4 (UX-09) Value fields that opt in (the mask feather/inset width, U016): press and drag left/right adjusts the value
   (2 logical px per step, Shift ×10, Alt ×0.1) past a 4 px threshold, so a click is never a drag and never selects
   text; a double-click (or Enter) opens keyboard input; Enter or focus loss commits, Esc cancels, invalid characters

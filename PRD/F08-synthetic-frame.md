@@ -1,6 +1,6 @@
 # F08 — Synthetic frame (PhotoFrame-style) output
 
-RFC: `rfc/0008-synthetic-frame.md` · Tests: `tests/core/test_synthetic_frame.cpp`
+RFC: `rfc/0008-synthetic-frame.md` · Tests: `tests/core/test_composite.cpp` (`SyntheticFrame.*`)
 
 Reference: behaviour observed in PhotoFrame / Encadré (see `docs/reference-audit.md`); no code or assets copied.
 
@@ -18,6 +18,6 @@ Reference: behaviour observed in PhotoFrame / Encadré (see `docs/reference-audi
 Watermarks, camera databases, dominant-colour palettes, "cleaned real frame".
 
 ## Acceptance
-- A1 Output size = picture + borders exactly; picture pixels identical at original size. (`test_synthetic_frame`)
+- A1 Output size = picture + borders exactly; picture pixels identical at original size. (`SyntheticFrame.LayoutModes`, `SyntheticFrame.PictureCopiedExactlyAndColourApplied`, `SyntheticFrame.PlatformTargetHasExactSize`)
 - A2 % of long edge gives identical relative borders for portrait and landscape inputs.
 - A3 Synthetic outputs are always labelled (suffix + XMP).

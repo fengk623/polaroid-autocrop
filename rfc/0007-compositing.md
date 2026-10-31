@@ -1,6 +1,6 @@
 # RFC-0007 — Compositing
 
-Status: Accepted · Module: `core/compositing` · ADR-0010 · PRD F07 · Tests: `tests/core/test_composite.cpp`, `test_roundtrip.cpp`
+Status: Accepted · Module: `core/src/composite.cpp` · ADR-0010 · PRD F07 · Tests: `tests/core/test_composite.cpp`
 
 `compositeItem(source, CompositeRequest, cancel, progress) → ExportReport`
 - Inputs: item (outer, inner, export geometry of the edit version), graded `ImageBuffer` (decoded fully;

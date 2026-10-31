@@ -1,6 +1,6 @@
 # RFC-0005 — Export
 
-Status: Accepted · Module: `core/export` · PRD F05 · Tests: `tests/core/test_export_*.cpp`
+Status: Accepted · Module: `core/src/export.cpp`, `core/src/output_stage.cpp` · PRD F05 · Tests: `tests/core/test_export.cpp`
 
 ## Pipeline
 `exportRegion(source, request, cancel, progress) → ExportReport`

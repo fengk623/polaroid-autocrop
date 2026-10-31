@@ -1,6 +1,6 @@
 # F05 — Export (image area or full print)
 
-RFC: `rfc/0005-export.md`, `rfc/0002-geometry.md`, ADR-0004 (DNG), ADR-0014 (resampling) · Tests: `tests/core/test_export_*.cpp`
+RFC: `rfc/0005-export.md`, `rfc/0002-geometry.md`, ADR-0004 (DNG), ADR-0014 (resampling) · Tests: `tests/core/test_export.cpp`
 
 ## Geometry modes (always shown before export)
 1. **Pixel crop** (default, archival): axis-aligned bounding box of the boundary, no rotation or
@@ -26,10 +26,10 @@ whether frame pixels stay bit-identical (and why not), free space at target.
 - Sidecar `<name>.fk.json` next to every image-area export (F06).
 
 ## Acceptance
-- A1 Pixel-crop TIFF of the full print equals the source region bit-for-bit (all depths, compressions). (`test_export_crop`)
-- A2 16-bit source never silently becomes 8-bit; JPEG export of a 16-bit source requires `allow_depth_reduction`. (`test_export_depth`)
-- A3 Output carries the source ICC (byte-identical) unless a conversion was requested. (`test_export_icc`)
-- A4 DPI preserved (scaled for standard size). (`test_export_dpi`)
+- A1 Pixel-crop TIFF of the full print equals the source region bit-for-bit (all depths, compressions). (`Export.PixelCropIsBitExactAllDepths`)
+- A2 16-bit source never silently becomes 8-bit; JPEG export of a 16-bit source requires `allow_depth_reduction`. (`Export.DepthReductionNeedsConsent`, `ExportPlan.DepthReductionNeedsConsent`)
+- A3 Output carries the source ICC (byte-identical) unless a conversion was requested. (`Export.IccPoliciesKeepAssignConvertUntagged`)
+- A4 DPI preserved (scaled for standard size). (`Export.DpiPreservedAndScaledForStandardSize`)
 - A5 Exported DNG passes our structural verification (written tags re-read after every export) and an independent
   decoder (LibRaw via rawpy, CI Core linux, `tools/dng-interop.py`, U026) reads it as written: its camera-space
   output (no colour matrix, unit white balance, no maximum adjustment, gamma 1) equals the TIFF export of the same
@@ -40,4 +40,4 @@ whether frame pixels stay bit-identical (and why not), free space at target.
   0.02) and saturated areas differ; DNG-conformant readers (Adobe) need the real software. The earlier
   "`test_dng`" reference never existed.
 - A6 Export of a 1600 DPI print streams with peak memory < 600 MB (no rotation) / < 1.2 GB (lossless 90° rotation). (`PERFORMANCE-BUDGET.md`)
-- A7 Name clash never overwrites. (`test_export_safety`)
+- A7 Name clash never overwrites. (`Export.NeverOverwritesAndNeedsReview`)

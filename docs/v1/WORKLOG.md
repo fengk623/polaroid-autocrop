@@ -736,6 +736,27 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     UI font families Segoe UI, Microsoft YaHei UI, Microsoft YaHei, SimSun (Windows' own order). PR #25 green on
     all platforms with the font folder fix.
 
+
+### 10:40–11:00 — PR #26 opened (U024), U021 fixed on Windows, U027 (committed locally)
+- U021 (PR #25): the Windows failure had the same cause as U024's — no fonts in the offscreen platform — so the
+  `QT_QPA_FONTDIR` fix went into U021 as its own commit (e809c5d, formatted in 7a60392) and U024 was rebased onto
+  it (force-with-lease on the PR branch, which only this session pushes to).
+- U027 (FK-013), independent of the library; version 0.7.0-alpha.14. Worked in a separate worktree while the U024
+  runs used the build directory.
+  - `tools/check-claims.py`: first run 89 claims without code [real defects in the specifications] — see UNITS.
+    Every one corrected to the real test, or marked "not built (planned)" on its line. ARCHITECTURE's status line
+    still said the Qt app was not built. API-SPEC: 7 signatures differed from the headers; the C ABI, disk cache,
+    job queue and capability profiles were described as if they existed; ADR-0007 and mobile-portability named a
+    `core-mobile-lite` CI job that never existed.
+  - Checker of the checker: 7 invented references added to a PRD (test, suite, program, file, self-test section,
+    scenario, CI job) — all 7 reported; first version missed `Suite.*` with an unknown suite and CI job names [gap]
+    → added.
+  - `tests/core/test_api_contract.cpp`: compile-time signature and enum checks; compiled against the headers
+    (standalone compile from the build's compile command) before the build directory was free.
+  - `tools/test_report.py`: passed / failed / skipped / not started / blocked; a sample JUnit file with one of each
+    gives the right counts and exit 1. Self-test: `SelfTest::summary()` printed before "self-test passed/FAILED"
+    and stored in `report.json`.
+
 ### 11:00–11:50 — PR #26 CI round 3; owner merged PRs #17–#19; U028 preparation
 - Owner merged PR #17 (U015), #18 (U016) and #19 (U017) into `main` (15:39 UTC). PRs #21 and #22 now target `main`
   directly and are mergeable without conflicts; the unit list and traceability are updated.

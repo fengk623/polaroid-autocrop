@@ -35,7 +35,7 @@
 | U024 | v0.7.0-alpha.13 | 真实窗口与文字/排版验收 | FK-009 | UX-06, UX-10 | 自动检查待合并（PR #26）；真实窗口待验收 |
 | U025 | v0.7.0-alpha.8 | 多显示器色彩与 MinIsWhite 预览一致 | FK-011 | — | 待合并（PR #21） |
 | U026 | v0.7.0-alpha.10 | 格式能力与 DNG 互操作 | FK-012 | UX-02 | 待合并（PR #23） |
-| U027 | v0.9.0-beta.2 | 实现、文档与测试契约一致 | FK-013 | UX-12 | 未开始 |
+| U027 | v0.7.0-alpha.14 | 实现、文档与测试契约一致 | FK-013 | UX-12 | 待合并（PR #27） |
 | U028 | v0.9.0-beta.3 | 版本冻结、可追溯发行包、安装升级卸载 | FK-014 | UX-11 | 未开始 |
 | U029 | v1.0.0-rc.1 | 使用指南、完成总结、全量回归 | UX-12 | 全部 | 未开始 |
 
@@ -114,7 +114,7 @@
 ### U009 隐私预设统一过滤
 - 工单：FK-004。范围：所有格式与元数据通道（TIFF 标签、XMP、PNG/JPEG 文本块）统一过滤，明示保留字段。
 - 验收：独立读回 TIFF/PNG/JPEG 实际输出，“移除身份”后 Artist/creator/owner 等不泄漏；known-issue FK-004 转为常规测试。
-- 实现：RFC-0013 §Privacy presets on every channel。根因：`buildXmp` 不论预设都从源 XMP 复制 `dc:creator`。`applyPrivacy` 结果带预设，成为所有写入通道（TIFF/DNG 标签、TIFF/PNG/JPEG/DNG 的 XMP）的唯一输入；`writtenMetadata(filtered, TagChannel)` 明示每个通道实际写入的字段（DNG 的 Make/Model 为本软件线性扫描名）；右栏“元数据与隐私”列出当前扫描件、预设、格式下实际写入的字段与从不写入的内容。核心已知问题全部转为常规测试，`test_known_issues` 可执行文件移除（CMake 注释说明以后如何再加）。
+- 实现：RFC-0013 §Privacy presets on every channel。根因：`buildXmp` 不论预设都从源 XMP 复制 `dc:creator`。`applyPrivacy` 结果带预设，成为所有写入通道（TIFF/DNG 标签、TIFF/PNG/JPEG/DNG 的 XMP）的唯一输入；`writtenMetadata(filtered, TagChannel)` 明示每个通道实际写入的字段（DNG 的 Make/Model 为本软件线性扫描名）；右栏“元数据与隐私”列出当前扫描件、预设、格式下实际写入的字段与从不写入的内容。核心已知问题全部转为常规测试，`test_known_issues`（已移除：最后一个已知问题在 U009 转为常规测试，不存在） 可执行文件移除（CMake 注释说明以后如何再加）。
 - 测试：核心 `Privacy.*`（含原已知问题；TIFF/PNG/JPEG/DNG × 三个预设的字节级读回；列出的字段都在文件中）；变异测试：恢复复制创作者后 3 个测试失败；自检 FK-004 2 项（带身份信息的扫描件副本）。
 - 分支 `unit/U009-privacy`（基于 U008）· PR #11 · 不单独发布。
 
@@ -238,6 +238,11 @@
 ### U027 实现、文档与测试契约一致（FK-013）
 - 范围：ARCHITECTURE/API-SPEC/验收矩阵与代码一致；接口编译/兼容测试；测试报告分开 通过/失败/跳过/未启动/阻塞/已知问题。
 
+- 顺序：不依赖图库，在 U024 之后完成，版本号 v0.7.0-alpha.14（原计划 v0.9.0-beta.2）。
+- 发现（`tools/check-claims.py` 首次运行 89 处）：PRD/RFC/测试计划/验收矩阵引用了从未存在的测试与目录（`test_dng`、`test_roundtrip`、`test_export_*`、`test_templates`、`test_jobs`、`test_batch`、`test_cache`、`test_diagnostics`、`test_source_untouched`、`tests/app/*`、`tests/contract/`、`tests/core/test_c_abi.c`、`tests/data/` 等）；ARCHITECTURE 仍写“Qt 应用未实现”；API 规格声明了不存在的 C ABI（`fk/fk_c.h`）、`DiskCache`、`JobQueue`、`Capabilities`，ADR-0007 与移动端文档称有 `core-mobile-lite` CI 作业（不存在）；API 规格中 7 个签名与头文件不符（`openTiff`、`findMatch`、`checkEdited`、`makeTemplate`、`fingerprint`、`boundingRect`、`nextFreeVersionPath`）。
+- 实现：`tools/check-claims.py`（CI 文档任务）——规范文档中反引号里的测试程序、测试、自检章节、场景、文件路径与 CI 作业必须存在，API 规格声明的名称必须在 core 中存在；未实现的内容必须在同一行注明 planned / 未实现 等。`tests/core/test_api_contract.cpp`——API 规格列出的枚举值、常量与函数签名在编译时检查，稳定名称运行时检查。逐条改正文档：引用改为真实测试，未实现的标注“未构建（计划）”；ARCHITECTURE 实现状态重写；API 规格改为与头文件一致并标出计划部分；验收矩阵每行绑定真实测试与诚实状态；移动端只保留方向，未构建前不称已验证。测试报告：CTest 报告分开 通过/失败/跳过/未启动/阻塞（未启动与未登记的跳过都使报告失败，不计通过）；应用自检结尾输出 通过/失败/跳过/已知问题/不适用 计数，并写入 report.json。
+- 测试：在文档中插入 7 种虚构引用（测试、测试组、测试程序、文件、自检章节、场景、CI 作业），检查全部发现；`tools/test_report.py` 用含失败/跳过/未启动的 JUnit 样例验证分类与退出码。
+- 分支 `unit/U027-contracts`（基于 U024）· PR #27 · 不单独发布。
 ### U028 版本冻结与可追溯发行包（FK-014）
 - 范围：干净系统安装、升级、卸载保留用户图库（真机待验收）；回滚与旧工程迁移可执行；许可证文件完整。
 
