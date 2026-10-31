@@ -107,6 +107,23 @@ void SelfTest::key(int k, Qt::KeyboardModifiers mods, bool press, const QString&
     QCoreApplication::processEvents();
 }
 
+void SelfTest::doubleClick(QQuickItem* item, QPointF local) {
+    if (local.x() < 0) local = QPointF(item->width() / 2, item->height() / 2);
+    const QPointF at = item->mapToScene(local), global = item->mapToGlobal(local);
+    inputTs_ += 1000;
+    // two clicks 60 ms apart at the same place: Qt makes the second press a double click
+    qt_handleMouseEvent(window_, at, global, Qt::LeftButton, Qt::LeftButton, QEvent::MouseButtonPress,
+                        Qt::NoModifier, inputTs_);
+    qt_handleMouseEvent(window_, at, global, Qt::NoButton, Qt::LeftButton, QEvent::MouseButtonRelease,
+                        Qt::NoModifier, inputTs_ + 20);
+    qt_handleMouseEvent(window_, at, global, Qt::LeftButton, Qt::LeftButton, QEvent::MouseButtonPress,
+                        Qt::NoModifier, inputTs_ + 60);
+    qt_handleMouseEvent(window_, at, global, Qt::NoButton, Qt::LeftButton, QEvent::MouseButtonRelease,
+                        Qt::NoModifier, inputTs_ + 80);
+    inputTs_ += 80;
+    QCoreApplication::processEvents();
+}
+
 QQuickItem* SelfTest::findItemIf(const std::function<bool(QQuickItem*)>& pred) const {
     std::function<QQuickItem*(QQuickItem*)> find = [&](QQuickItem* it) -> QQuickItem* {
         if (!it) return nullptr;
@@ -2167,9 +2184,7 @@ void SelfTest::runMaskDefaults() {
                          : QStringLiteral("controls not found"));
     // the width typed into the field (real key events), then undone
     if (field && field->isVisible()) {
-        field->forceActiveFocus();
-        key(Qt::Key_A, Qt::ControlModifier, true);
-        key(Qt::Key_A, Qt::ControlModifier, false);
+        doubleClick(field); // UX-09: keyboard input opens with a double-click (the text is selected)
         const QString typed = natural.mm ? QStringLiteral("0.06") : QStringLiteral("2.5");
         for (const QChar c : typed) {
             const int k = c == QLatin1Char('.') ? Qt::Key_Period : Qt::Key_0 + (c.unicode() - '0');
@@ -2316,6 +2331,194 @@ void SelfTest::runMaskDefaults() {
                   m.value("mode").toString() == app_->settings().value("maskMode").toString(),
               maskText(m));
     }
+    restoreSettings();
+    app_->newProject();
+}
+
+void SelfTest::runScrubFields() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("scrub"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QVariantMap saved = app_->settings();
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{
+             {"exportFolder", exportDir}, {"exportFormat", "tif"}, {"geometryMode", "crop"}, {"rightTab", 2}})
+        app_->setSetting(k, v);
+    auto restoreSettings = [&] {
+        for (const char* k : {"exportFolder", "exportFormat", "geometryMode", "rightTab"})
+            app_->setSetting(QString::fromLatin1(k), saved.value(QString::fromLatin1(k)));
+    };
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    QCoreApplication::processEvents();
+    const QString id = app_->currentItemId();
+    const fk::ItemRecord* it0 = app_->item(toStd(id));
+    QQuickItem* field = findItem(QStringLiteral("maskWidthField"));
+    check(QStringLiteral("UX-09 setup: the mask width field of a print"),
+          it0 && field && field->isVisible() && it0->composite.mask.mode == fk::MaskMode::feather);
+    if (!it0 || !field || !field->isVisible()) {
+        restoreSettings();
+        return;
+    }
+    const fk::MaskChoice start = it0->composite.mask;
+    const bool mm = start.mm;
+    const double step = field->property("step").toDouble(), upper = field->property("to").toDouble();
+    auto width = [&] { return app_->item(toStd(id))->composite.mask.width; };
+    auto near = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+    auto expected = [&](double from, double dxPx) { // 2 logical px per step, clamped to the field's range
+        return std::clamp(from + std::round(dxPx / 2.0) * step, 0.0, upper);
+    };
+    const QPointF c(field->width() / 2, field->height() / 2);
+    // a drag in `n` moves of `dx/n` px, optionally waiting between moves (a realistic speed)
+    auto scrubBy = [&](double dx, int n, int waitMs, bool release = true) {
+        mouse(field, c, QEvent::MouseButtonPress);
+        for (int k = 1; k <= n; ++k) {
+            mouse(field, c + QPointF(dx * k / n, 0), QEvent::MouseMove);
+            if (waitMs > 0) waitFor([] { return false; }, waitMs);
+        }
+        if (release) mouse(field, c + QPointF(dx, 0), QEvent::MouseButtonRelease);
+        QCoreApplication::processEvents();
+    };
+    // 1. drag right over about 0.25 s (live updates happen): the value follows, one undo step for the whole
+    // drag
+    scrubBy(60, 12, 20);
+    const double w1 = width();
+    app_->undo();
+    const double undone = width();
+    const bool moreSteps = app_->canUndo(); // a fresh print: the drag must be its only step
+    app_->redo();
+    check(QStringLiteral("UX-09 drag right (mouse): the value follows, one undo step for the whole drag"),
+          near(w1, expected(start.width, 60)) && near(undone, start.width) && !moreSteps && near(width(), w1),
+          QStringLiteral("%1 → %2 %3, undo → %4").arg(start.width).arg(w1).arg(mm ? "mm" : "px").arg(undone));
+    // 2. a click is not a drag and does not open keyboard input or select text
+    mouse(field, c, QEvent::MouseButtonPress);
+    mouse(field, c, QEvent::MouseButtonRelease);
+    check(QStringLiteral("UX-09 a click changes nothing, no keyboard input, no selected text"),
+          near(width(), w1) && field->property("readOnly").toBool() &&
+              field->property("selectedText").toString().isEmpty());
+    // 3. under the 4 px threshold
+    scrubBy(3, 3, 0);
+    check(QStringLiteral("UX-09 a 3 px move is not a drag"), near(width(), w1));
+    // 4. / 5. negative drag to the lower bound, then past the upper bound
+    scrubBy(-400, 20, 0);
+    const double lo = width();
+    scrubBy(400, 20, 0);
+    check(QStringLiteral("UX-09 drag left to the lower bound, right to the upper bound (clamped)"),
+          near(lo, 0.0) && near(width(), upper), QStringLiteral("%1 … %2").arg(lo).arg(width()));
+    // 6. Esc during a drag: back to the value before it, no undo step
+    const double beforeEsc = width();
+    scrubBy(-40, 8, 20, false); // long enough for live updates: Esc must undo them
+    const double during = field->property("liveValue").toDouble();
+    key(Qt::Key_Escape, Qt::NoModifier, true);
+    key(Qt::Key_Escape, Qt::NoModifier, false);
+    mouse(field, c + QPointF(-40, 0), QEvent::MouseButtonRelease);
+    app_->undo();
+    const double afterUndo = width();
+    app_->redo();
+    check(QStringLiteral("UX-09 Esc during a drag restores the value (no undo step)"),
+          !near(during, beforeEsc) && near(width(), beforeEsc) && near(afterUndo, 0.0),
+          QStringLiteral("live %1, after Esc %2, undo → %3").arg(during).arg(width()).arg(afterUndo));
+    // 7. double-click: keyboard input; letters refused; Enter commits
+    doubleClick(field);
+    const bool editing = !field->property("readOnly").toBool() &&
+                         field->property("selectedText").toString() == field->property("text").toString();
+    for (const QChar ch : QStringLiteral("ab")) {
+        key(Qt::Key_A + (ch.unicode() - 'a'), Qt::NoModifier, true, QString(ch));
+        key(Qt::Key_A + (ch.unicode() - 'a'), Qt::NoModifier, false, QString(ch));
+    }
+    const QString afterLetters = field->property("text").toString();
+    auto type = [&](const QString& t) {
+        for (const QChar ch : t) {
+            const int k = ch == QLatin1Char('.') ? Qt::Key_Period : Qt::Key_0 + (ch.unicode() - '0');
+            key(k, Qt::NoModifier, true, QString(ch));
+            key(k, Qt::NoModifier, false, QString(ch));
+        }
+    };
+    const QString v12 = mm ? QStringLiteral("0.12") : QStringLiteral("3.5");
+    type(v12);
+    key(Qt::Key_Return, Qt::NoModifier, true);
+    key(Qt::Key_Return, Qt::NoModifier, false);
+    check(QStringLiteral("UX-09 double-click opens keyboard input; letters are refused; Enter commits"),
+          editing && !afterLetters.contains(QLatin1Char('a')) && near(width(), v12.toDouble()) &&
+              field->property("readOnly").toBool(),
+          QStringLiteral("after letters \"%1\", value %2").arg(afterLetters).arg(width()));
+    // 8. Esc cancels typing
+    doubleClick(field);
+    type(mm ? QStringLiteral("0.5") : QStringLiteral("9"));
+    key(Qt::Key_Escape, Qt::NoModifier, true);
+    key(Qt::Key_Escape, Qt::NoModifier, false);
+    check(QStringLiteral("UX-09 Esc cancels keyboard input"),
+          near(width(), v12.toDouble()) && field->property("readOnly").toBool());
+    // 9. focus loss commits
+    doubleClick(field);
+    const QString v07 = mm ? QStringLiteral("0.07") : QStringLiteral("2");
+    type(v07);
+    if (auto* canvas = qobject_cast<QQuickItem*>(findCanvas())) click(canvas, QPointF(4, 4));
+    check(QStringLiteral("UX-09 leaving the field commits the typed value"), near(width(), v07.toDouble()),
+          QString::number(width()));
+    // 10. keyboard steps kept
+    click(field);
+    key(Qt::Key_Up, Qt::NoModifier, true);
+    key(Qt::Key_Up, Qt::NoModifier, false);
+    const double up1 = width();
+    key(Qt::Key_Up, Qt::ShiftModifier, true);
+    key(Qt::Key_Up, Qt::ShiftModifier, false);
+    check(QStringLiteral("UX-09 arrow keys still step (Shift ×10)"),
+          near(up1, v07.toDouble() + step) && near(width(), v07.toDouble() + 11 * step),
+          QStringLiteral("%1, %2").arg(up1).arg(width()));
+    // 11. no backlog of composite previews while dragging, and the last preview is the last value
+    app_->exportImageAreas({id});
+    app_->waitIdle(300000);
+    QVariantList rows;
+    auto conn = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+    app_->relinkFiles({filesMatching(exportDir, QStringLiteral("*_EDIT_v001.tif")).value(0)});
+    app_->waitIdle(300000);
+    disconnect(conn);
+    app_->applyRelink(rows);
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    app_->selectItem(id);
+    QObject* canvas = findCanvas();
+    canvas->setProperty("mode", QStringLiteral("composite"));
+    app_->requestCompositePreview(id);
+    app_->waitIdle(120000);
+    QCoreApplication::processEvents();
+    const int firstJob = app_->jobRunner()->lastJobId();
+    int maxActive = 0;
+    const double before11 = width();
+    mouse(field, c, QEvent::MouseButtonPress);
+    for (int k = 1; k <= 30; ++k) { // 30 moves over about 0.6 s
+        mouse(field, c + QPointF(2.0 * k, 0), QEvent::MouseMove);
+        waitFor([] { return false; }, 20);
+        maxActive = std::max(maxActive, app_->jobRunner()->activeCount());
+    }
+    mouse(field, c + QPointF(60, 0), QEvent::MouseButtonRelease);
+    app_->waitIdle(120000);
+    QCoreApplication::processEvents();
+    const int started = app_->jobRunner()->lastJobId() - firstJob;
+    const auto used = app_->masksUsed(toStd(id));
+    const fk::ItemRecord* it1 = app_->item(toStd(id));
+    double scanDpi = 0;
+    for (const auto& sc : app_->project().scans)
+        for (const auto& i : sc.items)
+            if (i.itemId == toStd(id)) scanDpi = sc.dpiUsed > 0 ? sc.dpiUsed : sc.info.dpiX;
+    const fk::MaskParams want = fk::resolveMask(it1->composite.mask, scanDpi);
+    check(QStringLiteral(
+              "UX-09 a 0.6 s drag in composite view: few previews, never more than 2 at once, the last "
+              "preview is the last value"),
+          near(it1->composite.mask.width, expected(before11, 60)) && started <= 10 && maxActive <= 2 &&
+              used.first.featherPx == want.featherPx && used.first.preserveEdgePx == want.preserveEdgePx &&
+              app_->compositePreviewGeneration(toStd(id)) == app_->itemGeneration(toStd(id)),
+          QStringLiteral("%1 preview jobs for 30 moves, at most %2 at once, preview mask %3 px, value %4")
+              .arg(started)
+              .arg(maxActive)
+              .arg(used.first.featherPx + used.first.preserveEdgePx)
+              .arg(it1->composite.mask.width));
+    canvas->setProperty("mode", QStringLiteral("scan"));
+    snapshot(QStringLiteral("U016-scrub"));
     restoreSettings();
     app_->newProject();
 }
@@ -2692,6 +2895,7 @@ int SelfTest::run() {
     runShapeEditing();
     runScanRotation();
     runMaskDefaults();
+    runScrubFields();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

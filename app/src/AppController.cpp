@@ -470,6 +470,7 @@ void AppController::newProject() {
     ++projectGen_; // results of jobs started for the previous project are outdated from here on
     previewGen_.clear();
     previewJob_.clear();
+    previewPending_.clear();
     project_ = fk::newProject(toStd(tr("Untitled")));
     project_.settings.expectedCount = settings_.value("expectedCount").toInt();
     project_.settings.autoCount = settings_.value("autoCount").toBool();
@@ -1494,11 +1495,11 @@ void AppController::rotateUpright(const QString& itemId, int delta) {
 
 // ---- UX-08: per-print mask ----------------------------------------------------------------------------
 
-void AppController::setMask(const std::string& itemId, const fk::MaskChoice& m) {
+void AppController::setMask(const std::string& itemId, const fk::MaskChoice& m, bool undoStep) {
     if (readOnly_) return;
     fk::ItemRecord* it = findItemMut(itemId);
     if (!it || (it->composite.maskSet && it->composite.mask == m)) return;
-    pushUndo(*it);
+    if (undoStep) pushUndo(*it);
     it->composite.mask = m;
     it->composite.maskSet = true;
     invalidateItem(itemId); // the composite preview was computed with the old mask
@@ -1528,6 +1529,49 @@ void AppController::resetItemMask(const QString& itemId) {
     const fk::ScanRecord* s = scanOf(toStd(itemId));
     if (!it || !s) return;
     setMask(it->itemId, fk::naturalBlend(maskChoiceOf(*it, settings_).mode, dpiReliable(*s)));
+}
+
+void AppController::beginMaskEdit(const QString& itemId) {
+    if (const fk::ItemRecord* it = item(toStd(itemId)))
+        maskEditStart_[it->itemId] = {it->composite.mask, it->composite.maskSet};
+}
+
+void AppController::setItemMaskWidthLive(const QString& itemId, double width) {
+    const fk::ItemRecord* it = item(toStd(itemId));
+    if (!it || !maskEditStart_.count(it->itemId)) return; // live changes only inside begin … end
+    fk::MaskChoice m = maskChoiceOf(*it, settings_);
+    if (m.mode == fk::MaskMode::hard_edge) return;
+    m.width = std::clamp(width, 0.0, m.mm ? 1.0 : 50.0);
+    setMask(it->itemId, m, false);
+}
+
+void AppController::endMaskEdit(const QString& itemId, bool commit) {
+    fk::ItemRecord* it = findItemMut(toStd(itemId));
+    auto f = maskEditStart_.find(toStd(itemId));
+    if (!it || f == maskEditStart_.end()) return;
+    const auto [startMask, startSet] = f->second;
+    maskEditStart_.erase(f);
+    if (it->composite.mask == startMask && it->composite.maskSet == startSet) return; // nothing changed
+    if (!commit) {
+        // Esc: back to the value before the drag, no undo step
+        it->composite.mask = startMask;
+        it->composite.maskSet = startSet;
+        invalidateItem(it->itemId);
+        edgeChange_.erase(it->itemId);
+        touch(false);
+        Q_EMIT geometryChanged(itemId);
+        return;
+    }
+    // one undo step for the whole drag: the state before it
+    Snapshot before = snap(*it);
+    before.mask = startMask;
+    before.maskSet = startSet;
+    auto& u = undo_[it->itemId];
+    u.undo.push_back(before);
+    u.undo.back().seq = ++undoSeq_;
+    if (u.undo.size() > 100) u.undo.erase(u.undo.begin());
+    u.redo.clear();
+    touch(false);
 }
 
 int AppController::applyMaskToItems(const QString& fromItemId, const QStringList& itemIds) {
@@ -1916,6 +1960,13 @@ void AppController::requestCompositePreview(const QString& itemId) {
     for (const auto& e : it->edits)
         if (!e.relinkedPath.empty()) ev = &e;
     if (!ev) return;
+    // coalesce (UX-09: no backlog while a value is dragged): at most one preview per print in flight. A
+    // request while one runs cancels it and is served once it has stopped, with the state as it is then.
+    if (auto f = previewJob_.find(it->itemId); f != previewJob_.end()) {
+        jobs_->cancel(f->second);
+        previewPending_.insert(it->itemId);
+        return;
+    }
     const std::string scanPath = s->path, editPath = ev->relinkedPath, id = it->itemId;
     const fk::ItemRecord itemCopy = *it;
     const fk::EditVersion evCopy = *ev;
@@ -1929,9 +1980,8 @@ void AppController::requestCompositePreview(const QString& itemId) {
     auto change = std::make_shared<double>(0.0);
     auto maskUsed = std::make_shared<fk::MaskParams>();
     const JobSnapshot snap = snapshotFor(s->scanId, id);
-    // coalesce: a newer request supersedes the one still in flight for this print
-    if (auto f = previewJob_.find(id); f != previewJob_.end()) jobs_->cancel(f->second);
-    previewJob_[id] = jobs_->start(
+    auto self = std::make_shared<int>(0);
+    previewJob_[id] = *self = jobs_->start(
         Lane::exportJob, tr("Composite preview %1").arg(toQ(it->label)),
         [=](JobContext& ctx) {
             if (QString e = ScanGuard().verify(scanCopy, ctx.cancel); !e.isEmpty()) {
@@ -2011,9 +2061,12 @@ void AppController::requestCompositePreview(const QString& itemId) {
                                 reinterpret_cast<uint32_t*>(img.scanLine(static_cast<int>(y))));
             *out = std::move(img);
         },
-        [this, out, err, change, maskUsed, id, snap](const JobOutcome& o) -> JobDone {
-            if (auto f = previewJob_.find(id); f != previewJob_.end() && sameProject(snap))
+        [this, out, err, change, maskUsed, id, snap, self](const JobOutcome& o) -> JobDone {
+            if (auto f = previewJob_.find(id); f != previewJob_.end() && f->second == *self)
                 previewJob_.erase(f);
+            // a request arrived while this ran: serve it now, with the current state
+            // (started here, not queued: whoever waits for the jobs to finish also waits for this one)
+            if (previewPending_.erase(id) && sameProject(snap)) requestCompositePreview(toQ(id));
             if (o.cancelled) return JobApply::applied;
             // the boundary, orientation, relinked file or mask changed while this ran: drop the result
             if (!sameComposite(snap)) return JobApply::outdated;

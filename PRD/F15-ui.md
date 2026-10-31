@@ -25,3 +25,11 @@ RFC: `rfc/0011-ui-architecture.md`, `docs/ui-reference.md`, `CONTRACT-ui-core.md
 - A1 Automated snapshots for dark/light, 1280×800 and 1920×1080, 100 % and 200 % scale, long names, Chinese, empty project, low confidence, batch running, relink error. (`tests/app/snapshots`)
 - A2 Real-window captures on Windows (via the user's machine) and macOS (human verification list).
 - A3 UI stays responsive (< 50 ms frame) while a 1600 DPI export runs. (`tests/app/tst_responsiveness`)
+- A4 (UX-09) Value fields that opt in (the mask feather/inset width, U016): press and drag left/right adjusts the value
+  (2 logical px per step, Shift ×10, Alt ×0.1) past a 4 px threshold, so a click is never a drag and never selects
+  text; a double-click (or Enter) opens keyboard input; Enter or focus loss commits, Esc cancels, invalid characters
+  are refused; arrow keys still step; bounds clamp; one drag = one undo step; live updates at most every 100 ms and
+  at most one composite preview in flight per print; the last preview shows the last value. Same behaviour at 2×.
+  Other fields keep plain keyboard input until a consistency review (UX-09). (self-test `runScrubFields`, at 1× and
+  2× device pixel ratio)
+

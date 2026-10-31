@@ -391,7 +391,9 @@ void ScanCanvas::scheduleDetail() {
 
 void ScanCanvas::requestDetail() {
     if (!app_ || pyramid_.empty()) return;
-    if (scale_ * proxyScale_ <= 1.05) {
+    // device pixels per scan pixel decide (UX-09 HiDPI run: logical scale alone showed the proxy at 100 % on
+    // a 2× display)
+    if (scale_ * dpr() * proxyScale_ <= 1.05) {
         // the proxy is enough; release the full-resolution image
         detail_ = QImage();
         updateBadge();
@@ -424,7 +426,7 @@ void ScanCanvas::updateBadge() {
     if (mode_ == QLatin1String("composite") && app_ && !showOriginal_ &&
         !app_->compositePreview(app_->currentItemId().toStdString()).isNull())
         b = QStringLiteral("Preview");
-    else if (scale_ * proxyScale_ <= 1.05 || pyramid_.empty())
+    else if (scale_ * dpr() * proxyScale_ <= 1.05 || pyramid_.empty())
         b = QStringLiteral("Preview");
     else if (!detail_.isNull() && detailGen_ == generation_)
         b = QStringLiteral("Full");
@@ -443,7 +445,7 @@ void ScanCanvas::paint(QPainter* p) {
     if (pyramid_.empty()) return;
     const bool pixelExact = scale_ * dpr() >= 0.999;
     // proxy level: the smallest image that still has ≥ 1 source pixel per ~1.5 screen pixels
-    const double k = scale_ * proxyScale_;
+    const double k = scale_ * dpr() * proxyScale_; // device px per proxy px
     int L = 0;
     while (L + 1 < static_cast<int>(pyramid_.size()) && k * std::pow(2.0, L + 1) <= 1.5)
         ++L;

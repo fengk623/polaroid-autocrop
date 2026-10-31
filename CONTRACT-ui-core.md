@@ -27,8 +27,9 @@ Contract version: **1** · RFC-0011 · Applies to `app/` (Qt Quick) and any futu
   (UX-04, quarter turns `quarterTurnMatrix`, applied once before scale and offset). 100 % = one scan pixel per
   physical device pixel. `mapFromScan()`/`mapToScan()` are the only conversion functions; boundaries, hits,
   edits and exports stay in scan coordinates.
-- Resolution state: `Preview` when scale ≤ 1/proxy.scale × 1.05, else `Full` once all visible tiles are
-  loaded (`Full…` while loading). Badge text exactly `Preview` / `Full` / `Full…`.
+- Resolution state: `Preview` when scale × device pixel ratio ≤ 1/proxy.scale × 1.05 (device pixels per scan
+  pixel; on a 2× display the proxy is not enough at 100 %), else `Full` once all visible tiles are loaded (`Full…`
+  while loading). Badge text exactly `Preview` / `Full` / `Full…`.
 - Overlays are drawn from `fk::Shape` values; colours: Outer `#3D8BFF` solid, Inner `#F2C744` solid with inward
   corner ticks (so Outer and Inner differ by shape, not only colour), manual `#FF8A3D` dashed, low confidence
   `#FF4D4D` dash-dot + warning icon, relinked `#38C172` solid + link icon.

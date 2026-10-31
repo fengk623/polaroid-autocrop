@@ -19,6 +19,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 
 namespace fkapp {
 
@@ -129,6 +130,12 @@ class AppController : public QObject {
     Q_INVOKABLE void resetItemMask(const QString& itemId);
     /// Explicit batch: the listed prints take `fromItemId`'s mask. Returns how many changed.
     Q_INVOKABLE int applyMaskToItems(const QString& fromItemId, const QStringList& itemIds);
+    /// UX-09: a drag on a value (scrubbing). begin remembers the mask; live changes update the print (and its
+    /// coalesced preview) without undo steps; end commits one undo step for the whole drag, or restores
+    /// (Esc).
+    Q_INVOKABLE void beginMaskEdit(const QString& itemId);
+    Q_INVOKABLE void setItemMaskWidthLive(const QString& itemId, double width);
+    Q_INVOKABLE void endMaskEdit(const QString& itemId, bool commit);
     Q_INVOKABLE void setReviewed(const QString& itemId, bool reviewed);
     Q_INVOKABLE void setExcluded(const QString& itemId, bool excluded);
     Q_INVOKABLE void reviewAndNext();
@@ -301,7 +308,8 @@ class AppController : public QObject {
     /// UX-08 (self-test): the mask the last composite preview and the last final output of a print were made
     /// with
     std::map<std::string, std::pair<fk::MaskParams, fk::MaskParams>> masksUsed_;
-    void setMask(const std::string& itemId, const fk::MaskChoice& m);
+    void setMask(const std::string& itemId, const fk::MaskChoice& m, bool undoStep = true);
+    std::map<std::string, std::pair<fk::MaskChoice, bool>> maskEditStart_; ///< UX-09: mask before a drag
     quint64 undoSeq_ = 0;
     void afterScanRotation(const std::string& scanId);
     std::map<std::string, std::pair<fk::Shape, fk::Shape>> detected_; ///< itemId → detected outer/inner
@@ -323,6 +331,7 @@ class AppController : public QObject {
     std::map<std::string, quint64> scanGen_, itemGen_;
     std::map<std::string, quint64> previewGen_; ///< item → item generation its cached composite preview shows
     std::map<std::string, int> previewJob_;     ///< item → in-flight composite preview job (coalescing)
+    std::set<std::string> previewPending_;      ///< UX-09: asked again while one was in flight
     std::map<std::string, QVariantMap> relinkChecks_; ///< itemId → last content/geometry check
     /// New-alignment records offered by the last assessments, applied only when the user confirms them.
     std::map<QString, fk::Sidecar> pendingAlignments_;
