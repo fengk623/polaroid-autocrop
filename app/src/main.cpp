@@ -7,6 +7,7 @@
 #include "fk/version.hpp"
 
 #include <QCommandLineParser>
+#include <QFont>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QLocale>
@@ -51,6 +52,17 @@ int main(int argc, char* argv[]) {
 
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("FrameKeeper"));
+#ifdef Q_OS_WIN
+    // FK-009: the offscreen platform's FreeType font database has no font fallback, so Chinese text in the
+    // default Latin font draws boxes there (a real window falls back to Microsoft YaHei). Give the self-test
+    // the same fallback order Windows uses for the UI font.
+    if (selfTest && !live) {
+        QFont f = QGuiApplication::font();
+        f.setFamilies({QStringLiteral("Segoe UI"), QStringLiteral("Microsoft YaHei UI"),
+                       QStringLiteral("Microsoft YaHei"), QStringLiteral("SimSun")});
+        QGuiApplication::setFont(f);
+    }
+#endif
     QGuiApplication::setOrganizationName(QStringLiteral("FrameKeeper"));
     QGuiApplication::setApplicationVersion(
         QString::fromStdString(fk::productVersion()) + QStringLiteral(" (commit ") +

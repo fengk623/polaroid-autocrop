@@ -730,3 +730,8 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     glyph check fails with 2274 boxes.
   - Mistake: I rebuilt `build/app` while the U024 runner script was between scans, so the owner-scan runs would
     have mixed two builds [process error] → stopped it (by PID) and reran everything on the final build. Trap T25.
+  - PR #26 CI round 2 (after the font folder fix): Windows fonts load (Arial), English passes; Chinese draws boxes
+    — the offscreen platform's FreeType font database has no fallback for characters missing from the default
+    font [CI environment; a real window falls back to Microsoft YaHei] → the Windows offscreen self-test sets the
+    UI font families Segoe UI, Microsoft YaHei UI, Microsoft YaHei, SimSun (Windows' own order). PR #25 green on
+    all platforms with the font folder fix.
