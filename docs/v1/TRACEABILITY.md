@@ -31,7 +31,7 @@
 | FK-009 | P1 | Windows 文字与真实窗口验收 | U024 | 计划；真机部分待验收 | C：历史 offscreen 截图问题；本地 Linux 截图中英文可读 | 未开始 |
 | FK-010 | P1 | 真实输出计划驱动无损提示 | U010 | 核心 `ExportPlan.*` ×3；自检 FK-010 2 项 | R：修复前 16→8 位仍标“逐像素一致”；U010：提示来自核心输出计划，降位深需明确确认 | 已完成（自动验证；真实窗口待验收） |
 | FK-011 | P2 | 多显示器色彩与灰度预览一致 | U025 | 场景 `miniswhite` 8/16-bit 常规检查（CI）；自检 `runDisplayProfile` 8 项（模拟换显示器：预览重新转换且与原始分辨率一致、100% 补丁与合成预览重做、缩略图跟随、旧配置文件的结果不显示、输出不变、换回一致）；变异测试 7 项 | R：同一行预览均值 15.8 vs 原始分辨率 239.2；U025：两者均为 15.8 | 待合并（PR #21；真实双屏、热插拔、macOS 窗口色彩标记待验收） |
-| FK-012 | P2 | DNG 与外部软件互操作 | U026 | CI（Core linux）LibRaw/rawpy 独立解码本软件的线性 DNG 并与同一画面区域的 16 位 TIFF 比较（`tools/dng-interop.py`）；`TiffRead.LinearDngIsRefusedWithGuidance`（先红后绿）；自检 “FK-012 a Linear DNG given back …”（回导与拖入） | S：FORMAT-MATRIX 冻结；PRD F05 A5 引用的 `test_dng` 不存在 | 待合并（PR #23；DNG 回导 v1.0 不支持为建议，待所有者确认；Capture One / Photoshop / Lightroom 打开记录待验收） |
+| FK-012 | P2 | DNG 与外部软件互操作 | U026 | CI（Core linux）LibRaw/rawpy 独立解码本软件的线性 DNG：相机空间数据与 16 位 TIFF 线性化后在 1 LSB 以内（实测约 0.3 LSB）、色彩矩阵按写入读取（`tools/dng-interop.py`）；`TiffRead.LinearDngIsRefusedWithGuidance`（先红后绿）；自检 “FK-012 a Linear DNG given back …”（回导与拖入） | S：FORMAT-MATRIX 冻结；PRD F05 A5 引用的 `test_dng` 不存在 | 待合并（PR #23；DNG 回导 v1.0 不支持为建议，待所有者确认；Capture One / Photoshop / Lightroom 打开记录待验收） |
 | FK-013 | P2 | 实现、文档与测试契约一致 | U027（U001 起逐步） | 测试报告区分已知问题（U001） | S | 未开始 |
 | FK-014 | P2 | 版本冻结与可追溯发行包 | U001（构建信息）、U028 | 发布工作流版本/提交一致性检查（U001） | S | 进行中 |
 

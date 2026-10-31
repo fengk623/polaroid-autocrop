@@ -11,7 +11,7 @@
 | TIFF（LZW/ZIP/无压缩，BigTIFF 自动） | 8 / 16 | 灰度、RGB；ICC 嵌入或不嵌入 | 写入器支持 alpha 通道；圆形画面的透明外区尚未实现（U010） | XMP（我们的 ID + 选定 dc 字段）、基本 TIFF 标签 | 已实现（test_export、test_tiff_io） | 未验证（Photoshop / Lightroom / Capture One 待记录，U026） |
 | PNG | 8 / 16 | 灰度、RGB；iCCP | 同 TIFF | iTXt XMP | 已实现（test_png_jpeg） | 未验证 |
 | JPEG | 8（16-bit 源降为 8，显式提示） | RGB/灰度；ICC APP2 | 无（圆形外区须明示填充色，U010） | APP1 XMP | 已实现（test_png_jpeg） | 未验证 |
-| Linear DNG（LinearRaw，16-bit，3 通道） | 16 | ColorMatrix1 + 线性化 | 无 | DNG 标签 + XMP | 已实现（结构/标签测试，output_stage 自检） | **独立解码**：CI 用 LibRaw（rawpy）解码并与同一画面区域的 16 位 TIFF 导出比较（U026，`tools/dng-interop.py`，结果见 CI 注记）；Lightroom / Photoshop / Capture One 仍待记录 |
+| Linear DNG（LinearRaw，16-bit，3 通道） | 16 | ColorMatrix1 + 线性化 | 无 | DNG 标签 + XMP | 已实现（结构/标签测试，output_stage 自检） | **独立解码（U026，CI）**：LibRaw（rawpy）按原样读出的相机空间数据与同一画面区域的 16 位 TIFF 导出线性化后一致（增益 1.0000–1.0001、平均误差约 0.3 LSB，圆形与矩形画面各 2 张），色彩矩阵按写入读取；LibRaw 自己的 sRGB 渲染把 D50 矩阵当 D65 处理，红色有偏差（仅记录）。Lightroom / Photoshop / Capture One 仍待记录 |
 
 导出几何：像素裁切（无重采样，可能含角部边框）、拉直（Lanczos-3 单次重采样）；转正 90° 旋转无损。最终输出格式为 TIFF/PNG/JPEG（不含 DNG）。
 

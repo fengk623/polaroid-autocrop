@@ -6,13 +6,14 @@ the same generated scans (seed 5: two round prints, seed 8: two Polaroid 600). T
 
 1. Pixel data (gate): LibRaw's camera-space output (no colour matrix, unit white balance, no auto brightness, no
    maximum adjustment, gamma 1) equals the TIFF linearised with the sRGB curve (the scans carry an sRGB profile, so
-   the DNG's camera space is linear sRGB): per channel gain within 0.5 %, correlation >= 0.9999, mean absolute error
-   after the gain <= 0.1 % of full scale. This covers layout, size, orientation, white and black level and the
-   linearisation.
+   the DNG's camera space is linear sRGB): per channel gain within 0.1 %, correlation >= 0.99995, mean absolute
+   error after the gain <= 1 LSB (1/65535). This covers layout, size, orientation, white and black level and the
+   linearisation (PRD F05 A5).
 2. Colour matrix (gate): LibRaw read our ColorMatrix1 (the inverse of the scan profile's D50 colorants, written with
-   CalibrationIlluminant1 = D50): either its camera matrix (`rgb_xyz_matrix`) equals it within 1e-4, or its output
-   matrix (`color_matrix`, camera to sRGB) equals the one LibRaw derives from it (rows of ColorMatrix1 x sRGB
-   normalised to 1, inverted) within 1e-3.
+   CalibrationIlluminant1 = D50): its camera-to-sRGB matrix (`color_matrix`) equals the one it derives from that
+   ColorMatrix1 (rows of ColorMatrix1 x sRGB normalised to 1, inverted; dcraw `cam_xyz_coeff`) within 1e-4.
+   rawpy's `rgb_xyz_matrix` stays empty for DNG files (LibRaw keeps DNG matrices separately), so it is only
+   reported.
 
 Reported, not a gate: LibRaw's own sRGB rendering. LibRaw treats a DNG colour matrix as if it were relative to
 D65 and ignores CalibrationIlluminant1, so its colours differ slightly from a DNG-conformant reader's (Adobe Camera
@@ -135,7 +136,7 @@ def main() -> int:
             report["files"].append(entry)
             continue
         entry["pixelData"] = compare(ref, dec, opaque)
-        data_ok = all(abs(c["gain"] - 1) <= 0.005 and c["correlation"] >= 0.9999 and c["maeAfterGain"] <= 0.001
+        data_ok = all(abs(c["gain"] - 1) <= 0.001 and c["correlation"] >= 0.99995 and c["maeAfterGain"] <= 1 / 65535
                       for c in entry["pixelData"])
         entry["pixelDataOk"] = data_ok
         if icc:
@@ -147,7 +148,7 @@ def main() -> int:
                                     "color_matrix": np.round(out_matrix, 5).tolist(),
                                     "color_matrix_expected": np.round(libraw_rgb_cam(expected), 5).tolist(),
                                     "maxErrorOutput": round(err_out, 7)}
-            matrix_ok = err <= 1e-4 or err_out <= 1e-3
+            matrix_ok = err_out <= 1e-4
         else:
             entry["colorMatrix"] = {"error": "the TIFF reference has no ICC profile"}
             matrix_ok = False
@@ -173,9 +174,8 @@ def main() -> int:
         m = e["colorMatrix"]
         print(f"::notice title=FK-012 LibRaw decode of {e['dng']}::pixel data "
               f"{'OK' if e['pixelDataOk'] else 'OUT OF TOLERANCE'} ({fmt(e['pixelData'])}); colour matrix "
-              f"{'OK' if e['colorMatrixOk'] else 'DIFFERS'} (camera matrix max error {m.get('maxError', m.get('error'))}"
-              f", output matrix max error {m.get('maxErrorOutput')}; read {m.get('rgb_xyz_matrix')} / "
-              f"{m.get('color_matrix')}); "
+              f"{'OK' if e['colorMatrixOk'] else 'DIFFERS'} (LibRaw camera-to-sRGB matrix {m.get('color_matrix')}, "
+              f"max error {m.get('maxErrorOutput', m.get('error'))} against the one derived from our ColorMatrix1); "
               f"LibRaw sRGB rendering, not a gate: {fmt(e['librawSrgbRendering'])}; "
               f"white {e['libraw']['white_level']}, black {e['libraw']['black_level_per_channel'][:3]}, "
               f"camera WB {e['libraw']['camera_whitebalance'][:3]}")

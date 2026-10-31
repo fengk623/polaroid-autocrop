@@ -215,7 +215,8 @@
 - 范围：按 FORMAT-MATRIX 的评审结论实现/提示；DNG 独立解码验证；16-bit TIFF 为可靠往返母版；未验证的第三方格式不宣称支持。
 
 - 顺序：不依赖图库，版本号按完成顺序为 v0.7.0-alpha.10（原计划 v0.9.0-beta.1）。
-- 实现：CI（Core linux）用独立解码器 LibRaw（rawpy，仅测试用，装在 venv 中）解码本软件导出的线性 DNG，与同一画面区域的 16 位 TIFF 导出比较（每通道增益 ±5%、相关 ≥ 0.995、增益后平均误差 ≤ 1%），结果写成 CI 注记；回导与拖入线性 DNG 时明确拒绝并说明“请导出 16 位 TIFF”，不会被当作扫描件导入。PRD F05 A5 原写“与 TIFF 相差 1 LSB 以内（test_dng）”从未实现，已改为实际检查。
+- 实现：CI（Core linux）用独立解码器 LibRaw（rawpy，仅测试用，装在 venv 中）解码本软件导出的线性 DNG：相机空间数据与同一画面区域的 16 位 TIFF 导出线性化后比较（每通道增益 ±0.1%、相关 ≥ 0.99995、平均误差 ≤ 1 LSB；实测增益 1.0000–1.0001、约 0.3 LSB），LibRaw 由我们的 ColorMatrix1 推出的相机→sRGB 矩阵与预期一致（实测误差 2.5·10⁻⁶）；LibRaw 自己的 sRGB 渲染只记录（它把 D50 矩阵当 D65，红色混入约 12%）；结果写成 CI 注记；回导与拖入线性 DNG 时明确拒绝并说明“请导出 16 位 TIFF”，不会被当作扫描件导入。PRD F05 A5 原写“与 TIFF 相差 1 LSB 以内（test_dng）”从未实现，现在相机空间数据确实在 1 LSB 以内并由 CI 检查。
+- 过程：第一次 CI 比较的是 LibRaw 的 sRGB 渲染，增益 1.02–1.15、个别通道相关 0.90，原因是 LibRaw 按图像最大值重新缩放（adjust_maximum_thr）且忽略 D50 标定光源 [测试设计问题]；改为分别检查数据与矩阵后通过。
 - 建议（待所有者确认）：v1.0 不支持 DNG 回导——这是本软件给 RAW 工作流的导出格式，调色后的母版用 16 位 TIFF；读取本软件自己的 DNG 技术上可行，但其他软件另存的 DNG 不一定是 LinearRaw，范围与成本不确定。
 - 测试：`TiffRead.LinearDngIsRefusedWithGuidance`（先红后绿）；自检 “FK-012 a Linear DNG given back …”（回导与拖入；无配置文件的扫描件跳过，因为无法导出 DNG）；CI LibRaw 解码。
 - 未完成：Capture One / Photoshop / Lightroom 的打开与回导记录需要真实软件（所有者）。
