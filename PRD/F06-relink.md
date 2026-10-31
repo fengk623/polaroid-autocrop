@@ -29,8 +29,11 @@ changes). A failing check is shown; the user decides.
 | Lower bit depth | warn; continue only after confirmation |
 | No ICC | ask: interpret as exported ICC, choose another, or cancel — never silent |
 | Different ICC | convert once into the scan's space at composite time (F12) |
+| Linear DNG (ours or any LinearRaw) | not read back: refused with "export a 16-bit TIFF from the editor and use that" (relink and drag and drop; never imported as a scan). Proposal for v1.0, owner to confirm (FK-012, U026) |
 
 ## Acceptance
 - A1 Each matching path selects the right item on fixtures (XMP kept, XMP stripped + sidecar, only file name, renamed). (`test_relink`)
 - A2 A graded (curves + saturation) version passes the content check; a different picture fails. (`test_relink.Signature`)
 - A3 Wrong-aspect files are never placed automatically. (`test_relink.Aspect`)
+- A4 A Linear DNG given back is refused with guidance, also when dropped, and never imported as a scan.
+  (`TiffRead.LinearDngIsRefusedWithGuidance`; self-test "FK-012 a Linear DNG given back …")

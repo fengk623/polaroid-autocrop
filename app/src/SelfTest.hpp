@@ -83,6 +83,9 @@ class SelfTest : public QObject {
     /// resolution and the thumbnails are converted again, Preview and Full agree, outputs unchanged, a proxy
     /// converted for the previous monitor never shown; and back.
     void runDisplayProfile();
+    /// FK-012 (U026): a Linear DNG export given back (relink, drag and drop) is refused with guidance and
+    /// never imported as a scan.
+    void runFormats();
     void doubleClick(QQuickItem* item, QPointF local = QPointF(-1, -1));
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.

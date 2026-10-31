@@ -156,6 +156,27 @@ TEST(TiffRead, UnsupportedAndMissing) {
     EXPECT_EQ(r.error().code, Errc::unsupported_format);
 }
 
+// FK-012 (U026): a Linear DNG (ours, or any LinearRaw) is refused with guidance, not a bare photometric code
+TEST(TiffRead, LinearDngIsRefusedWithGuidance) {
+    TempDir dir;
+    const auto img = fk::test::makePatternImage(16, 8, 3, 16);
+    WriteOptions o;
+    o.format = FileFormat::dng;
+    o.bits = 16;
+    o.compression = Compression::none;
+    o.dngColorMatrix = {3.13, -1.62, -0.49, -0.98, 1.92, 0.03, 0.07, -0.23, 1.41};
+    auto sink = createSink(dir / "linear.dng", o);
+    ASSERT_TRUE(sink.ok());
+    ASSERT_TRUE((*sink)->begin({16, 8}, 3, 16).ok());
+    ASSERT_TRUE((*sink)->writeRows(img.row(0), 8, img.rowBytes()).ok());
+    ASSERT_TRUE((*sink)->finish().ok());
+    auto r = readImageFile(dir / "linear.dng");
+    ASSERT_FALSE(r.ok());
+    EXPECT_EQ(r.error().code, Errc::unsupported_format);
+    EXPECT_NE(r.error().message.find("Linear DNG"), std::string::npos) << r.error().message;
+    EXPECT_NE(r.error().message.find("16-bit TIFF"), std::string::npos) << r.error().message;
+}
+
 TEST(TiffRead, TruncatedFileIsReportedDamaged) {
     TempDir dir;
     const auto img = fk::test::makePatternImage(64, 64, 3, 16);

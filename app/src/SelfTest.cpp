@@ -3206,6 +3206,62 @@ void SelfTest::runDisplayProfile() {
     restore();
 }
 
+void SelfTest::runFormats() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("formats"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QVariantMap saved = app_->settings();
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{
+             {"exportFolder", exportDir}, {"exportFormat", "dng"}, {"geometryMode", "crop"}})
+        app_->setSetting(k, v);
+    auto restore = [&] {
+        for (const char* k : {"exportFolder", "exportFormat", "geometryMode"})
+            app_->setSetting(QString::fromLatin1(k), saved.value(QString::fromLatin1(k)));
+        QMetaObject::invokeMethod(window_, "closeDialogs");
+    };
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    const fk::ScanRecord* sc = app_->project().scans.empty() ? nullptr : &app_->project().scans.front();
+    const QString name =
+        QStringLiteral("FK-012 a Linear DNG given back (relink, dropped) is refused with what to do "
+                       "instead, never imported as a scan");
+    if (!sc || sc->items.empty() || sc->iccSha256.empty()) {
+        skip(name, QStringLiteral("Linear DNG export needs a scan with an ICC profile (this one has none)"));
+        restore();
+        return;
+    }
+    app_->exportImageAreas({app_->currentItemId()});
+    app_->waitIdle(300000);
+    const QStringList dngs = filesMatching(exportDir, QStringLiteral("*.dng"));
+    auto messageOf = [&](const QVariantList& rows) {
+        return rows.value(0).toMap().value("message").toString();
+    };
+    auto guidance = [](const QString& m) {
+        return (m.contains(QLatin1String("Linear DNG")) && m.contains(QLatin1String("16-bit TIFF"))) ||
+               (m.contains(QStringLiteral("线性 DNG")) && m.contains(QStringLiteral("16 位 TIFF")));
+    };
+    QVariantList rows;
+    auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+    app_->relinkFiles({dngs.value(0)});
+    app_->waitIdle(300000);
+    const QString relinkMessage = messageOf(rows);
+    rows.clear();
+    const int scansBefore = static_cast<int>(app_->project().scans.size());
+    app_->dropFiles({QUrl::fromLocalFile(dngs.value(0))});
+    app_->waitIdle(300000);
+    disconnect(c);
+    const QString dropMessage = messageOf(rows);
+    check(name,
+          dngs.size() == 1 && guidance(relinkMessage) && guidance(dropMessage) &&
+              static_cast<int>(app_->project().scans.size()) == scansBefore,
+          relinkMessage);
+    restore();
+}
+
 int SelfTest::scenarioMinIsWhite() {
     // FK-011 (fixed in U025): rows from the TIFF reader are already in normal polarity; the display converter
     // inverted MinIsWhite again, so Preview (proxy) and Full (rows) disagreed (15.8 vs 239.2 before the fix).
@@ -3701,6 +3757,7 @@ int SelfTest::run() {
     runScrubFields();
     runMemoryBudget();
     runDisplayProfile();
+    runFormats();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},

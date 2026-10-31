@@ -3,6 +3,16 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.10 — U026: Linear DNG decoded independently; DNG given back refused with guidance (FK-012)
+- CI (Core, linux) decodes our Linear DNG export with LibRaw (rawpy, test-only, in a venv): its camera-space data
+  equals the linearised 16-bit TIFF export of the same image area within 1 LSB (measured ≈ 0.3 LSB, gain
+  1.0000–1.0001) and the camera-to-sRGB matrix it derives from our ColorMatrix1 is the expected one (2.5e-6);
+  LibRaw's own sRGB rendering is reported only (it treats the D50 matrix as D65). `tools/dng-interop.py`, results as
+  CI notices. PRD F05 A5 named a `test_dng` that never existed — now points at this check.
+- Relinking or dropping a Linear DNG (ours or any LinearRaw file) is refused with "export a 16-bit TIFF from the
+  editor and use that" instead of a generic unsupported-format error, and is never imported as a scan. Keeping DNG
+  relink unsupported for v1.0 is a proposal for the owner. Notes: docs/release-notes/v0.7.0-alpha.10.md.
+
 ## 0.7.0-alpha.9 — U023: simpler app icon (UX-11)
 - The sun is gone from the icon; the print, its frame and the corner brackets stay (same colours, no rebranding).
   Every ICO / ICNS size is drawn on its own with strokes kept visible at 16–32 px, and the ICNS now has the 1×

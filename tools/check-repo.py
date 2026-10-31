@@ -14,6 +14,8 @@ for f in filter(None, files):
     ext = p.suffix.lower()
     if ext in FORBIDDEN_EXT:
         bad.append(f"{f}: forbidden file type")
+    if ext in {".pyc", ".pyo"} or "__pycache__/" in f:
+        bad.append(f"{f}: interpreter cache (build output)")
     if ext in {".tif", ".tiff", ".dng"} and not f.startswith("tests/data/tiny/"):
         bad.append(f"{f}: scans/TIFFs must not be committed (generate fixtures instead)")
     if size > 1_000_000 and not f.startswith("app/resources/"):
