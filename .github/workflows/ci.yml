@@ -42,6 +42,10 @@ jobs:
         run: python3 tools/check-icons.py
       - name: Specifications name only tests, files, jobs and API that exist (FK-013)
         run: python3 tools/check-claims.py
+      - name: The user guide lists every shortcut (UX-12)
+        run: python3 tools/check-guide.py
+      - name: Every feature of the freeze list has evidence (UX-12)
+        run: python3 tools/freeze-regression.py
 
   core:
     name: Core ${{ matrix.name }}
@@ -250,6 +254,9 @@ jobs:
             FK_SETTINGS_DIR="$d/settings" QT_SCALE_FACTOR=$2 QT_QPA_PLATFORM=offscreen "$APP" --self-test "$d" \
               --scan "$PWD/build/selftest-scan.tif" --scenario text 2>&1 | tee -a build/selftest.log
           done
+          # UX-12 (U029): every entry of the feature freeze list passed in this run (or is covered elsewhere)
+          PY=$(command -v python3 || command -v python)
+          "$PY" tools/freeze-regression.py --report build/selftest/report.json 2>&1 | tee -a build/selftest.log
       - name: Self-test failures as annotations
         if: failure() && steps.selftest.outcome == 'failure'
         run: python3 tools/ci-annotate.py build/selftest.log || python tools/ci-annotate.py build/selftest.log

@@ -3,6 +3,21 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.16 — U029: user guide completed, 26-item summary, full regression of the existing features (UX-12)
+- Full regression of the feature freeze list: every one of its 81 entries is mapped to its evidence
+  (`tests/freeze-regression.json`) and `tools/freeze-regression.py` checks, in CI, that the mapping is complete and
+  that the mapped self-test checks passed on each platform. 28 entries had no automated check at all; a new self-test
+  section (`--scenario freeze`, checks named "FREEZE <ID> …") covers them through the user's own entry points:
+  folder import, relocating a moved scan, removing a scan, templates, reset and snap, reviewed-and-next, exclude,
+  select all, print/scan navigation, view keys, zoom, overlays, compare, full screen, Settings, About, the info
+  chips, batch counts, recent projects, no single-key shortcuts while typing.
+- User guide completed: every shortcut the app defines is in it (`tools/check-guide.py`, CI) — close project, quit,
+  arrow-key nudges, number fields and edge strips were missing; a closing section lists what is not built or not
+  verified yet. `docs/v1/COMPLETION.md`: the 26 items with status and evidence (23 done with automated
+  verification, 2 partly, the library blocked on the owner's decision). The freeze list no longer claims a
+  "migration copy" that never existed. Version 0.7.0-alpha.16, not 1.0.0-rc.1: the library is not built.
+  Notes: docs/release-notes/v0.7.0-alpha.16.md.
+
 ## 0.7.0-alpha.15 — U028: packages checked as the user gets them; upgrade, rollback, uninstall; licence texts (FK-014)
 - Licences: the packages now carry the full licence texts (`licenses/`): libtiff, LittleCMS, libpng,
   libjpeg-turbo, zlib, nlohmann/json, Qt's LGPL-3.0 (with the GPL-3.0 it builds on, the Qt source link and how to
