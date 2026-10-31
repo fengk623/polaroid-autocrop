@@ -36,9 +36,9 @@ int main(int argc, char* argv[]) {
         if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
 #ifdef Q_OS_WIN
-        // FK-009: on Windows the offscreen platform reads fonts with FreeType from QT_QPA_FONTDIR (else Qt's own
-        // lib/fonts, which a Qt install does not have): without this the self-test drew boxes and measured
-        // text with fallback metrics far wider than any real font. Point it at the system's fonts.
+        // FK-009: on Windows the offscreen platform reads fonts with FreeType from QT_QPA_FONTDIR (else Qt's
+        // own lib/fonts, which a Qt install does not have): without this the self-test drew boxes and
+        // measured text with fallback metrics far wider than any real font. Point it at the system's fonts.
         if (qEnvironmentVariableIsEmpty("QT_QPA_FONTDIR")) {
             const QByteArray windir = qgetenv("WINDIR");
             qputenv("QT_QPA_FONTDIR", (windir.isEmpty() ? QByteArray("C:\\Windows") : windir) + "\\Fonts");
