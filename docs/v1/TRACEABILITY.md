@@ -8,7 +8,7 @@
 
 | 需求 | 优先级 | 简述 | Unit | 测试（现有/计划） | 当前证据 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| UX-01 | P1 | 自动识别片数开关 | U011 | 应用 known-issue “count warning stays after the count is corrected” → 修复后转常规 | U：图 1；R：2026-10-30 自检复现（WORKLOG） | 未开始（已复现） |
+| UX-01 | P1 | 自动识别片数开关 | U011 | `CountSetting.*` ×4、`Detection.*` 自动计数 4 项；`fkcli eval --enforce` 漏检提示门槛；自检 UX-01 17 项（鼠标点击，单张/多张/空白混合，保存重开） | U：图 1；R：2026-10-30 自检复现；U011：自动模式无默认数量警告，切换/改数量即时更新警告，疑似漏检与空白扫描提示；夹具与所有者 2 张真实扫描件自检通过 | 已完成（自动验证；真实窗口待所有者确认） |
 | UX-02 | P1 | 内外框精度；纯画面与像素裁切区分 | U010（导出）、U012（检测） | 真实扫描 GT 回归集；导出边缘白框测量 | U：图 2–5；R：polaroid_92 导出四边残白 4–10 px；4-up 外框落在亮带 ≈0.8–0.9 mm | 部分完成（U010 导出：默认标注拉正、输出计划、圆形画面；检测精度 U012） |
 | UX-03 | P1 | Shift 切换与规则形状 | U013 | 真实输入事件回归（计划） | U：图 2 | 未开始 |
 | UX-04 | P1 | 整张扫描件旋转 | U014 | 自检场景 `upright`（现状观察）；整图旋转回归（计划） | U：图 6–7；R：转正只改导出方向、画布不变 | 未开始（已复现） |
@@ -42,7 +42,7 @@
 | `KnownIssue.FK004_RemoveIdentityDropsCreatorFromSourceXmp` | 核心 gtest，WILL_FAIL | FK-004 | 移除身份后 XMP 不含作者 | 已转常规（U009）：`Privacy.RemoveIdentityDropsCreatorFromSourceXmp` 等 | U009 |
 | `KnownIssue.FK007_ReplacedScanAtSamePathIsNotTrusted` | 核心 gtest，WILL_FAIL | FK-007 | 同路径被替换的扫描不被信任 | 已转常规（U007）：`SourceIdentity.ReplacedScanAtSamePathIsNotTrusted` | U007 |
 | `KnownIssue.FK008_DamagedProjectOffersItsBackup` | 核心 gtest，WILL_FAIL | FK-008 | 损坏工程提示可用备份 | 已转常规（U008）：`DataProtection.DamagedProjectOffersItsBackup` | U008 |
-| UX-01 count warning stays after the count is corrected | 应用自检 known-issue | UX-01 | 更正片数后警告更新 | 复现 | U011 |
+| UX-01 count warning stays after the count is corrected | 应用自检 known-issue | UX-01 | 更正片数后警告更新 | 已转常规（U011）：“corrected manual count (mouse): the warning goes”等 17 项 | U011 |
 | UX-07 renamed graded file without XMP or sidecar: no match | 应用自检 known-issue | UX-07 | 可选目标并完成回导 | 已转常规（U004）：“renamed file without metadata: offered by its picture, not pre-selected”“renamed file relinks once its print is chosen” | U004 |
 | UX-07 editor suffix _1 without XMP: no match | 应用自检 known-issue | UX-07 | 证据匹配或手动选目标 | 已转常规（U004）：“editor suffix _1 matched by name and picture” | U004 |
 | UX-07 new session: unchanged export cannot be relinked | 应用自检 known-issue | UX-07 | 保存后的工程重开可回导；未保存时有恢复快照 | 已转常规（U003 保存重开；U004 新建对位 4 项）；恢复快照仍待 U008 | U003/U004（U008） |

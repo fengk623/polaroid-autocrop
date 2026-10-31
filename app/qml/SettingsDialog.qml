@@ -26,9 +26,27 @@ FkDialog {
             }
             Text { text: qsTr("after restart"); font.pixelSize: Theme.fontCaption; color: Theme.textTertiary }
         }
+        // UX-01: the default for new scans; each scan can be changed in the left rail
         FieldRow {
             label: qsTr("Prints per scan"); labelWidth: 110
-            FkSpin { from: 1; to: 12; value: App.settings.expectedCount; onValueModified: App.setSetting("expectedCount", value) }
+            FkCheck {
+                objectName: "defaultAutoCount"
+                text: qsTr("Automatic")
+                checked: App.settings.autoCount === true
+                onToggled: App.setSetting("autoCount", checked)
+            }
+            FkSpin {
+                enabled: App.settings.autoCount !== true
+                from: 1; to: 12; value: App.settings.expectedCount
+                onValueModified: App.setSetting("expectedCount", value)
+            }
+        }
+        Text {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontCaption
+            color: Theme.textTertiary
+            text: qsTr("For new scans. Each scan can be changed in the left rail.")
         }
         // UX-07: export records are kept in the project; the portable sidecar is optional (off by default)
         FkCheck {

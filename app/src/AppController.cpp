@@ -239,6 +239,7 @@ void AppController::loadSettings() {
                                {"jpegQuality", 95},
                                {"writeSidecar", false}, // portable .fk.json beside exports (UX-07: optional)
                                {"expectedCount", 4},
+                               {"autoCount", true}, // UX-01: new scans are counted automatically
                                {"safetyMargin", 1.0},
                                {"finalMode", "real"},
                                {"finalFormat", "tif"},
@@ -265,8 +266,16 @@ void AppController::loadSettings() {
                                {"rightTab", 0},
                                {"recentProjects", QStringList{}}};
     settings_.clear();
-    for (auto it = defaults.begin(); it != defaults.end(); ++it)
-        settings_[it.key()] = qs_->value(QStringLiteral("app/") + it.key(), it.value());
+    for (auto it = defaults.begin(); it != defaults.end(); ++it) {
+        // INI and registry storage return text ("true", "4"): keep the default's type, so QML compares and
+        // binds real booleans and numbers
+        QVariant v = qs_->value(QStringLiteral("app/") + it.key(), it.value());
+        if (v.metaType() != it.value().metaType()) {
+            QVariant c = v;
+            v = c.convert(it.value().metaType()) ? c : it.value();
+        }
+        settings_[it.key()] = v;
+    }
 }
 
 QVariantMap AppController::settings() const {
@@ -306,6 +315,8 @@ void AppController::setSetting(const QString& key, const QVariant& value) {
     bool projectKey = true;
     if (key == QLatin1String("expectedCount"))
         ps.expectedCount = value.toInt();
+    else if (key == QLatin1String("autoCount"))
+        ps.autoCount = value.toBool();
     else if (key == QLatin1String("safetyMargin"))
         ps.safetyMarginPx = value.toDouble();
     else if (key == QLatin1String("exportFolder"))
@@ -425,6 +436,7 @@ void AppController::newProject() {
     previewJob_.clear();
     project_ = fk::newProject(toStd(tr("Untitled")));
     project_.settings.expectedCount = settings_.value("expectedCount").toInt();
+    project_.settings.autoCount = settings_.value("autoCount").toBool();
     project_.settings.safetyMarginPx = settings_.value("safetyMargin").toDouble();
     syncOutputSettings();
     if (recoveryTimer_) recoveryTimer_->stop();
@@ -442,6 +454,7 @@ void AppController::newProject() {
     Q_EMIT projectChanged();
     Q_EMIT selectionChanged();
     Q_EMIT currentChanged();
+    Q_EMIT scanImageChanged(QString()); // the canvas drops the previous project's scan
 }
 
 bool AppController::openProject(const QVariant& url) {
@@ -484,6 +497,7 @@ void AppController::adoptProject(fk::Project p, const QString& path, bool readOn
     readOnly_ = readOnly;
     const auto& ps = project_.settings;
     settings_["expectedCount"] = ps.expectedCount;
+    settings_["autoCount"] = ps.autoCount;
     settings_["safetyMargin"] = ps.safetyMarginPx;
     if (!ps.exportFolder.empty()) settings_["exportFolder"] = toQ(ps.exportFolder);
     settings_["exportFormat"] = toQ(ps.exportFormat);
@@ -729,6 +743,7 @@ void AppController::importScans(const QVariantList& urls) {
         s.path = sp;
         s.relPath = toStd(QFileInfo(path).fileName());
         s.expectedCount = settings_.value("expectedCount").toInt();
+        s.autoCount = settings_.value("autoCount").toBool();
         project_.scans.push_back(s);
         rt_[s.scanId].state = QStringLiteral("detecting");
         if (first.empty()) first = s.scanId;
@@ -828,7 +843,7 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
     rebuildModels();
     const std::string path = s->path;
     const fk::Fingerprint known = s->fingerprint;
-    const int expected = s->expectedCount;
+    const int expected = s->autoCount ? 0 : s->expectedCount; // 0: no count warning (UX-01)
     const double safety = settings_.value("safetyMargin").toDouble();
     auto res = std::make_shared<DetectResult>();
     const JobSnapshot snap = snapshotFor(scanId, {});
@@ -933,6 +948,7 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
                 detected_[it.itemId] = {it.outer, it.inner};
                 s->items.push_back(it);
             }
+            fk::updateCountWarning(*s); // the count setting may have changed while detection ran (UX-01)
             r.display = res->display;
             r.meta = res->meta;
             r.metaKnown = true;
@@ -950,13 +966,26 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
             Q_EMIT selectionChanged();
             Q_EMIT currentChanged();
             Q_EMIT scanImageChanged(toQ(scanId));
-            for (const auto& w : s->warnings)
-                if (QString::fromStdString(w).startsWith(QLatin1String("count_mismatch")))
+            const QString name = QFileInfo(toQ(s->path)).fileName();
+            for (const auto& w : s->warnings) {
+                const QString q = toQ(w);
+                if (q.startsWith(QLatin1String("count_mismatch")))
                     notify(tr("%1: found %2 prints, expected %3 — please review.")
-                               .arg(QFileInfo(toQ(s->path)).fileName())
+                               .arg(name)
                                .arg(s->items.size())
                                .arg(s->expectedCount),
                            QStringLiteral("warning"));
+                else if (q.startsWith(QLatin1String("possible_missed")))
+                    notify(
+                        tr("%1: found %2 prints; %3 more objects may be prints that were not found — please "
+                           "review.")
+                            .arg(name)
+                            .arg(s->items.size())
+                            .arg(q.section(QLatin1Char(' '), 1).toInt()),
+                        QStringLiteral("warning"));
+                else if (q == QLatin1String("no_prints_found"))
+                    notify(tr("%1: no prints found.").arg(name), QStringLiteral("warning"));
+            }
             return JobApply::applied;
         });
 }
@@ -1064,6 +1093,17 @@ void AppController::detectScan(const QString& scanId, const QString& templateNam
         tmpl = std::make_shared<fk::Template>(*t);
     }
     startDetect(toStd(scanId), tmpl);
+}
+
+void AppController::setScanCount(const QString& scanId, bool autoCount, int expectedCount) {
+    fk::ScanRecord* s = findScan(toStd(scanId));
+    if (!s) return;
+    const int expected = expectedCount >= 1 && expectedCount <= 12 ? expectedCount : s->expectedCount;
+    if (s->autoCount == autoCount && s->expectedCount == expected) return;
+    s->autoCount = autoCount;
+    s->expectedCount = expected; // kept while counting automatically, for when the switch is turned off
+    fk::updateCountWarning(*s);  // no detection needed: the count only decides the warning
+    touch(true);                 // unsaved change (recovery snapshot follows)
 }
 
 void AppController::detectSelectedScans(const QString& templateName) {
@@ -1508,6 +1548,8 @@ QVariantMap AppController::currentScan() const {
     m["dpi"] = s->info.dpiX;
     m["dpiUsed"] = s->dpiUsed;
     m["expectedCount"] = s->expectedCount;
+    m["autoCount"] = s->autoCount;
+    m["detected"] = !s->detectedAt.empty();
     QStringList w;
     for (const auto& x : s->warnings)
         w << toQ(x);

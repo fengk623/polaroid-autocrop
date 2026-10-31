@@ -12,6 +12,7 @@
 
 #include <cmath>
 #include <numbers>
+#include <optional>
 
 using namespace fk;
 using fk::test::TempDir;
@@ -28,6 +29,7 @@ struct Card {
     double iw = 46, ih = 62; ///< image area size (mm)
     std::array<double, 3> frame{0.95, 0.95, 0.93};
     bool darkImage = false;
+    std::optional<std::array<double, 3>> flatImage; ///< a picture of one colour
 };
 
 struct Scene {
@@ -73,7 +75,11 @@ ImageBuffer render(const Scene& s) {
                     for (const Card& c : s.cards) {
                         const Vec2 q = toCard(s, c, px, py);
                         if (q.x < 0 || q.y < 0 || q.x >= c.w || q.y >= c.h) continue;
-                        if (q.x >= c.ix && q.y >= c.iy && q.x < c.ix + c.iw && q.y < c.iy + c.ih) {
+                        if (q.x >= c.ix && q.y >= c.iy && q.x < c.ix + c.iw && q.y < c.iy + c.ih &&
+                            c.flatImage) {
+                            for (int i = 0; i < 3; ++i)
+                                col[i] = (*c.flatImage)[i];
+                        } else if (q.x >= c.ix && q.y >= c.iy && q.x < c.ix + c.iw && q.y < c.iy + c.ih) {
                             const double t = 0.5 + 0.35 * std::sin(q.x * 0.31) * std::cos(q.y * 0.17);
                             const double k = c.darkImage ? 0.25 : 1.0;
                             col[0] = k * t;
@@ -428,4 +434,75 @@ TEST(Detection, BuiltinFilmTypesAreConsistent) {
         EXPECT_LE(t.imageLeftMm + t.imageWidthMm, t.widthMm) << t.id;
         EXPECT_LE(t.imageTopMm + t.imageHeightMm, t.heightMm) << t.id;
     }
+}
+
+// ---------------------------------------------------------------- UX-01: automatic count (U011)
+
+namespace {
+bool hasWarning(const DetectionResult& r, const std::string& prefix) {
+    return std::any_of(r.warnings.begin(), r.warnings.end(),
+                       [&](const std::string& w) { return w.rfind(prefix, 0) == 0; });
+}
+} // namespace
+
+TEST(Detection, AutomaticCountHasNoCountWarning) {
+    TempDir dir;
+    const auto p = writeScene(dir, twoMinis(), "two.tif");
+    const auto d = detect(p, 0);
+    ASSERT_EQ(d.res.items.size(), 2u);
+    EXPECT_FALSE(hasWarning(d.res, "count_mismatch"));
+    EXPECT_FALSE(hasWarning(d.res, "possible_missed")) << "every object on the scan is a found print";
+    EXPECT_FALSE(hasWarning(d.res, "no_prints_found"));
+    for (const auto& it : d.res.items)
+        EXPECT_EQ(std::find(it.reasons.begin(), it.reasons.end(), "count_mismatch"), it.reasons.end());
+}
+
+TEST(Detection, BlankScanReportsNoPrints) {
+    TempDir dir;
+    const auto p = writeScene(dir, Scene{}, "blank.tif");
+    const auto automatic = detect(p, 0);
+    EXPECT_TRUE(automatic.res.items.empty()) << "no print is made up";
+    EXPECT_TRUE(hasWarning(automatic.res, "no_prints_found"));
+    EXPECT_FALSE(hasWarning(automatic.res, "count_mismatch"));
+    EXPECT_FALSE(hasWarning(automatic.res, "possible_missed"));
+    const auto manual = detect(p, 4);
+    EXPECT_TRUE(manual.res.items.empty()) << "a manual count never creates outlines";
+    EXPECT_TRUE(hasWarning(manual.res, "count_mismatch"));
+}
+
+TEST(Detection, FaintPrintIsReportedAsPossiblyMissed) {
+    // frame and picture barely differ from the background (ΔE ≈ 2–3): below the detection threshold, but a
+    // print-sized area is still reported when the count is automatic
+    TempDir dir;
+    Scene s;
+    Card a;
+    a.cx = 600;
+    a.cy = 650;
+    a.angleDeg = 2.0;
+    a.frame = {0.095, 0.095, 0.095};
+    a.flatImage = std::array<double, 3>{0.10, 0.10, 0.10};
+    s.cards = {a};
+    const auto d = detect(writeScene(dir, s, "faint.tif"), 0);
+    if (!d.res.items.empty()) GTEST_SKIP() << "the faint print was detected";
+    EXPECT_TRUE(hasWarning(d.res, "possible_missed: 1")) << ::testing::PrintToString(d.res.warnings);
+}
+
+TEST(Detection, PartlyVisibleObjectIsReportedAsPossiblyMissed) {
+    // a 30 × 40 mm object: too large for dust, too small for any print (e.g. the visible part of a print
+    // whose frame matches the background)
+    TempDir dir;
+    Scene s = twoMinis();
+    Card part;
+    s.hMm = 160;
+    part.cx = 80 * pxPerMm(s);
+    part.cy = 135 * pxPerMm(s); // below the two prints
+    part.w = 30;
+    part.h = 40;
+    part.iw = 0;
+    part.ih = 0;
+    part.frame = {0.8, 0.3, 0.2};
+    s.cards.push_back(part);
+    const auto d = detect(writeScene(dir, s, "part.tif"), 0);
+    EXPECT_EQ(d.res.items.size(), 2u);
+    EXPECT_TRUE(hasWarning(d.res, "possible_missed: 1"));
 }

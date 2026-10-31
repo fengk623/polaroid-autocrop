@@ -12,6 +12,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <regex>
 
 using namespace fk;
 using fk::test::TempDir;
@@ -1089,4 +1090,113 @@ TEST(DataProtection, AnInterruptedSaveLeavesTheProjectIntact) {
     auto st = saveProject(p, t / "no-such-dir" / "p.fkproj");
     EXPECT_FALSE(st.ok());
     EXPECT_EQ(loadProject(file)->name, "intact");
+}
+
+// ---------------------------------------------------------------- UX-01: automatic count (U011)
+
+namespace {
+bool hasCountWarning(const ScanRecord& s) {
+    return std::any_of(s.warnings.begin(), s.warnings.end(),
+                       [](const std::string& w) { return w.rfind("count_mismatch", 0) == 0; });
+}
+bool itemsFlagged(const ScanRecord& s) {
+    return !s.items.empty() && std::all_of(s.items.begin(), s.items.end(), [](const ItemRecord& it) {
+        return std::find(it.reasons.begin(), it.reasons.end(), "count_mismatch") != it.reasons.end();
+    });
+}
+} // namespace
+
+TEST(CountSetting, WarningFollowsTheSettingWithoutDetectingAgain) {
+    TempDir dir;
+    Project p = sampleProject(dir / "scan.tif"); // 2 prints
+    ScanRecord& s = p.scans[0];
+    s.detectedAt = "2026-10-30T00:00:00Z";
+    s.warnings = {"dpi_unknown", "possible_missed: 1"};
+    s.expectedCount = 4;
+    s.autoCount = false;
+    updateCountWarning(s);
+    EXPECT_TRUE(hasCountWarning(s));
+    EXPECT_TRUE(itemsFlagged(s));
+    // the manual count corrected: the warning goes, nothing else changes
+    s.expectedCount = 2;
+    updateCountWarning(s);
+    EXPECT_FALSE(hasCountWarning(s));
+    for (const auto& it : s.items)
+        EXPECT_EQ(std::count(it.reasons.begin(), it.reasons.end(), "count_mismatch"), 0);
+    EXPECT_EQ(s.warnings, (std::vector<std::string>{"dpi_unknown", "possible_missed: 1"}));
+    // automatic: never a count warning, whatever the manual value kept for later
+    s.expectedCount = 3;
+    s.autoCount = true;
+    updateCountWarning(s);
+    EXPECT_FALSE(hasCountWarning(s));
+    EXPECT_EQ(s.expectedCount, 3) << "the manual value is kept";
+    // manual again: the kept value applies; updating twice does not duplicate anything
+    s.autoCount = false;
+    updateCountWarning(s);
+    updateCountWarning(s);
+    EXPECT_EQ(std::count_if(s.warnings.begin(), s.warnings.end(),
+                            [](const std::string& w) { return w.rfind("count_mismatch", 0) == 0; }),
+              1);
+    EXPECT_NE(std::find(s.warnings.begin(), s.warnings.end(), "count_mismatch: found 2, expected 3"),
+              s.warnings.end());
+    for (const auto& it : s.items)
+        EXPECT_EQ(std::count(it.reasons.begin(), it.reasons.end(), "count_mismatch"), 1);
+}
+
+TEST(CountSetting, BlankScanWarnsOnlyWhenACountWasGiven) {
+    ScanRecord s;
+    s.detectedAt = "2026-10-30T00:00:00Z";
+    s.warnings = {"no_prints_found"};
+    s.autoCount = true;
+    updateCountWarning(s);
+    EXPECT_EQ(s.warnings, std::vector<std::string>{"no_prints_found"});
+    s.autoCount = false;
+    s.expectedCount = 1;
+    updateCountWarning(s);
+    EXPECT_TRUE(hasCountWarning(s));
+    // a scan not detected yet has no count to compare
+    ScanRecord fresh;
+    fresh.autoCount = false;
+    updateCountWarning(fresh);
+    EXPECT_TRUE(fresh.warnings.empty());
+}
+
+TEST(CountSetting, SavedPerScanAndAsTheProjectDefault) {
+    TempDir dir;
+    Project p = sampleProject(dir / "scan.tif");
+    p.settings.autoCount = false;
+    p.settings.expectedCount = 1;
+    p.scans[0].autoCount = true;
+    p.scans[0].expectedCount = 6;
+    ScanRecord second = p.scans[0];
+    second.scanId = newUuid();
+    second.autoCount = false;
+    second.expectedCount = 1;
+    p.scans.push_back(second); // a mixed batch: one scan automatic, one with one print
+    const auto file = dir / "count.fkproj";
+    ASSERT_TRUE(saveProject(p, file).ok());
+    auto q = loadProject(file);
+    ASSERT_TRUE(q.ok()) << q.error().message;
+    EXPECT_FALSE(q->settings.autoCount);
+    EXPECT_EQ(q->settings.expectedCount, 1);
+    ASSERT_EQ(q->scans.size(), 2u);
+    EXPECT_TRUE(q->scans[0].autoCount);
+    EXPECT_EQ(q->scans[0].expectedCount, 6);
+    EXPECT_FALSE(q->scans[1].autoCount);
+    EXPECT_EQ(q->scans[1].expectedCount, 1);
+}
+
+TEST(CountSetting, ProjectsWithoutTheSettingKeepTheirManualCount) {
+    // a 0.6 project: scans were detected against their expected count; new scans follow the new default
+    TempDir dir;
+    Project p = sampleProject(dir / "scan.tif");
+    // JSON objects are written with sorted keys: "autoCount" is never the last key of its object
+    const std::string js =
+        std::regex_replace(projectToJson(p), std::regex(R"("autoCount"\s*:\s*(true|false)\s*,)"), "");
+    ASSERT_EQ(js.find("autoCount"), std::string::npos);
+    auto q = projectFromJson(js);
+    ASSERT_TRUE(q.ok()) << q.error().message;
+    EXPECT_FALSE(q->scans[0].autoCount);
+    EXPECT_EQ(q->scans[0].expectedCount, 2);
+    EXPECT_TRUE(q->settings.autoCount);
 }

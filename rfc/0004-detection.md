@@ -79,12 +79,37 @@ Outer: contrast/noise (< 5 → ×0.3 `low_contrast`, < 10 → ×0.75), valid lin
 touching scan edge ≤ 0.8, single-print scan ≤ 0.8, no film type ×0.6, caps for `frame_not_visible` (0.3), `low_frame_contrast` and locked
 sides (0.55). Inner: found edge count/strength, symmetry, full-resolution valid fraction. Combined = min(outer,
 inner); < 0.6 low (must review), 0.6–0.85 medium, ≥ 0.85 high. A count different from the expected count adds
-`count_mismatch` to every item and a scan warning. Reasons are machine-readable strings.
+`count_mismatch` to every item and a scan warning (manual count only, see below). Reasons are machine-readable
+strings.
+
+## Print count (UX-01, since 0.7.0-alpha.1)
+Each scan is counted **automatically** (default for new scans) or against a **manual** expected count (1–12).
+The count never changes what is detected: no outline is made up to reach a number and no two objects are
+merged; it only decides the `count_mismatch` warning.
+- `DetectParams.expectedCount = 0` = automatic: no `count_mismatch`. The app passes 0 for automatic scans.
+- `updateCountWarning(ScanRecord&)` re-derives `count_mismatch` (scan warning and item reasons) from the scan's
+  current setting and its prints, without detecting again: switching automatic ↔ manual or changing the number
+  updates the warning at once. The manual number is kept while the scan is automatic.
+- Hints kept in both modes: low confidence (per print), `too_many_candidates` (more than `maxCount` = 12
+  objects; the 12 largest are kept), `no_prints_found` (zero prints) and `possible_missed: N`.
+- `possible_missed: N` counts objects that may be prints the detection left out:
+  (a) components of the detection mask with 25–60 % of the smallest image area (Instax Mini 46 × 62 mm), centre
+  outside every print — too large for dust, too small for any print (e.g. the visible part of a print whose frame
+  matches the background); (b) **faint print-sized areas**: on a 1 mm grid, cell means compared with a quadratic
+  background surface fitted to the 5 mm border band only (the detection's own background model also fits faint
+  objects and hides them); cells with ΔE > max(1.5, 4·σ) outside the found prints (σ: median + robust spread of
+  the border residuals), opened and closed with a 5 mm square, components of at least 60 % of the smallest image
+  area that fill ≥ 70 % of their bounding rectangle. Corpus: faint prints filled 0.59–0.99 (those below 0.7 are
+  not counted, but the other prints of the same scan still raise the hint); the one uneven background 0.57.
+- Measured (`fkcli eval`, generated corpus of 24 scans): the 3 scans with missed (low-visibility) prints are all
+  flagged without a count (`no_prints_found` or `possible_missed`), no complete scan is flagged; the owner's 4 real
+  scans (1200 dpi single prints, an 800 dpi scan of four) have no `possible_missed`. `eval --enforce` requires
+  both (`missed_scans_flagged_automatic == missed_scans`, `false_possible_missed == 0`).
 
 ## Known limits (measured, TEST-PLAN §4)
 A frame whose colour is within ΔE ≈ 4 of the background (black frame on a black backing) cannot be outlined
-from pixels: the print is either contained conservatively and flagged, or missed with a count warning when
-its picture is dark too. Users are told to scan dark frames on a light backing (docs/HUMAN-VERIFICATION.md,
+from pixels: the print is either contained conservatively and flagged, or missed with a count warning (manual
+count) or a `possible_missed` / `no_prints_found` hint (automatic count) when its picture is dark too. Users are told to scan dark frames on a light backing (docs/HUMAN-VERIFICATION.md,
 in-app hint).
 
 ## Ordering

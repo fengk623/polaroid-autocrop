@@ -136,7 +136,8 @@ struct ScanRecord {
     ImageInfo info; ///< summary (icc bytes not stored; iccSha256/iccDescription are)
     std::string iccSha256;
     std::string detectedAt;
-    int expectedCount = 4;
+    int expectedCount = 4;  ///< the manual count; kept while counting automatically (UX-01)
+    bool autoCount = false; ///< UX-01: count automatically (no count warning); projects before 0.7 = manual
     double dpiUsed = 0;
     int proxyScale = 1;
     std::vector<std::string> warnings;
@@ -148,7 +149,8 @@ struct ScanRecord {
 };
 
 struct ProjectSettings {
-    int expectedCount = 4;
+    int expectedCount = 4; ///< manual count given to new scans when they are not counted automatically
+    bool autoCount = true; ///< UX-01: new scans are counted automatically (the default)
     double safetyMarginPx = 1.0;
     std::string exportFolder;
     std::string exportFormat = "tif";
@@ -219,6 +221,10 @@ Result<Project> projectFromJson(const std::string& json, OpenMode* mode = nullpt
 /// Streams every present scan against its fingerprint (verifyFileIdentity) and marks `changed` ones; returns
 /// how many. Run it off the UI thread (FK-007).
 int verifyScans(Project& p, const CancelToken* cancel = nullptr);
+/// UX-01: brings a scan's count warning (and the prints' "count_mismatch" reason) in line with its count
+/// setting without detecting again: manual → warn when the number of prints differs; automatic → no count
+/// warning.
+void updateCountWarning(ScanRecord& s);
 /// Finds missing scans in `folder` by file name, then by quick fingerprint. Returns how many were relocated.
 int relocateScans(Project& p, const std::filesystem::path& projectDir, const std::filesystem::path& folder);
 /// Resolves `relPath` against the project folder when `path` is missing.

@@ -3,6 +3,13 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.1 — U011: automatic print count (UX-01)
+- Scans are counted automatically by default (no count warning made from a default number); each scan can switch to
+  a manual expected count, kept while automatic; the count warning follows the setting at once, without detecting
+  again. Automatic mode still reports low confidence, possibly missed prints (`possible_missed`), blank scans
+  (`no_prints_found`) and the 12-object limit. Also: a new project clears the canvas; stored settings keep their
+  types. Notes: docs/release-notes/v0.7.0-alpha.1.md.
+
 ## 0.6.0-alpha.10 — U010: export output plan, labelled straightening, round image areas (UX-02 export, FK-010)
 - Every export prompt is worded from the core's plan of the real output (no "bit-identical" for 16 → 8 bits);
   16 → 8 bits needs an explicit yes; image areas are straightened by default and say so; round image areas are

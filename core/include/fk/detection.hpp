@@ -59,7 +59,7 @@ struct Template {
 };
 
 struct DetectParams {
-    int expectedCount = 4;
+    int expectedCount = 4; ///< 0 = count automatically (UX-01): no count warning, only the upper-limit one
     int maxCount = 12;
     bool refine = true;             ///< stage B full-resolution refinement
     double safetyMarginPx = 1.0;    ///< extra outward expansion after containment

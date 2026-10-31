@@ -6,8 +6,10 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
+#include <QPointF>
 #include <QString>
 
+class QQuickItem;
 class QQuickWindow;
 
 namespace fkapp {
@@ -27,8 +29,15 @@ class SelfTest : public QObject {
 
   private:
     void check(const QString& name, bool ok, const QString& detail = {});
+    /// A check whose precondition this scan does not meet (e.g. an untagged scan for a colour conversion):
+    /// recorded as skipped with the reason, never as passed.
+    void skip(const QString& name, const QString& why);
     void snapshot(const QString& name);
     QObject* findCanvas() const;
+    QQuickItem* findItem(const QString& objectName) const;
+    /// A left click through the window (a real input event), at `local` or the item's centre; false when the
+    /// item is hidden or outside the window.
+    bool click(QQuickItem* item, QPointF local = QPointF(-1, -1));
     void observe(const QString& name, const QJsonObject& data);
     /// Known issue (expected to reproduce until fixed, like ctest WILL_FAIL): reproduced → recorded, run
     /// passes; not reproduced → the run fails so the check is turned into a normal one with the fix.
@@ -42,6 +51,9 @@ class SelfTest : public QObject {
     void runDataProtection();
     /// FK-004 (U009): privacy presets on a scan copy carrying identity, outputs read back byte for byte.
     void runPrivacy();
+    /// UX-01 (U011): automatic count by default, per-scan override with the left-rail controls (mouse
+    /// input), warnings updated without detecting again, single/multi/blank scans in one project, saved.
+    void runCountSetting();
     void runTaskSafety(const QString& exportDir, const QString& projectPath);
     int scenarioMinIsWhite();
     QJsonArray known_;
