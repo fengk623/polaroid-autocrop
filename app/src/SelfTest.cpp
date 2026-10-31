@@ -21,6 +21,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRectF>
+#include <QThread>
 #include <QTransform>
 #include <QUrl>
 #include <QWheelEvent>
@@ -2963,9 +2964,251 @@ void SelfTest::runMemoryBudget() {
     restore();
 }
 
+void SelfTest::runDisplayProfile() {
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    waitFor([] { return false; }, 600);
+    const QString d = QDir(dir_).filePath(QStringLiteral("display"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    const QVariantMap saved = app_->settings();
+    const QString exportDir = QDir(d).filePath(QStringLiteral("export"));
+    for (const auto& [k, v] : std::vector<std::pair<QString, QVariant>>{
+             {"exportFolder", exportDir}, {"exportFormat", "tif"}, {"geometryMode", "crop"}})
+        app_->setSetting(k, v);
+    QObject* canvas = findCanvas();
+    auto restore = [&] {
+        for (const char* k : {"exportFolder", "exportFormat", "geometryMode"})
+            app_->setSetting(QString::fromLatin1(k), saved.value(QString::fromLatin1(k)));
+        app_->setDisplayProfileOverride(std::nullopt);
+        app_->refreshDisplayProfile(window_->screen());
+        app_->jobRunner()->setTestDelayMs(0);
+        if (canvas) QMetaObject::invokeMethod(canvas, "fit");
+    };
+    // two "monitors": sRGB and a wide-gamut one (Adobe RGB as its profile)
+    DisplayProfileInfo srgb;
+    srgb.source = QStringLiteral("self-test: sRGB monitor");
+    DisplayProfileInfo wide;
+    wide.profile = fk::Profile::adobeRGB1998();
+    wide.id = QString::fromStdString(wide.profile.sha256());
+    wide.description = QString::fromStdString(wide.profile.description());
+    wide.source = QStringLiteral("self-test: wide-gamut monitor");
+    // what the canvas must show for a profile: the same proxy pipeline, computed here independently
+    auto proxyOf = [&](const QString& path, const DisplayProfileInfo& p) {
+        auto src = fk::openTiff(toPath(path));
+        if (!src) return QImage();
+        fk::CancelToken cancel;
+        auto proxy = fk::buildProxy(**src, 3000, cancel, [](double, std::string_view) {});
+        DisplayConverter conv;
+        if (!proxy || !conv.init((*src)->info(), &p)) return QImage();
+        return conv.convertProxy(*proxy);
+    };
+    auto proxyFor = [&](const DisplayProfileInfo& p) { return proxyOf(scan_, p); };
+    auto meanDiff = [](const QImage& a, const QImage& b) {
+        if (a.isNull() || b.isNull() || a.size() != b.size()) return 1e9;
+        double sum = 0;
+        for (int y = 0; y < a.height(); ++y)
+            for (int x = 0; x < a.width(); ++x) {
+                const QRgb p = a.pixel(x, y), q = b.pixel(x, y);
+                sum += std::abs(qRed(p) - qRed(q)) + std::abs(qGreen(p) - qGreen(q)) +
+                       std::abs(qBlue(p) - qBlue(q));
+            }
+        return sum / (3.0 * a.width() * a.height());
+    };
+    // waits, without running the UI thread, until a job has converted and its result is queued (large scans
+    // take longer than any fixed pause)
+    auto untilWorkEnded = [&](int job) {
+        QElapsedTimer t;
+        t.start();
+        while (!app_->jobRunner()->workEnded(job) && t.elapsed() < 300000)
+            QThread::msleep(20);
+        return app_->jobRunner()->workEnded(job);
+    };
+    app_->setDisplayProfileOverride(srgb);
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    QCoreApplication::processEvents();
+    const QString scanId = app_->currentScanId();
+    // a second scan, not on screen when the window moves: its thumbnail is converted, its proxy read again
+    // later
+    const QString other = QDir(d).filePath(QStringLiteral("other.tif"));
+    QString otherId;
+    if (const fk::ItemRecord* it = app_->item(toStd(app_->currentItemId()));
+        it && writeFourOrientations(scan_, it->outer, other)) {
+        app_->importScans({other});
+        app_->waitIdle(300000);
+        for (const auto& sc : app_->project().scans)
+            if (toQ(sc.scanId) != scanId) otherId = toQ(sc.scanId);
+        app_->selectScan(scanId);
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+    }
+    const QImage srgbExpected = proxyFor(srgb), wideExpected = proxyFor(wide);
+    const fk::ItemRecord* first = app_->item(toStd(app_->currentItemId()));
+    check(QStringLiteral("FK-011 setup: the scan shown for an sRGB monitor"),
+          first && !srgbExpected.isNull() && app_->canvasScan().display == srgbExpected &&
+              meanDiff(srgbExpected, wideExpected) > 0.5,
+          QStringLiteral("sRGB vs wide-gamut conversion differ by %1 levels")
+              .arg(meanDiff(srgbExpected, wideExpected)));
+    if (!first || srgbExpected.isNull()) {
+        restore();
+        return;
+    }
+    const std::string itemId = first->itemId;
+    // the Full patch of the print's image area, reduced to the proxy's scale, against the proxy
+    auto fullVsPreview = [&] {
+        const fk::RectI b = fk::boundingRect(first->inner);
+        const int k = std::max(1, app_->canvasScan().proxyScale);
+        const QRectF r(b.x, b.y, (b.w / k) * k, (b.h / k) * k);
+        QImage patch;
+        app_->requestDetail(r, static_cast<int>(r.width()) / k, static_cast<int>(r.height()) / k, 0,
+                            [&](QImage img, QRectF, quint64) { patch = img; });
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+        const QImage proxy = app_->canvasScan().display.copy(
+            QRect(b.x / k, b.y / k, static_cast<int>(r.width()) / k, static_cast<int>(r.height()) / k));
+        return patch.size() == proxy.size() ? meanDiff(patch.convertToFormat(QImage::Format_RGB32), proxy)
+                                            : 1e9;
+    };
+    const double agreeSrgb = fullVsPreview();
+    // an output made now, to compare with one made for the other monitor
+    app_->exportImageAreas({toQ(itemId)});
+    app_->waitIdle(300000);
+    const QImage thumbBefore = app_->thumbnail(QStringLiteral("scan/") + scanId);
+    const QImage otherBefore = app_->thumbnail(QStringLiteral("scan/") + otherId);
+
+    // 1. the window moves to the wide-gamut monitor
+    const quint64 genBefore = app_->displayGeneration();
+    app_->setDisplayProfileOverride(wide);
+    app_->waitIdle(120000);
+    QCoreApplication::processEvents();
+    const bool proxyConverted = app_->canvasScan().display == wideExpected;
+    const double agreeWide = fullVsPreview();
+    const QImage thumbAfter = app_->thumbnail(QStringLiteral("scan/") + scanId);
+    const double thumbVsProxy = meanDiff(thumbAfter, boxDownscale(wideExpected, 320));
+    // the other scan's thumbnail: converted from the old display profile (not read again): close to what the
+    // scan converted for the new profile gives
+    const QImage otherAfter = app_->thumbnail(QStringLiteral("scan/") + otherId);
+    // (thumbnails: the proxy reduced to 320 px on the long side, as the controller makes them)
+    const double otherVsExpected = meanDiff(otherAfter, boxDownscale(proxyOf(other, wide), 320));
+    check(QStringLiteral(
+              "FK-011 another monitor's profile: the proxy is converted again, Preview and Full agree, "
+              "thumbnails follow"),
+          app_->displayGeneration() > genBefore && proxyConverted && agreeSrgb < 3 && agreeWide < 3 &&
+              meanDiff(thumbBefore, thumbAfter) > 0.3 && thumbVsProxy < 3 && !otherId.isEmpty() &&
+              meanDiff(otherBefore, otherAfter) > 0.3 && otherVsExpected < 3,
+          QStringLiteral("Full vs Preview %1 (sRGB) / %2 (wide) levels · thumbnail vs proxy %3 · other "
+                         "scan's thumbnail vs expected %4 · profile: %5")
+              .arg(agreeSrgb, 0, 'f', 2)
+              .arg(agreeWide, 0, 'f', 2)
+              .arg(thumbVsProxy, 0, 'f', 2)
+              .arg(otherVsExpected, 0, 'f', 2)
+              .arg(app_->displayProfileName()));
+    if (canvas) {
+        // at 100 % on the sRGB monitor, then the window moves: the patch on screen is replaced by one made
+        // for the new profile
+        auto fullFor = [&](const QString& id) {
+            return waitFor(
+                [&] {
+                    return canvas->property("badge").toString() == QLatin1String("Full") &&
+                           canvas->property("detailProfile").toString() == id;
+                },
+                20000);
+        };
+        app_->setDisplayProfileOverride(srgb);
+        app_->waitIdle(120000);
+        QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
+        const bool before = fullFor(srgb.id);
+        app_->setDisplayProfileOverride(wide);
+        // at once: the patch made for the previous profile is no longer drawn (no colour jump while the new
+        // one is being made)
+        const QString meanwhile = canvas->property("detailProfile").toString();
+        app_->waitIdle(120000);
+        const bool after = fullFor(wide.id);
+        const QString badge = canvas->property("badge").toString() + QStringLiteral(" · ") +
+                              canvas->property("detailProfile").toString().left(12);
+        snapshot(QStringLiteral("U025-wide-gamut-100pct"));
+        QMetaObject::invokeMethod(canvas, "fit");
+        check(QStringLiteral("FK-011 full resolution at 100 %: the patch on screen is made again for the new "
+                             "profile"),
+              before && meanwhile != srgb.id && after, badge);
+    }
+
+    // 2. outputs never depend on the monitor
+    app_->exportImageAreas({toQ(itemId)});
+    app_->waitIdle(300000);
+    const QStringList edits = filesMatching(exportDir, QStringLiteral("*_EDIT_v00*.tif"));
+    QString why;
+    check(QStringLiteral("FK-011 outputs are the same whatever the display profile"),
+          edits.size() == 2 && samePixels(edits[0], edits[1], why), why);
+
+    // 3. back to the sRGB monitor: exactly as before
+    app_->setDisplayProfileOverride(srgb);
+    app_->waitIdle(120000);
+    QCoreApplication::processEvents();
+    check(QStringLiteral("FK-011 back on the first monitor: the same picture as before"),
+          app_->canvasScan().display == srgbExpected);
+
+    // 4. a proxy converted for the old profile while it was being read is never shown: the window moves again
+    // after the job converted (the UI thread does not run in between) and before its result arrives
+    app_->setDisplayProfileOverride(wide); // reads the scan again (a job)
+    const int job = app_->jobRunner()->lastJobId();
+    const bool converted = untilWorkEnded(job); // converted for "wide", result not delivered yet
+    app_->setDisplayProfileOverride(srgb);
+    app_->waitIdle(120000);
+    QCoreApplication::processEvents();
+    check(QStringLiteral(
+              "FK-011 a proxy converted for the previous monitor is not shown (outdated, read again)"),
+          converted && app_->jobRunner()->finalState(job) == QLatin1String("outdated") &&
+              app_->canvasScan().display == srgbExpected,
+          app_->jobRunner()->finalState(job));
+
+    // 5. the same for a full-resolution patch and a composite preview converted for the previous monitor
+    {
+        const fk::RectI b = fk::boundingRect(first->inner);
+        bool delivered = false;
+        app_->requestDetail(QRectF(b.x, b.y, b.w, b.h), b.w / 4, b.h / 4, 0,
+                            [&](QImage, QRectF, quint64) { delivered = true; });
+        const bool patchConverted = untilWorkEnded(app_->jobRunner()->lastJobId()); // converted for sRGB
+        app_->setDisplayProfileOverride(wide);
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+        check(
+            QStringLiteral("FK-011 a full-resolution patch converted for the previous monitor is not shown"),
+            patchConverted && !delivered);
+        // composite: the unchanged second export relinked to the print
+        QVariantList rows;
+        auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });
+        app_->relinkFiles({edits.value(1)});
+        app_->waitIdle(300000);
+        disconnect(c);
+        app_->applyRelink(rows);
+        QMetaObject::invokeMethod(window_, "closeDialogs");
+        app_->selectItem(toQ(itemId));
+        app_->requestCompositePreview(toQ(itemId));
+        const int previewJob = app_->jobRunner()->lastJobId();
+        const bool previewConverted = untilWorkEnded(previewJob); // converted for "wide"
+        app_->setDisplayProfileOverride(srgb);
+        app_->waitIdle(120000);
+        QCoreApplication::processEvents();
+        const QString state = app_->jobRunner()->finalState(previewJob);
+        const bool dropped = app_->compositePreview(itemId).isNull();
+        app_->requestCompositePreview(toQ(itemId));
+        app_->waitIdle(120000);
+        check(QStringLiteral(
+                  "FK-011 a composite preview converted for the previous monitor is not shown; asked "
+                  "again, it comes for the current one"),
+              previewConverted && state == QLatin1String("outdated") && dropped &&
+                  !app_->compositePreview(itemId).isNull(),
+              QStringLiteral("%1 · %2").arg(state,
+                                            dropped ? QStringLiteral("not shown") : QStringLiteral("shown")));
+    }
+    restore();
+}
+
 int SelfTest::scenarioMinIsWhite() {
-    // FK-011: rows from the TIFF reader are already in normal polarity; the display converter inverts
-    // MinIsWhite again, so Preview (proxy) and Full (rows) disagree.
+    // FK-011 (fixed in U025): rows from the TIFF reader are already in normal polarity; the display converter
+    // inverted MinIsWhite again, so Preview (proxy) and Full (rows) disagreed (15.8 vs 239.2 before the fix).
     app_->importScans({scan_});
     app_->waitIdle(300000);
     auto src = fk::openTiff(toPath(scan_));
@@ -2995,8 +3238,9 @@ int SelfTest::scenarioMinIsWhite() {
     }
     observe(QStringLiteral("M1 MinIsWhite preview vs full"),
             {{"minIsWhite", miw}, {"fullMean", fullMean}, {"proxyMean", proxyMean}});
-    known(QStringLiteral("FK-011"), QStringLiteral("MinIsWhite full-resolution display is inverted"),
-          miw && std::abs(fullMean - proxyMean) > 64,
+    check(QStringLiteral("FK-011 MinIsWhite %1-bit: Preview and Full show the same brightness")
+              .arg(info.bitsPerSample),
+          miw && std::abs(fullMean - proxyMean) < 6,
           QStringLiteral("full %1 vs preview %2").arg(fullMean, 0, 'f', 1).arg(proxyMean, 0, 'f', 1));
     return allOk_ ? 0 : 1;
 }
@@ -3031,7 +3275,11 @@ int SelfTest::runScenario(const QString& name) {
         {"scan", scan_},
         {"observations", observations_},
         {"knownIssues", known_},
-        {"note", "Observations of current behaviour (Stage A reproduction), not pass/fail checks."}};
+        {"checks", checks_},
+        {"ok", allOk_},
+        {"note",
+         "Observations of current behaviour (Stage A reproduction); checks, when a scenario has them, decide "
+         "the exit code."}};
     QFile f(QDir(dir_).filePath(QStringLiteral("scenario-%1.json").arg(name)));
     if (f.open(QIODevice::WriteOnly)) f.write(QJsonDocument(report).toJson());
     return rc;
@@ -3452,6 +3700,7 @@ int SelfTest::run() {
     runMaskDefaults();
     runScrubFields();
     runMemoryBudget();
+    runDisplayProfile();
 
     QJsonObject report{{"product", "FrameKeeper"},
                        {"version", app_->version()},
