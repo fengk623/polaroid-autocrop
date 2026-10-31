@@ -3920,6 +3920,13 @@ void SelfTest::runToolbar() {
         const bool clicked3 = s3 && click(s3);
         const int tab3 = app_->settings().value("rightTab").toInt();
         const bool toExport = clicked3 && tab3 == 1;
+        const QString at5 = s5 ? QStringLiteral("%1–%2 visible %3, window %4×%5")
+                                     .arg(s5->mapToScene(QPointF(0, 0)).x())
+                                     .arg(s5->mapToScene(QPointF(s5->width(), 0)).x())
+                                     .arg(s5->isVisible())
+                                     .arg(window_->width())
+                                     .arg(window_->height())
+                               : QStringLiteral("missing");
         const bool clicked5 = s5 && click(s5);
         const int tab5 = app_->settings().value("rightTab").toInt();
         const bool toComposite =
@@ -3927,15 +3934,17 @@ void SelfTest::runToolbar() {
         check(QStringLiteral("UX-06 a click on a workflow step leads to it (Export tab; Return tab with the "
                              "Composite view)"),
               toExport && toComposite,
-              QStringLiteral(
-                  "step 3 at %1, clicked %2 → tab %3; step 5 clicked %4 → tab %5, view %6; dialog open %7")
+              QStringLiteral("step 3 at %1, clicked %2 → tab %3; step 5 clicked %4 → tab %5, view %6; dialog "
+                             "open %7; step 5 "
+                             "at %8")
                   .arg(at3)
                   .arg(clicked3)
                   .arg(tab3)
                   .arg(clicked5)
                   .arg(tab5)
                   .arg(canvas->property("mode").toString())
-                  .arg(dialog));
+                  .arg(dialog)
+                  .arg(at5));
         snapshot(QStringLiteral("U021-steps"));
         canvas->setProperty("mode", QStringLiteral("scan"));
     }
