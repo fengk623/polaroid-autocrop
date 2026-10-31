@@ -735,3 +735,17 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     font [CI environment; a real window falls back to Microsoft YaHei] → the Windows offscreen self-test sets the
     UI font families Segoe UI, Microsoft YaHei UI, Microsoft YaHei, SimSun (Windows' own order). PR #25 green on
     all platforms with the font folder fix.
+
+### 11:00–11:50 — PR #26 CI round 3; owner merged PRs #17–#19; U028 preparation
+- Owner merged PR #17 (U015), #18 (U016) and #19 (U017) into `main` (15:39 UTC). PRs #21 and #22 now target `main`
+  directly and are mergeable without conflicts; the unit list and traceability are updated.
+- PR #26 CI round 3 (Chinese font families for the Windows offscreen self-test): Linux (with `fonts-noto-cjk`) and
+  macOS green; Windows: Chinese text still without glyphs ("帮助(H)" in Segoe UI, 1168 texts), English passes.
+  Root cause, read in Qt 6.8.3's source (`qfreetypefontdatabase.cpp`): the FreeType font database of the offscreen
+  platform loads only `*.ttf`, `*.pfa`, `*.pfb` and `*.otf` from the font folder, and Windows' Chinese UI fonts are
+  collections (`msyh.ttc`, `simsun.ttc`), so the fallback families named in round 3 did not exist there
+  [CI environment, not a product defect: a real window uses DirectWrite and its own fallback] → the Windows
+  offscreen self-test adds `msyh.ttc`, `msyhbd.ttc` and `simsun.ttc` from the font folder as application fonts
+  (Qt reads every face of a collection) and prints which ones it added, or that none was found.
+- Full self-test of the U024 build (Linux, before this change; Linux does not run the Windows-only code): fixture
+  English 1×, 2× and Chinese: 222 passed, 0 skipped, 0 failed each; the owner's scans still running.
