@@ -433,6 +433,53 @@ QString AppController::buildId() const {
     return QString::fromStdString(fk::buildId());
 }
 
+QString AppController::displayProfileName() const {
+    const DisplayProfileInfo p = currentDisplayProfile();
+    return p.source.isEmpty() ? p.description : p.description + QStringLiteral(" — ") + p.source;
+}
+
+void AppController::refreshDisplayProfile(QScreen* screen) {
+    if (displayOverridden_) return;
+    applyDisplayProfile(readDisplayProfile(screen));
+}
+
+void AppController::setDisplayProfileOverride(std::optional<DisplayProfileInfo> p) {
+    displayOverridden_ = p.has_value();
+    if (p) applyDisplayProfile(*p);
+}
+
+void AppController::applyDisplayProfile(const DisplayProfileInfo& p) {
+    const DisplayProfileInfo before = currentDisplayProfile();
+    if (!setCurrentDisplayProfile(p)) return;
+    ++displayGen_;
+    // display-space images are converted again from the scans (proxies, previews: dropped and rebuilt when
+    // shown); thumbnails are converted from the old display profile to the new one, so the lists keep them
+    for (auto& [id, r] : rt_) {
+        if (!r.display.isNull() && id == curScan_) {
+            // on screen: converted from the old display profile at once (no blank canvas), then read again
+            // from the scan below (exact)
+            convertDisplayImage(r.display, before.profile, p.profile);
+        } else if (!r.display.isNull()) {
+            r.display = QImage();
+            cache_.erase("display:" + id);
+        }
+        convertDisplayImage(r.thumb, before.profile, p.profile);
+        for (auto& [item, img] : r.itemThumbs)
+            convertDisplayImage(img, before.profile, p.profile);
+        ++r.rev;
+    }
+    for (const auto& [id, img] : compositePreviews_)
+        cache_.erase("composite:" + id);
+    compositePreviews_.clear();
+    previewGen_.clear();
+    // the scan on screen is read again now (a detection or an opening in flight notices the change itself)
+    if (auto f = rt_.find(curScan_); f != rt_.end() && f->second.state == QLatin1String("ready"))
+        loadPreview(curScan_);
+    rebuildModels();
+    Q_EMIT displayProfileChanged();
+    Q_EMIT scanImageChanged(toQ(curScan_));
+}
+
 QString AppController::platform() const {
 #if defined(Q_OS_MACOS)
     return QStringLiteral("macos");
@@ -904,6 +951,7 @@ struct DetectResult {
     fk::Fingerprint fp;
     fk::DetectionResult det;
     QImage display;
+    QString displayProfile; ///< FK-011: the display profile `display` was converted to
     int proxyScale = 1;
     bool changed = false; ///< FK-007: the file at the path is not the imported scan
     std::string changeReason;
@@ -969,7 +1017,10 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
             }
             res->det = std::move(*det);
             DisplayConverter conv;
-            if (conv.init(res->info)) res->display = conv.convertProxy(*proxy);
+            if (conv.init(res->info)) {
+                res->display = conv.convertProxy(*proxy);
+                res->displayProfile = conv.profileId();
+            }
             res->proxyScale = proxy->scale;
             res->ok = true;
         },
@@ -1031,15 +1082,18 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
                 s->items.push_back(it);
             }
             fk::updateCountWarning(*s); // the count setting may have changed while detection ran (UX-01)
-            r.display = res->display;
+            // FK-011: a proxy converted for a display profile that is no longer current is not shown
+            const bool staleDisplay = res->displayProfile != currentDisplayProfile().id;
+            r.display = staleDisplay ? QImage() : res->display;
             r.meta = res->meta;
             r.metaKnown = true;
             r.proxyScale = res->proxyScale;
-            r.thumb = boxDownscale(res->display, kThumbLong);
+            if (!staleDisplay) r.thumb = boxDownscale(res->display, kThumbLong);
             r.state = QStringLiteral("ready");
             r.error.clear();
             ++r.rev;
             refreshItemThumbs(scanId);
+            if (staleDisplay && curScan_ == scanId) loadPreview(scanId);
             dirty_ = true;
             if (curScan_ == scanId && !s->items.empty() && item(curItem_) == nullptr)
                 curItem_ = s->items.front().itemId;
@@ -1115,7 +1169,10 @@ void AppController::loadPreview(const std::string& scanId) {
                 return;
             }
             DisplayConverter conv;
-            if (conv.init(res->info)) res->display = conv.convertProxy(*proxy);
+            if (conv.init(res->info)) {
+                res->display = conv.convertProxy(*proxy);
+                res->displayProfile = conv.profileId();
+            }
             res->proxyScale = proxy->scale;
             res->ok = true;
         },
@@ -1140,6 +1197,12 @@ void AppController::loadPreview(const std::string& scanId) {
             if (fk::ScanRecord* sr = findScan(scanId);
                 sr && !res->fullSha256.empty() && sr->fingerprint.fullSha256.empty())
                 sr->fingerprint.fullSha256 = res->fullSha256; // saved with the next save
+            if (res->displayProfile != currentDisplayProfile().id) {
+                // FK-011: converted for a display profile that is no longer current: read it again
+                r.state = QStringLiteral("pending");
+                if (curScan_ == scanId) loadPreview(scanId);
+                return JobApply::outdated;
+            }
             r.display = res->display;
             r.meta = res->meta;
             r.metaKnown = true;
@@ -1924,6 +1987,7 @@ void AppController::requestDetail(QRectF r, int outW, int outH, quint64 generati
     auto srcHolder = std::make_shared<std::shared_ptr<fk::TiffSource>>(rt.source);
     auto result = std::make_shared<QImage>();
     auto cached = std::make_shared<uint64_t>(0);
+    auto profileUsed = std::make_shared<QString>();
     const std::string scanId = curScan_;
     // FK-005: one scan's decoded strips take at most a quarter of the cache budget
     const uint64_t decodeBudget = std::min<uint64_t>(96 * kMB, cache_.budget() / 4);
@@ -1942,6 +2006,7 @@ void AppController::requestDetail(QRectF r, int outW, int outH, quint64 generati
             const fk::ImageInfo& info = src.info();
             DisplayConverter conv;
             if (!conv.init(info)) return;
+            *profileUsed = conv.profileId();
             const int64_t x0 = std::clamp<int64_t>(static_cast<int64_t>(std::floor(r.left())), 0, info.width);
             const int64_t y0 = std::clamp<int64_t>(static_cast<int64_t>(std::floor(r.top())), 0, info.height);
             const int64_t x1 = std::clamp<int64_t>(static_cast<int64_t>(std::ceil(r.right())), 0, info.width);
@@ -1983,7 +2048,7 @@ void AppController::requestDetail(QRectF r, int outW, int outH, quint64 generati
             *result = std::move(img);
             *cached = src.cachedBytes();
         },
-        [this, result, srcHolder, cached, decodeBudget, r, generation, done,
+        [this, result, srcHolder, cached, profileUsed, decodeBudget, r, generation, done,
          scanId](const JobOutcome& o) -> JobDone {
             if (auto f = rt_.find(scanId); f != rt_.end() && *srcHolder) {
                 if (!f->second.source) f->second.source = *srcHolder;
@@ -1991,7 +2056,8 @@ void AppController::requestDetail(QRectF r, int outW, int outH, quint64 generati
                 if (f->second.source == *srcHolder)
                     noteCache("source:" + scanId, *cached ? *cached : decodeBudget);
             }
-            if (!o.cancelled && !result->isNull())
+            // FK-011: a patch converted for a display profile that is no longer current is not shown
+            if (!o.cancelled && !result->isNull() && *profileUsed == currentDisplayProfile().id)
                 done(*result, r, generation); // the canvas checks its generation
             return JobApply::applied;
         });
@@ -2024,6 +2090,7 @@ void AppController::requestCompositePreview(const QString& itemId) {
     auto err = std::make_shared<QString>();
     auto change = std::make_shared<double>(0.0);
     auto maskUsed = std::make_shared<fk::MaskParams>();
+    auto previewProfile = std::make_shared<QString>();
     const JobSnapshot snap = snapshotFor(s->scanId, id);
     auto self = std::make_shared<int>(0);
     previewJob_[id] = *self = jobs_->start(
@@ -2100,13 +2167,14 @@ void AppController::requestCompositePreview(const QString& itemId) {
             info.photometric = info.channels >= 3 ? fk::Photometric::rgb : fk::Photometric::min_is_black;
             DisplayConverter conv;
             if (!conv.init(info)) return;
+            *previewProfile = conv.profileId();
             QImage img(static_cast<int>(buf->width()), static_cast<int>(buf->height()), QImage::Format_RGB32);
             for (int64_t y = 0; y < buf->height(); ++y)
                 conv.convertRow(buf->row(y), buf->width(),
                                 reinterpret_cast<uint32_t*>(img.scanLine(static_cast<int>(y))));
             *out = std::move(img);
         },
-        [this, out, err, change, maskUsed, id, snap, self](const JobOutcome& o) -> JobDone {
+        [this, out, err, change, maskUsed, previewProfile, id, snap, self](const JobOutcome& o) -> JobDone {
             if (auto f = previewJob_.find(id); f != previewJob_.end() && f->second == *self)
                 previewJob_.erase(f);
             // a request arrived while this ran: serve it now, with the current state
@@ -2115,6 +2183,9 @@ void AppController::requestCompositePreview(const QString& itemId) {
             if (o.cancelled) return JobApply::applied;
             // the boundary, orientation, relinked file or mask changed while this ran: drop the result
             if (!sameComposite(snap)) return JobApply::outdated;
+            // FK-011: converted for a display profile that is no longer current (the canvas asks again)
+            if (err->isEmpty() && !out->isNull() && *previewProfile != currentDisplayProfile().id)
+                return JobApply::outdated;
             if (!err->isEmpty()) {
                 notify(tr("Composite preview failed: %1").arg(*err), QStringLiteral("error"));
                 return {JobApply::failed, *err};

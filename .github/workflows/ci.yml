@@ -218,10 +218,12 @@ jobs:
           esac
           FK_SETTINGS_DIR="$PWD/build/selftest-settings" QT_QPA_PLATFORM=offscreen \
             "$APP" --self-test "$PWD/build/selftest" --scan "$PWD/build/selftest-scan.tif" 2>&1 | tee build/selftest.log
-          # FK-011 known issue: MinIsWhite grey scan, Preview vs Full display (docs/v1/TRACEABILITY.md)
-          build/app/bin/fkfixture --out build/selftest-miw.tif --dpi 300 --count 2 --seed 4 --channels 1 --miniswhite --bits 16
-          QT_QPA_PLATFORM=offscreen "$APP" --self-test "$PWD/build/selftest/miniswhite" --scan "$PWD/build/selftest-miw.tif" \
-            --scenario miniswhite 2>&1 | tee -a build/selftest.log
+          # FK-011 (U025): MinIsWhite grey scans, 8- and 16-bit: Preview and Full show the same brightness
+          for b in 8 16; do
+            build/app/bin/fkfixture --out build/selftest-miw$b.tif --dpi 300 --count 2 --seed 4 --channels 1 --miniswhite --bits $b
+            QT_QPA_PLATFORM=offscreen "$APP" --self-test "$PWD/build/selftest/miniswhite$b" --scan "$PWD/build/selftest-miw$b.tif" \
+              --scenario miniswhite 2>&1 | tee -a build/selftest.log
+          done
       - name: Self-test failures as annotations
         if: failure() && steps.selftest.outcome == 'failure'
         run: python3 tools/ci-annotate.py build/selftest.log || python tools/ci-annotate.py build/selftest.log
