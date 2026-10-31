@@ -3906,12 +3906,36 @@ void SelfTest::runToolbar() {
         app_->setSetting(QStringLiteral("rightTab"), 0);
         canvas->setProperty("mode", QStringLiteral("scan"));
         settle();
-        const bool toExport = s3 && click(s3) && app_->settings().value("rightTab").toInt() == 1;
-        const bool toComposite = s5 && click(s5) && app_->settings().value("rightTab").toInt() == 2 &&
-                                 canvas->property("mode").toString() == QLatin1String("composite");
+        bool dialog = false;
+        {
+            QVariant open;
+            QMetaObject::invokeMethod(window_, "dialogOpen", Q_RETURN_ARG(QVariant, open));
+            dialog = open.toBool();
+        }
+        const QString at3 = s3 ? QStringLiteral("%1,%2 visible %3")
+                                     .arg(s3->mapToScene(QPointF(10, 10)).x())
+                                     .arg(s3->mapToScene(QPointF(10, 10)).y())
+                                     .arg(s3->isVisible())
+                               : QStringLiteral("missing");
+        const bool clicked3 = s3 && click(s3);
+        const int tab3 = app_->settings().value("rightTab").toInt();
+        const bool toExport = clicked3 && tab3 == 1;
+        const bool clicked5 = s5 && click(s5);
+        const int tab5 = app_->settings().value("rightTab").toInt();
+        const bool toComposite =
+            clicked5 && tab5 == 2 && canvas->property("mode").toString() == QLatin1String("composite");
         check(QStringLiteral("UX-06 a click on a workflow step leads to it (Export tab; Return tab with the "
                              "Composite view)"),
-              toExport && toComposite);
+              toExport && toComposite,
+              QStringLiteral(
+                  "step 3 at %1, clicked %2 → tab %3; step 5 clicked %4 → tab %5, view %6; dialog open %7")
+                  .arg(at3)
+                  .arg(clicked3)
+                  .arg(tab3)
+                  .arg(clicked5)
+                  .arg(tab5)
+                  .arg(canvas->property("mode").toString())
+                  .arg(dialog));
         snapshot(QStringLiteral("U021-steps"));
         canvas->setProperty("mode", QStringLiteral("scan"));
     }
