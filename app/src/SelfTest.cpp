@@ -3442,22 +3442,29 @@ void SelfTest::runFreezeRegression() {
     // C13 navigation keys
     focusCanvas();
     const QString first = app_->currentItemId();
-    press(Qt::Key_Right, Qt::NoModifier, {});
-    const QString second = app_->currentItemId();
-    press(Qt::Key_Left, Qt::NoModifier, {});
-    const QString back = app_->currentItemId();
+    const QString printsName = QStringLiteral("FREEZE C13 ← / → step through the prints");
+    if (perScan > 1) {
+        press(Qt::Key_Right, Qt::NoModifier, {});
+        const QString second = app_->currentItemId();
+        press(Qt::Key_Left, Qt::NoModifier, {});
+        check(printsName, !first.isEmpty() && second != first && app_->currentItemId() == first,
+              QStringLiteral("prints %1, after → moved %2, after ← back %3")
+                  .arg(perScan)
+                  .arg(second != first)
+                  .arg(app_->currentItemId() == first));
+    } else {
+        skip(printsName, QStringLiteral("one print on this scan"));
+    }
     press(Qt::Key_Right, Qt::ShiftModifier, {});
     const QString nextScan = app_->currentScanId();
     press(Qt::Key_Left, Qt::ShiftModifier, {});
-    check(QStringLiteral("FREEZE C13 ← / → step through the prints, Shift+← / → through the scans"),
-          perScan > 1 && !first.isEmpty() && second != first && back == first && nextScan == idB &&
-              app_->currentScanId() == idA,
-          QStringLiteral("prints %1, after → %2, after ← %3, Shift+→ scan %4, Shift+← scan %5")
-              .arg(perScan)
-              .arg(second != first)
-              .arg(back == first)
+    check(QStringLiteral("FREEZE C13 Shift+← / → step through the scans"),
+          nextScan == idB && app_->currentScanId() == idA,
+          QStringLiteral("Shift+→ next scan %1, Shift+← back %2")
               .arg(nextScan == idB)
               .arg(app_->currentScanId() == idA));
+    app_->selectItem(first);
+    settle();
 
     // D01 view keys, D06 compare keys in the composite view
     QStringList modes;
@@ -3723,6 +3730,9 @@ void SelfTest::runFreezeRegression() {
           QStringLiteral("edited %1, corner %2 px from detected after reset")
               .arg(edited)
               .arg(afterReset, 0, 'f', 3));
+    // reference: the detected Outer. On the generated fixture it is the paper edge; on scans whose detected
+    // Outer lies outside the paper on purpose (white frames on a white lid, REAL-SCAN-GT §U012: 2–18 px) the
+    // premise does not hold and the result is an observation (WORKLOG U029)
     app_->setOuterNumeric(first, 0, c0.x() + 8, c0.y() + 8);
     settle();
     const double beforeSnap = QLineF(corner(outerOf(), 0), c0).length();
@@ -3732,7 +3742,7 @@ void SelfTest::runFreezeRegression() {
     const double afterSnap = QLineF(corner(outerOf(), 0), c0).length();
     check(QStringLiteral("FREEZE C06 snap to edges moves a corner pulled inside the paper back to its edge"),
           afterSnap < beforeSnap && afterSnap < 4.0,
-          QStringLiteral("corner %1 px from the detected edge before, %2 px after")
+          QStringLiteral("corner %1 px from the detected corner before, %2 px after")
               .arg(beforeSnap, 0, 'f', 2)
               .arg(afterSnap, 0, 'f', 2));
     app_->resetToDetected(first);

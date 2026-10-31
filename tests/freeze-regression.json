@@ -217,7 +217,8 @@
  },
  "C13": {
   "checks": [
-   "FREEZE C13"
+   "FREEZE C13 ← / → step through the prints",
+   "FREEZE C13 Shift+← / → step through the scans"
   ]
  },
  "D01": {

@@ -5,8 +5,14 @@
 （不生成本文件）。“passed” = 对应的自检检查本次全部通过、或对应的核心测试存在（其结果由 CI 核心任务给出）；
 “CI” = 由 CI 中的其他步骤覆盖；“manual” = 只能由人验证（原因见证据栏）。
 
-- 本次运行：Linux 离屏，样张（fkfixture，300 dpi，3 张相片），版本 0.7.0-alpha.15；自检结果：245 passed, 0 failed, 0 skipped, 0 known issues (0 no longer reproduce), 0 not applicable。
+- 本次运行：Linux 离屏，样张（fkfixture，300 dpi，3 张相片），版本 0.7.0-alpha.16；自检结果：247 passed, 0 failed, 0 skipped, 0 known issues (0 no longer reproduce), 0 not applicable。
 - 结果：81 条 — 75 passed，3 CI，3 manual，0 失败或无证据。
+- 同一构建在其他扫描件上（`--partial`：扫描件不适用的检查记为“本扫描件未运行”）：样张中文 247 通过、0 失败；所有者扫描件
+  polaroid_92（单张、扫描仪紧裁）240 通过、0 失败、4 跳过（单张相片不适用）、1 不适用（8 位），回归 75 通过、0 失败；
+  所有者扫描件 img20260702_0005（白底白框 4 张，826 dpi）238 通过、**1 失败**、5 跳过、1 不适用：“FREEZE C06 吸附边缘”——
+  角点向内拉 8 px（距识别角点 11.31 px）后吸附停在距识别角点 5.38 px 处。该检查以识别出的外框为纸边；在白底白框扫描件上，
+  识别外框按设计在纸面之外 2–18 px（REAL-SCAN-GT §U012；此张第一张相片的识别角点比真值角点偏左约 18 px），因此拉进 8 px
+  后角点仍在纸面之外，检查的前提不成立；这一结果记作观察与使用指南第 4 节的已知限制，不计为回归。
 - macOS 上属于原生菜单栏的快捷键检查按设计跳过（离屏窗口没有原生菜单栏），在 CI 中计为“跳过”，不计为通过。
 
 | ID | 功能 | 证据 | 结果 |
@@ -35,7 +41,7 @@
 | C01 | 工具：选择 V、抓手 H（空格临时）、编辑外框 O、编辑内框 I、Esc 回到选择 | “UX-03 Shift tap (real key events): Outer → Inner” ✓; “UX-03 tool button (mouse): Edit Inner” ✓ | passed |
 | C02 | 拖动角点/边中点自由编辑四边形；圆形拖动 | “UX-03 drag without Shift: free corner” ✓; “UX-03 circle: radius drag (diagonal pointer) keeps rx = ry” ✓ | passed |
 | C03 | 方向键微调手柄（Shift ×10） | “UX-03 Shift+→ on a selected corner: 10 px nudge” ✓; “UX-03 circle: arrow nudges keep rx = ry” ✓ | passed |
-| C04 | 数值输入四角坐标 | “FREEZE C07” ✓; “UX-09 drag right (mouse)” ✓; (the corner fields call the same command as FREEZE C07's numeric edit) | passed |
+| C04 | 数值输入四角坐标 | “FREEZE C04” ✓; “FREEZE C07” ✓; “UX-09 drag right (mouse)” ✓; (the corner fields call the same command as FREEZE C07's numeric edit) | passed |
 | C05 | 内框形状：矩形 / 圆形 | “UX-03 saved and reopened: outer and round inner unchanged” ✓; “UX-03 the export uses the edited circle” ✓ | passed |
 | C06 | 外框吸附边缘 | “FREEZE C06” ✓ | passed |
 | C07 | 重置为识别结果 | “FREEZE C07” ✓ | passed |
@@ -44,7 +50,7 @@
 | C10 | 已复核标记；复核并下一张 | “FREEZE C10” ✓ | passed |
 | C11 | 排除 / 包含批处理 | “FREEZE C11” ✓ | passed |
 | C12 | 全选相片 | “FREEZE C12” ✓ | passed |
-| C13 | 上/下一张相片 ←/→；上/下一个扫描件 Shift+←/→ | “FREEZE C13” ✓ | passed |
+| C13 | 上/下一张相片 ←/→；上/下一个扫描件 Shift+←/→ | “FREEZE C13 ← / → step through the prints” ✓; “FREEZE C13 Shift+← / → step through the scans” ✓ | passed |
 | D01 | 视图模式：扫描件 1 / 相片 2 / 画面 3 / 合成 4 | “FREEZE D01” ✓; “UX-06 narrow window: the compact view switch changes the view” ✓ | passed |
 | D02 | 缩放：放大/缩小（Ctrl+= / Ctrl+−、滚轮、触控板）、适合 Ctrl+0、100 % Ctrl+1、适合↔100 % 切换 Z | “FREEZE D02” ✓ ×2 | passed |
 | D03 | 100 % = 1 图像像素对应 1 设备像素；Preview/Full 分辨率标记 | “physical 100 %” ✓; “badge Preview at fit” ✓; “badge Full at 100 %” ✓ | passed |

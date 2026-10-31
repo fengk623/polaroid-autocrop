@@ -7,13 +7,15 @@ Every entry of the freeze list (A01 … J03) must be mapped in tests/freeze-regr
 - "ci": a CI step that covers it (licences, network, packages);
 - "manual": why it can only be verified by a person, and where (docs/HUMAN-VERIFICATION.md).
 
-  tools/freeze-regression.py [--report <self-test report.json>] [--markdown <out.md>]
+  tools/freeze-regression.py [--report <self-test report.json> [--partial]] [--markdown <out.md>]
 
 Without --report the mapping is checked only (every entry mapped, every named test exists). With --report each
 mapped check must have run and passed; a check skipped by the self-test (with its reason) is reported as skipped,
 not as passed, and does not fail the run when another piece of evidence for the entry passed. Exit 1 when an
 entry is unmapped, a named test does not exist, a mapped check failed or did not run, or an entry has no passing
-evidence and no manual or CI reason.
+evidence and no manual or CI reason. --partial is for reports from other scans than the CI fixture (the
+owner's scans): checks such a scan does not apply to (one print, 8-bit, no ICC profile) did not run and are
+listed as "not run on this scan" instead of failing; CI uses the fixture and the strict mode.
 """
 import argparse
 import json
@@ -47,6 +49,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--report")
     ap.add_argument("--markdown")
+    # a report from another scan than the CI fixture (e.g. the owner's scans): checks a scan does not apply to
+    # (one print, 8-bit, untagged) did not run; they are listed as not run, not failed
+    ap.add_argument("--partial", action="store_true")
     args = ap.parse_args()
     entries = freeze_entries()
     mapping = json.loads((ROOT / "tests" / "freeze-regression.json").read_text(encoding="utf-8"))
@@ -65,7 +70,7 @@ def main() -> int:
             problems.append(f"{fid} ({feature}): not mapped in tests/freeze-regression.json")
             rows.append((fid, feature, "—", "not mapped"))
             continue
-        evidence, ok, failed, skipped = [], False, False, False
+        evidence, ok, failed, skipped, notrun = [], False, False, False, False
         for t in ev.get("tests", []):
             if t not in tests:
                 problems.append(f"{fid}: test {t} does not exist")
@@ -83,7 +88,10 @@ def main() -> int:
                 evidence.append(f"self-test “{name}”")
                 continue
             hits = [c for c in checks if c.get("name", "").startswith(name)]
-            if not hits:
+            if not hits and args.partial:
+                notrun = True
+                evidence.append(f"“{name}” — not run on this scan")
+            elif not hits:
                 problems.append(f"{fid}: self-test check “{name}” did not run")
                 failed = True
                 evidence.append(f"“{name}” — did not run")
@@ -109,10 +117,10 @@ def main() -> int:
         elif ok:
             status = "passed"
             counts["passed"] += 1
-        elif skipped:
+        elif skipped or notrun:
             # skipped by the self-test with its reason on this platform (e.g. macOS menu-bar shortcuts):
             # reported apart, never as passed
-            status = "skipped"
+            status = "skipped" if skipped else "not run on this scan"
             counts["skipped"] += 1
         elif ev.get("ci"):
             status = "CI"

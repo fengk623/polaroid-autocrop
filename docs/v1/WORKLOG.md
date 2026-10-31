@@ -913,3 +913,22 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   check "FREEZE C04 a corner field focused and left without typing changes nothing": red first (260.6013 →
   260.6000, source auto → manual), then the number field commits only when its text changed: green, and C07 0.000
   px. 23 FREEZE checks.
+- PR #29 CI round 2 (number field fix): green on all platforms; packaged tests: Windows installer 29 passed, 0
+  failed, 0 skipped; macOS DMG 17 passed, 0 failed, 0 skipped.
+- Final regression on the owner's scans (same build): polaroid_92 first failed "FREEZE C13" — one print on the
+  scan, so ←/→ cannot step within it [my check's precondition] → split into "← / → step through the prints"
+  (skipped with the reason on single-print scans) and "Shift+← / → step through the scans"; the 8-bit scan does not
+  run the FK-010 16→8-bit checks, so the regression for scans other than the CI fixture runs with `--partial`
+  (checks a scan does not apply to are listed as not run, not failed; CI keeps the strict mode on the fixture).
+- img20260702_0005 (white frames on a white lid, 826 dpi): "FREEZE C06" failed — a corner pulled 8 px inside the
+  detected corner (11.31 px away) snapped back to 5.38 px from it (check: < 4 px). The check takes the detected
+  Outer as the paper edge; on white-on-white scans the detected Outer lies 2–18 px outside the paper by design
+  (REAL-SCAN-GT §U012; here the first print's detected corner is ≈ 18 px left of the measured one), so the pulled
+  corner is still outside the paper [premise of my check, not a regression: snapping is unchanged]. I tried a
+  second design (reference = where snapping the detected Outer lands) — it failed on polaroid_92 instead (snapping
+  the detected Outer moved it 9.5 px; from 8 px inside, 9.92 px) — snapping depends on where it starts on real
+  scans, so neither reference is the truth without ground truth → the first design is kept, with its premise
+  written next to it; the result is recorded in REGRESSION.md and as a known limitation in the guide (§4).
+- Final results: fixture English and Chinese 247 passed, 0 failed, 0 skipped each, regression 75 passed / 3 CI / 3
+  manual / 0 failed; polaroid_92 240 passed, 0 failed, 4 skipped, 1 not applicable, regression 0 failed;
+  img20260702_0005 238 passed, 1 failed (C06, above), 5 skipped, 1 not applicable.
