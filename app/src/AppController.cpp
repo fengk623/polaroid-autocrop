@@ -231,7 +231,8 @@ void AppController::loadSettings() {
                                {"exportFormat", "tif"},
                                {"exportBits", 0},
                                {"exportCompression", "lzw"},
-                               {"geometryMode", "crop"},
+                               // UX-02/D4: "image only" is straightened by default — labelled as resampled
+                               {"geometryMode", "straighten"},
                                {"applyUpright", true},
                                {"colorPolicy", "keep"},
                                {"privacy", "keep_all_safe"},
@@ -1578,12 +1579,11 @@ QVariantMap AppController::currentItem() const {
     m["relinked"] = relinked;
     m["finalExport"] = toQ(it->finalExport);
     m["relinkCheck"] = relinkChecks_.count(it->itemId) ? relinkChecks_.at(it->itemId) : QVariantMap();
-    const bool crop = settings_.value("geometryMode").toString() == QLatin1String("crop");
-    const QString fmt = settings_.value("exportFormat").toString();
-    m["frameBitExact"] = crop && fmt != QLatin1String("jpg");
-    m["notExactReason"] = !crop                         ? tr("straightened: rotated and resampled")
-                          : fmt == QLatin1String("jpg") ? tr("JPEG is lossy")
-                                                        : QString();
+    // FK-010: what the export will really be (core plan), not a guess from two settings
+    const QVariantMap plan = outputPlan(*it, false);
+    m["exportPlan"] = plan;
+    m["frameBitExact"] = plan.value("bitExact").toBool();
+    m["notExactReason"] = plan.value("reasons").toStringList().join(QStringLiteral("; "));
     m["hasCompositePreview"] = compositePreviews_.count(it->itemId) > 0;
     return m;
 }
@@ -1827,7 +1827,63 @@ QString AppController::fileUrl(const QString& path) const {
     return QUrl::fromLocalFile(path).toString();
 }
 
-fk::ExportRequest AppController::baseExportRequest(const fk::ItemRecord& it, bool fullPrint) const {
+namespace {
+QString reasonText(const std::string& r) {
+    if (r == "resampled: straightened") return AppController::tr("straightened: rotated and resampled");
+    if (r == "resampled: scaled to standard size") return AppController::tr("scaled to the standard size");
+    if (r == "bit depth reduced to 8-bit") return AppController::tr("16-bit data reduced to 8 bits");
+    if (r == "colour converted to another profile")
+        return AppController::tr("colours converted to another profile");
+    if (r == "lossy JPEG compression") return AppController::tr("JPEG is lossy");
+    if (r == "linearised for Linear DNG") return AppController::tr("linearised for Linear DNG");
+    return QString::fromStdString(r);
+}
+QString noteText(const std::string& n) {
+    if (n.find("transparent outside") != std::string::npos)
+        return AppController::tr("round image area: transparent outside the circle");
+    if (n.find("filled white") != std::string::npos)
+        return AppController::tr(
+            "round image area: filled white outside the circle (JPEG has no transparency)");
+    if (n.find("keep the scanned frame") != std::string::npos)
+        return AppController::tr("round image area: the corners keep the scanned frame (Linear DNG has no "
+                                 "transparency)");
+    if (n.find("alpha channel dropped") != std::string::npos)
+        return AppController::tr("alpha channel dropped");
+    return QString::fromStdString(n);
+}
+} // namespace
+
+QVariantMap AppController::outputPlan(const fk::ItemRecord& it, bool fullPrint) const {
+    const fk::ScanRecord* s = scanOf(it.itemId);
+    if (!s || s->info.width <= 0) return {};
+    auto p = fk::planExport(s->info, baseExportRequest(it, fullPrint, true));
+    if (!p) return {{"error", errText(p.error())}};
+    QStringList reasons, notes;
+    for (const auto& r : p->notExactReasons)
+        reasons << reasonText(r);
+    for (const auto& n : p->notes)
+        notes << noteText(n);
+    const bool straight = p->geometry.mode != fk::GeometryMode::pixel_crop;
+    return {{"width", static_cast<qlonglong>(p->geometry.outSize.w)},
+            {"height", static_cast<qlonglong>(p->geometry.outSize.h)},
+            {"bits", p->outBits},
+            {"channels", p->outChannels},
+            {"icc", toQ(p->iccDescription)},
+            {"resampled", p->geometry.resampled},
+            {"interpolation", toQ(p->interpolation)},
+            {"geometry", straight
+                             ? tr("straightened (rotated %1°, resampled with %2)")
+                                   .arg(p->geometry.angleRad * 180.0 / 3.14159265358979323846, 0, 'f', 2)
+                                   .arg(toQ(p->interpolation))
+                             : tr("pixel crop (no resampling; a tilted print's corners may include frame)")},
+            {"bitExact", p->frameBitExact},
+            {"reducesDepth", p->reducesDepth},
+            {"reasons", reasons},
+            {"notes", notes}};
+}
+
+fk::ExportRequest AppController::baseExportRequest(const fk::ItemRecord& it, bool fullPrint,
+                                                   bool allowDepthReduction) const {
     fk::ExportRequest r;
     r.target = fullPrint ? fk::ExportTarget::full_print : fk::ExportTarget::image_area;
     r.region = fullPrint ? it.outer : it.inner;
@@ -1842,8 +1898,8 @@ fk::ExportRequest AppController::baseExportRequest(const fk::ItemRecord& it, boo
     r.write.jpegQuality = settings_.value("jpegQuality").toInt();
     r.color = colorPolicyOf(settings_.value("colorPolicy").toString());
     r.privacy = privacyOf(settings_.value("privacy").toString());
-    r.reviewed = true; // confirmed in prepareExport
-    r.allowDepthReduction = true;
+    r.reviewed = true;                           // confirmed in prepareExport
+    r.allowDepthReduction = allowDepthReduction; // FK-010: only with the user's explicit consent
     return r;
 }
 
@@ -1857,15 +1913,20 @@ QVariantMap AppController::prepareExport(const QStringList& itemIds) {
                                       {"label", toQ(it->label)},
                                       {"scan", QFileInfo(toQ(scanOf(id)->path)).fileName()}};
     }
-    const int bits = settings_.value("exportBits").toInt();
+    // FK-010: prompts follow the core's plan of each output
     bool reduces = false;
+    QVariantMap first;
     for (const auto& id : ids)
-        if (const fk::ScanRecord* s = scanOf(id); s && bits == 8 && s->info.bitsPerSample == 16)
-            reduces = true;
+        if (const fk::ItemRecord* it = item(id)) {
+            const QVariantMap p = outputPlan(*it, false);
+            if (first.isEmpty()) first = p;
+            reduces = reduces || p.value("reducesDepth").toBool();
+        }
     return {{"count", static_cast<int>(ids.size())},
             {"unreviewed", unreviewed},
             {"folder", defaultExportFolder()},
-            {"reducesDepth", reduces || settings_.value("exportFormat").toString() == QLatin1String("jpg")}};
+            {"reducesDepth", reduces},
+            {"plan", first}};
 }
 
 namespace {
@@ -1886,7 +1947,7 @@ struct ExportOutcome {
 
 } // namespace
 
-void AppController::exportImageAreas(const QStringList& itemIds) {
+void AppController::exportImageAreas(const QStringList& itemIds, bool allowDepthReduction) {
     const auto ids = resolveItems(itemIds);
     if (ids.empty()) return;
     const QString folder = defaultExportFolder();
@@ -1896,7 +1957,7 @@ void AppController::exportImageAreas(const QStringList& itemIds) {
         const fk::ItemRecord* it = item(id);
         const fk::ScanRecord* s = scanOf(id);
         if (!it || !s || s->missing) continue;
-        work.push_back({*s, *it, baseExportRequest(*it, false)});
+        work.push_back({*s, *it, baseExportRequest(*it, false, allowDepthReduction)});
     }
     const fk::Project projCopy = project_;
     auto outcomes = std::make_shared<std::vector<ExportOutcome>>();
@@ -2011,7 +2072,7 @@ void AppController::exportImageAreas(const QStringList& itemIds) {
         });
 }
 
-void AppController::exportFullPrints(const QStringList& itemIds) {
+void AppController::exportFullPrints(const QStringList& itemIds, bool allowDepthReduction) {
     const auto ids = resolveItems(itemIds);
     if (ids.empty()) return;
     const QString folder = defaultExportFolder();
@@ -2021,7 +2082,7 @@ void AppController::exportFullPrints(const QStringList& itemIds) {
         const fk::ItemRecord* it = item(id);
         const fk::ScanRecord* s = scanOf(id);
         if (!it || !s || s->missing) continue;
-        work.push_back({*s, *it, baseExportRequest(*it, true)});
+        work.push_back({*s, *it, baseExportRequest(*it, true, allowDepthReduction)});
     }
     auto outcomes = std::make_shared<std::vector<ExportOutcome>>();
     const std::string dir = toStd(folder);

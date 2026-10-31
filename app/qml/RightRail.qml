@@ -248,8 +248,8 @@ Rectangle {
                             label: qsTr("Geometry"); labelWidth: rail.lw
                             Segmented {
                                 value: App.settings.geometryMode
-                                model: [{ text: qsTr("Pixel crop"), value: "crop", tip: qsTr("Exact scan pixels; no resampling") },
-                                        { text: qsTr("Straighten"), value: "straighten", tip: qsTr("Rotate the tilt away (Lanczos-3 resampling)") }]
+                                model: [{ text: qsTr("Straighten"), value: "straighten", tip: qsTr("Rotate the tilt away (Lanczos-3 resampling); the default for the image area") },
+                                        { text: qsTr("Pixel crop"), value: "crop", tip: qsTr("Exact scan pixels; no resampling; a tilted print's corners may include frame") }]
                                 onActivated: (v) => App.setSetting("geometryMode", v)
                             }
                         }
@@ -261,6 +261,17 @@ Rectangle {
                             color: rail.it.frameBitExact ? Theme.textSecondary : Theme.warning
                             text: rail.it.frameBitExact ? qsTr("Pixels stay bit-identical to the scan.")
                                                         : qsTr("Pixels are not bit-identical: %1.").arg(rail.it.notExactReason)
+                        }
+                        Text {
+                            // FK-010 / UX-02: the real output of this print (core plan)
+                            readonly property var p: rail.it.exportPlan || ({})
+                            visible: p.width !== undefined
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: Theme.fontCaption
+                            color: Theme.textTertiary
+                            text: visible ? qsTr("Output: %1 × %2 px, %3-bit, %4").arg(p.width).arg(p.height).arg(p.bits).arg(p.geometry)
+                                            + ((p.notes || []).length ? " · " + p.notes.join("; ") : "") : ""
                         }
                         FieldRow {
                             label: qsTr("Folder"); labelWidth: rail.lw

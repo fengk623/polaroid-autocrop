@@ -132,8 +132,9 @@ class AppController : public QObject {
     // ---- export / relink / final ----
     /// Items an export would include, with the unreviewed low-confidence ones listed for confirmation.
     Q_INVOKABLE QVariantMap prepareExport(const QStringList& itemIds);
-    Q_INVOKABLE void exportImageAreas(const QStringList& itemIds);
-    Q_INVOKABLE void exportFullPrints(const QStringList& itemIds);
+    /// `allowDepthReduction`: the user's explicit consent to write 8 bits from a 16-bit scan (FK-010).
+    Q_INVOKABLE void exportImageAreas(const QStringList& itemIds, bool allowDepthReduction = false);
+    Q_INVOKABLE void exportFullPrints(const QStringList& itemIds, bool allowDepthReduction = false);
     /// Assesses graded files by weighing all evidence (RFC-0006 §Relink v2). With `targetItemId` only that
     /// print is considered and, if none of its exports matches, a new alignment is offered. `update`
     /// re-assesses rows already shown (result: relinkRowUpdated instead of relinkResults).
@@ -252,7 +253,10 @@ class AppController : public QObject {
     void refreshItemThumbs(const std::string& scanId);
     void startDetect(const std::string& scanId, std::shared_ptr<fk::Template> tmpl);
     void loadPreview(const std::string& scanId);
-    fk::ExportRequest baseExportRequest(const fk::ItemRecord& it, bool fullPrint) const;
+    fk::ExportRequest baseExportRequest(const fk::ItemRecord& it, bool fullPrint,
+                                        bool allowDepthReduction = false) const;
+    /// FK-010: the core's plan of the real output of `it` with the current settings, worded for the UI.
+    QVariantMap outputPlan(const fk::ItemRecord& it, bool fullPrint) const;
     QString statusOf(const fk::ItemRecord& it) const;
     void loadSettings();
     QString templatesDir() const;

@@ -33,6 +33,11 @@ class OutputStage {
         SizeI outSize{};
         double dpiScale = 1.0;
         bool allowDepthReduction = false;
+        /// UX-02 (U010): a round image area — outside it PNG/TIFF become transparent, JPEG is filled white,
+        /// Linear DNG keeps the frame (no transparency); `outToScan` maps output pixels to the scan.
+        std::optional<Ellipse> clip;
+        Mat3 outToScan{};
+        double outPerScanPx = 1.0;
     };
     ~OutputStage();
     Status open(const Params& p, ExportReport& rep);
@@ -50,6 +55,12 @@ class OutputStage {
     Sha256 hash_;
     std::unique_ptr<SignatureAccumulator> sig_;
     AccountedBuffer outRow_;
+    AccountedBuffer colorRow_; ///< converted colour channels before the clip is applied
+    enum class Clip { none, alpha, white } clip_ = Clip::none;
+    std::optional<Ellipse> ellipse_;
+    Mat3 outToScan_{};
+    double outPerScanPx_ = 1.0;
+    int colorCh_ = 0;
     SizeI size_{};
     int64_t y_ = 0;
     bool open_ = false;

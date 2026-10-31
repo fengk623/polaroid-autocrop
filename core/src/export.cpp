@@ -73,11 +73,35 @@ std::filesystem::path nextFreePath(const std::filesystem::path& dir, const std::
 }
 
 Result<ExportPlan> planExport(const ImageSource& src, const ExportRequest& req) {
-    const ImageInfo& in = src.info();
+    auto plan = planExport(src.info(), req);
+    if (!plan) return plan;
+    const auto dir = req.output.parent_path().empty() ? std::filesystem::path(".") : req.output.parent_path();
+    plan->freeBytes = freeDiskBytes(dir);
+    if (!req.allowDepthReduction && plan->reducesDepth)
+        return makeError(Errc::needs_confirmation, "This export would reduce 16-bit data to 8-bit",
+                         "set allowDepthReduction after the user confirms");
+    return plan;
+}
+
+Result<ExportPlan> planExport(const ImageInfo& in, const ExportRequest& req) {
     if (!isValid(req.region)) return makeError(Errc::invalid_argument, "The boundary is not a valid shape");
     ExportPlan plan;
-    auto lay = detail::computeOutputLayout(in, req.write, req.allowDepthReduction);
+    auto lay = detail::computeOutputLayout(in, req.write, true); // consent is checked by the caller
     if (!lay) return lay.error();
+    plan.reducesDepth = lay->outBits < lay->srcBits;
+    plan.notes = lay->notes;
+    if (req.target == ExportTarget::image_area && req.region.kind == ShapeKind::ellipse && !lay->srcAlpha) {
+        if (req.write.format == FileFormat::tiff || req.write.format == FileFormat::png) {
+            plan.notes.push_back("round image area: transparent outside the circle");
+            ++lay->outCh;
+        } else if (req.write.format == FileFormat::jpeg) {
+            plan.notes.push_back(
+                "round image area: filled white outside the circle (JPEG has no transparency)");
+        } else {
+            plan.notes.push_back(
+                "round image area: the corners keep the scanned frame (Linear DNG has no transparency)");
+        }
+    }
     plan.outChannels = lay->outCh;
     plan.outBits = lay->outBits;
     plan.geometry = computeExportGeometry(req.region, req.frame, req.mode, req.upright, req.standardSize,
@@ -92,11 +116,10 @@ Result<ExportPlan> planExport(const ImageSource& src, const ExportRequest& req) 
     if (req.write.format == FileFormat::jpeg) r.push_back("lossy JPEG compression");
     if (req.write.format == FileFormat::dng) r.push_back("linearised for Linear DNG");
     plan.frameBitExact = r.empty();
+    plan.interpolation = plan.geometry.resampled ? "Lanczos-3" : "none";
     WriteOptions w = req.write;
     w.bits = lay->outBits;
     plan.estimatedBytes = estimateOutputBytes(plan.geometry.outSize, lay->outCh, lay->outBits, w);
-    const auto dir = req.output.parent_path().empty() ? std::filesystem::path(".") : req.output.parent_path();
-    plan.freeBytes = freeDiskBytes(dir);
     const uint64_t region =
         static_cast<uint64_t>(plan.geometry.sourceRect.w) * plan.geometry.sourceRect.h * in.bytesPerPixel();
     const uint64_t band = static_cast<uint64_t>(plan.geometry.sourceRect.w) * 256 * in.bytesPerPixel() * 2;
@@ -148,6 +171,11 @@ Result<ExportReport> exportRegion(ImageSource& src, const ExportRequest& req, co
     op.outSize = g.outSize;
     op.dpiScale = g.scale;
     op.allowDepthReduction = req.allowDepthReduction;
+    if (req.target == ExportTarget::image_area && req.region.kind == ShapeKind::ellipse) {
+        op.clip = req.region.ellipse;
+        op.outToScan = g.outToScan;
+        op.outPerScanPx = g.scale > 0 ? g.scale : 1.0;
+    }
     FK_TRY(out.open(op, rep));
 
     const size_t srcPx = in.bytesPerPixel();
