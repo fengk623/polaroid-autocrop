@@ -131,6 +131,42 @@ TEST(Geometry, StraightenedMapsFrameToAxisAlignedBox) {
     EXPECT_NEAR(back.y, 487.9, 1e-9);
 }
 
+TEST(Geometry, StraightenedImageAreaFillsTheOutputExactly) {
+    // UX-02 (U012): a window that is not a perfect rectangle in the scan (scanner shear 0.3°, measured on the
+    // owner's scans) and whose angle differs from the frame's: its four edges become the output's edges, so
+    // an "image only" export holds no frame and loses no picture. Rotation + bounding box left 6–17 px of
+    // frame.
+    const Quad frame =
+        rotatedRect({1000, 1000}, 1800, 1900, 0.0); // a print cropped tightly: frame axis-aligned
+    Quad q;
+    q.p = {Vec2{215.4, 290.4}, Vec2{1854.4, 276.3}, Vec2{1871.7, 1997.3}, Vec2{227.5, 2011.6}};
+    const Shape s = Shape::fromQuad(q);
+    const auto g = computeExportGeometry(s, frame, GeometryMode::straightened, 0, std::nullopt, {4000, 4000});
+    ASSERT_TRUE(g.resampled);
+    const double w = static_cast<double>(g.outSize.w), h = static_cast<double>(g.outSize.h);
+    const Vec2 corners[4] = {{0, 0}, {w, 0}, {w, h}, {0, h}};
+    for (int k = 0; k < 4; ++k) {
+        const Vec2 p = g.outToScan.apply(corners[k]);
+        EXPECT_NEAR(p.x, q.p[k].x, 1e-6);
+        EXPECT_NEAR(p.y, q.p[k].y, 1e-6);
+    }
+    // every point of every output edge lies on the corresponding window edge
+    for (int k = 0; k <= 20; ++k) {
+        const double t = k / 20.0;
+        for (const Vec2 o : {Vec2{t * w, 0}, Vec2{w, t * h}, Vec2{t * w, h}, Vec2{0, t * h}})
+            EXPECT_NEAR(signedDistance(s, g.outToScan.apply(o)), 0.0, 1e-6);
+    }
+    // the label's angle: the window's own (≈ −0.49°), not the frame's (0°)
+    EXPECT_NEAR(g.angleRad * 180 / kPi, -0.49, 0.03);
+    // a rotated rectangle keeps its size and maps exactly as before
+    const Quad r = rotatedRect({600, 500}, 400, 300, -0.7 * kPi / 180);
+    const auto gr = computeExportGeometry(Shape::fromQuad(r), frame, GeometryMode::straightened, 0,
+                                          std::nullopt, {2000, 2000});
+    EXPECT_EQ(gr.outSize, (SizeI{400, 300}));
+    EXPECT_NEAR(gr.scanToOut.apply(r.p[2]).x, 400, 1e-6);
+    EXPECT_NEAR(gr.scanToOut.apply(r.p[2]).y, 300, 1e-6);
+}
+
 TEST(Geometry, StandardSizeScalesUniformly) {
     const Quad q = rotatedRect({600, 500}, 400, 300, 0.0);
     const Shape s = Shape::fromQuad(q);

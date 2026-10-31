@@ -328,3 +328,40 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   failures; count compared when automatic + no `possible_missed` → 3 failures; restored (no MUTATION markers).
   Self-test: fixture 92 pass; owner's polaroid_92 90 pass; img20260702_0005 86 pass + 4 skipped (FK-003, untagged).
   Scenario `count`: C1 automatic, no warning (3 prints); C2 manual 4 → "found 3, expected 4"; C3 manual 3 → none.
+
+### 19:30–20:40 — PR #13 green, all five PRs merged, U012
+- PR #13 (U011): all checks green. The owner merged PRs #9–#13 at 19:59–20:00 (merge commits b936a6a … 05291c4).
+- U012 (branch `unit/U012-gt-accuracy`, from U011), UX-02 detection part. Order kept as REAL-SCAN-GT requires:
+  1. Tools first: `fkcli realeval` (fk.realgt/1; scans found by SHA-256; per side and per stratum) and
+     `tools/gt/draft-gt.py` (pixels only, independent of the detector). First GT rule (half level between plateaus)
+     put polaroid_92's bottom inner edge on the image/reagent-band boundary (29 px off, seen in a zoomed crop)
+     [failed] → first significant gradient peak walking from the known material; outer plateau moved to 2.5–3.5 mm
+     inside the seed after the 4-up bottom seeds (1.7 mm outside) started inside the shadow band [failed].
+     Drafts for the owner's 4 scans (7 prints) stay outside the repository (REAL-SCAN-GT §4).
+  2. Gates G1–G6 frozen in REAL-SCAN-GT §3 before any detection change; baseline (U011 code): G1 = 1 cut (img001,
+     regression set → registered and moved to tuning), G3 0.97/1.90 mm, G6 0.37 mm.
+  3. Fixes. Export: "straightened" rotated by the frame's angle and took a bounding box — on tightly cropped scans
+     the frame is the scan border (angle 0) and the window is sheared ≈ 0.3° → quad windows now mapped exactly
+     (projective, `squareToQuad`); G6 → 0.05 mm, all 184 existing tests unchanged. Outer: paper-side-first rule;
+     iterations measured on GT + generated corpora (each recorded): plain inside-out at half contrast left corner
+     lines on the lid [failed]; corner lines ending in the neighbour's shadow → paper-consistency filter; 0.3
+     threshold over all colour shifts would cut a rolled dark paper edge on dark backings (img001: 2–3 px)
+     [failed] → only darkening on lighter backings; onset-width tests rejected real band edges [failed, removed];
+     quarter-way crossing on lighter backings cut a blurred synthetic step by 0.74 px [failed] → only on ramps
+     wider than max(6 px, 0.2 mm); the paper's texture noise discarded edges of a low-contrast synthetic print
+     (9.7 px cut) [failed] → contrast judged against the backing noise as before. img001: clamping corners turned
+     a side that leaves the scan and cut 3–5 px → such a side becomes the scan border.
+- Result (realeval --enforce, all gates): G1 0, G2 0/0, G3 0.25/0.55 mm, G4 0.05, G5 0, G6 0.05/0 mm. Generated
+  corpora: 12 scans and 24 scans, 0 cuts, slack median 1.15 px. Owner's regression scan polaroid_93: outer not
+  measurable (all sides on the scan border), inner/export 0.035 mm.
+- Tests: core 189/189 (+ `Detection.WhitePrintOnWhiteLidExcludesTheShadowBand`, `DarkPrintOnLighterBackingIsNotCut`,
+  `SinglePrintLeavingTheScanIsContained`, `Geometry.StraightenedImageAreaFillsTheOutputExactly`, ctest
+  `realeval_fixture`). Mutations (darkening rule off; corner clamping back; rotation straightening back;
+  quarter-way on steps) → each caught by its test; restored (no MUTATION markers).
+- Self-test (app rebuilt from this branch): fixture 92 pass; owner's polaroid_92 90 pass; img20260702_0005 86 pass +
+  4 skipped (FK-003 conversion checks need a tagged scan). `draft-gt.py --overlays DIR` writes review sheets (edge
+  crops with the draft line) for the owner's GT review; they show scan content and stay local.
+- Found, not fixed (registered in UNITS U012): generated scan seed 1 (216×150 mm, 300 dpi) gets a false
+  `dpi_rescaled` 306 and an Instax Mini inner 47 px off on one side (low confidence; identical on the baseline).
+- Blocked: no white-backing regression sample (img20260702, 679 MB), no round/dark/1600 dpi real samples; GT drafts
+  need the owner's review before they count as evidence.

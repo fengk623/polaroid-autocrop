@@ -299,6 +299,22 @@ const char* maskModeName(MaskMode m) {
     return "hard_edge";
 }
 
+namespace {
+/// Projective map of the unit square onto `q` ((0,0)→p0, (1,0)→p1, (1,1)→p2, (0,1)→p3; Heckbert 1989).
+std::optional<Mat3> squareToQuad(const Quad& q) {
+    const double x0 = q.p[0].x, y0 = q.p[0].y, x1 = q.p[1].x, y1 = q.p[1].y;
+    const double x2 = q.p[2].x, y2 = q.p[2].y, x3 = q.p[3].x, y3 = q.p[3].y;
+    const double dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3;
+    const double dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+    if (std::abs(dx3) < 1e-12 && std::abs(dy3) < 1e-12) // a parallelogram: affine
+        return Mat3{{x1 - x0, x3 - x0, x0, y1 - y0, y3 - y0, y0, 0, 0, 1}};
+    const double den = dx1 * dy2 - dx2 * dy1;
+    if (std::abs(den) < 1e-12) return std::nullopt;
+    const double g = (dx3 * dy2 - dx2 * dy3) / den, h = (dx1 * dy3 - dx3 * dy1) / den;
+    return Mat3{{x1 - x0 + g * x1, x3 - x0 + h * x3, x0, y1 - y0 + g * y1, y3 - y0 + h * y3, y0, g, h, 1}};
+}
+} // namespace
+
 ExportGeometry computeExportGeometry(const Shape& region, const Quad& frame, GeometryMode mode, int upright,
                                      std::optional<SizeI> standard, SizeI scan) {
     ExportGeometry g;
@@ -318,6 +334,47 @@ ExportGeometry computeExportGeometry(const Shape& region, const Quad& frame, Geo
         g.angleRad = 0;
         g.scale = 1;
         return g;
+    }
+
+    // UX-02 (U012): a quad image area is mapped exactly onto the output rectangle — its four edges become the
+    // output's edges — so "image only" holds no frame even when the window is not a perfect rectangle in the
+    // scan (scanner shear, measured 0.3° on real scans) or its angle differs from the frame's. One
+    // resampling, as before; earlier exports keep the matrices stored with them.
+    if (region.kind == ShapeKind::quad) {
+        const Quad q = normalizeQuad(region.quad.p);
+        const double wd = (norm(q.p[1] - q.p[0]) + norm(q.p[2] - q.p[3])) / 2;
+        const double hd = (norm(q.p[3] - q.p[0]) + norm(q.p[2] - q.p[1])) / 2;
+        double scale = 1.0;
+        if (mode == GeometryMode::standard_size && standard && standard->w > 0 && standard->h > 0) {
+            const double tw = static_cast<double>(swap ? standard->h : standard->w);
+            const double th = static_cast<double>(swap ? standard->w : standard->h);
+            scale = std::min(tw / wd, th / hd);
+        }
+        const int64_t bw = std::max<int64_t>(1, static_cast<int64_t>(std::ceil(wd * scale - 1e-6)));
+        const int64_t bh = std::max<int64_t>(1, static_cast<int64_t>(std::ceil(hd * scale - 1e-6)));
+        if (auto sq = squareToQuad(q)) {
+            const Mat3 boxToScan =
+                *sq * Mat3::scale(1.0 / static_cast<double>(bw), 1.0 / static_cast<double>(bh));
+            if (auto toBox = boxToScan.inverse()) {
+                const Mat3 up = uprightMatrix(g.upright, static_cast<double>(bw), static_cast<double>(bh));
+                g.scanToOut = up * *toBox;
+                g.outToScan = *g.scanToOut.inverse();
+                g.outSize = swap ? SizeI{bh, bw} : SizeI{bw, bh};
+                RectI src = boundingRect(region);
+                const int sup = static_cast<int>(std::ceil(kResampleSupport / std::min(1.0, scale)));
+                const int64_t x0 = std::clamp<int64_t>(src.x - sup, 0, scan.w),
+                              y0 = std::clamp<int64_t>(src.y - sup, 0, scan.h);
+                const int64_t x1 = std::clamp<int64_t>(src.right() + sup, 0, scan.w),
+                              y1 = std::clamp<int64_t>(src.bottom() + sup, 0, scan.h);
+                g.sourceRect = {x0, y0, x1 - x0, y1 - y0};
+                g.resampled = true;
+                // the label's angle: mean direction of the top and bottom edges
+                const Vec2 dt = q.p[1] - q.p[0], db = q.p[2] - q.p[3];
+                g.angleRad = (std::atan2(dt.y, dt.x) + std::atan2(db.y, db.x)) / 2;
+                g.scale = scale;
+                return g;
+            }
+        }
     }
 
     const double theta = frameAngle(frame);

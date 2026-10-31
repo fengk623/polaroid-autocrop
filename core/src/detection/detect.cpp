@@ -1268,10 +1268,35 @@ Result<DetectionResult> detectPrints(ImageSource& src, const Proxy& proxy, const
             it.outer = expandShape(it.outer, proxy.scale + params.safetyMarginPx);
     }
 
-    // A single-print scan: the outer cannot extend beyond the scan.
+    // A single-print scan: the outer cannot extend beyond the scan. A side whose line leaves the scan (the
+    // paper continues past the border there) becomes that scan border: clamping its corners instead would
+    // turn the side and cut the paper between them (U012, owner's img001).
     for (size_t i = 0; i < res.items.size(); ++i) {
         if (!cands[i].fillsScan) continue;
-        for (auto& p : res.items[i].outer.quad.p)
+        auto& q = res.items[i].outer.quad;
+        const Line border[4] = {{{0, 0}, {1, 0}}, {{W, 0}, {0, 1}}, {{0, H}, {1, 0}}, {{0, 0}, {0, 1}}};
+        std::array<Line, 4> sides;
+        for (int s = 0; s < 4; ++s) {
+            const Vec2 a = q.p[s], b = q.p[(s + 1) % 4];
+            const Vec2 d = b - a;
+            // where the side's line meets the scan's extent across it: past its own border → that border
+            bool past = false;
+            if (s == 1 || s == 3) {
+                for (double y : {0.0, H}) {
+                    const double x = std::abs(d.y) < 1e-9 ? a.x : a.x + d.x * (y - a.y) / d.y;
+                    past = past || (s == 3 ? x < -0.5 : x > W + 0.5);
+                }
+            } else {
+                for (double x : {0.0, W}) {
+                    const double y = std::abs(d.x) < 1e-9 ? a.y : a.y + d.y * (x - a.x) / d.x;
+                    past = past || (s == 0 ? y < -0.5 : y > H + 0.5);
+                }
+            }
+            sides[s] = past ? border[s] : Line{a, normalized(d)};
+        }
+        for (int s = 0; s < 4; ++s)
+            if (auto c = intersect(sides[(s + 3) % 4], sides[s])) q.p[s] = *c;
+        for (auto& p : q.p)
             p = {std::clamp(p.x, 0.0, W), std::clamp(p.y, 0.0, H)};
         if (res.items[i].outer.quad.p[0].x > 0.5 || res.items[i].outer.quad.p[0].y > 0.5 ||
             std::abs(res.items[i].outer.quad.p[2].x - W) > 0.5 ||

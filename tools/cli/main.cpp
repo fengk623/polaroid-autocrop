@@ -26,6 +26,7 @@ int usage() {
         << "  fkcli integrity <scan.tif>\n"
         << "  fkcli detect <scan.tif> [--expected N] [--no-refine] [--json out.json] [--overlay out.png]\n"
         << "  fkcli eval <corpus-dir> [--json report.json] [--enforce] [--overlays dir] [--limit N]\n"
+        << "  fkcli realeval <gt.json>... --scans DIR [--json report.json] [--enforce]\n"
         << "  fkcli export <scan.tif> --out-dir DIR [--what image|print] [--mode crop|straighten]\n"
         << "               [--format tif|png|jpg|dng] [--bits 8|16] [--upright] [--expected N]\n"
         << "  fkcli roundtrip <scan.tif> --out-dir DIR [--expected N] [--mode crop|straighten]\n"
@@ -264,6 +265,7 @@ int main(int argc, char** argv) {
     const Args a = Args::parse(rest);
     try {
         if (cmd == "eval") return cmdEval(rest);
+        if (cmd == "realeval") return cmdRealEval(rest);
         if (a.positional.empty()) return usage();
         if (cmd == "info") return cmdInfo(a);
         if (cmd == "integrity") return cmdIntegrity(a);

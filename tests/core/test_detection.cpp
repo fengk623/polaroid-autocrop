@@ -37,6 +37,10 @@ struct Scene {
     double wMm = 150, hMm = 120;
     double bg = 0.08;
     std::vector<Card> cards;
+    /// A white print on a white lid (owner's scans): a dark band beyond the top and bottom edges, a dark edge
+    /// line and a soft shade rising to the lid beyond the left and right edges (0 = none).
+    double bandMm = 0, bandLevel = 0, lineMm = 0, lineLevel = 0, rampMm = 0;
+    int blurPx = 0; ///< box blur radius applied after rendering (an out-of-focus edge)
 };
 
 double pxPerMm(const Scene& s) {
@@ -74,7 +78,21 @@ ImageBuffer render(const Scene& s) {
                     double col[3] = {s.bg, s.bg, s.bg};
                     for (const Card& c : s.cards) {
                         const Vec2 q = toCard(s, c, px, py);
-                        if (q.x < 0 || q.y < 0 || q.x >= c.w || q.y >= c.h) continue;
+                        if (q.x < 0 || q.y < 0 || q.x >= c.w || q.y >= c.h) {
+                            const double dx = std::max({0.0, -q.x, q.x - c.w}),
+                                         dy = std::max({0.0, -q.y, q.y - c.h});
+                            double v = -1;
+                            if (dx == 0 && dy < s.bandMm)
+                                v = s.bandLevel;
+                            else if (dy == 0 && dx < s.lineMm)
+                                v = s.lineLevel;
+                            else if (dy == 0 && dx < s.lineMm + s.rampMm)
+                                v = c.frame[0] + (s.bg - c.frame[0]) * (dx - s.lineMm) / s.rampMm;
+                            if (v >= 0)
+                                for (int i = 0; i < 3; ++i)
+                                    col[i] = v;
+                            continue;
+                        }
                         if (q.x >= c.ix && q.y >= c.iy && q.x < c.ix + c.iw && q.y < c.iy + c.ih &&
                             c.flatImage) {
                             for (int i = 0; i < 3; ++i)
@@ -131,7 +149,31 @@ std::filesystem::path writeScene(const TempDir& dir, const Scene& s, const std::
     fk::test::TestTiffOptions o;
     o.dpi = taggedDpi > 0 ? taggedDpi : s.dpi;
     o.compression = COMPRESSION_LZW;
-    fk::test::writeTestTiff(p, render(s), o);
+    ImageBuffer img = render(s);
+    if (s.blurPx > 0) { // separable box blur
+        const int r = s.blurPx;
+        for (int pass = 0; pass < 2; ++pass) {
+            const int64_t W = img.width(), H = img.height();
+            std::vector<uint8_t> line(static_cast<size_t>(std::max(W, H) * 3));
+            for (int64_t a = 0; a < (pass == 0 ? H : W); ++a) {
+                const int64_t len = pass == 0 ? W : H;
+                auto at = [&](int64_t k) -> uint8_t* {
+                    return pass == 0 ? img.row(a) + k * 3 : img.row(k) + a * 3;
+                };
+                for (int64_t k = 0; k < len; ++k)
+                    for (int c = 0; c < 3; ++c) {
+                        int sum = 0;
+                        for (int64_t t = k - r; t <= k + r; ++t)
+                            sum += at(std::clamp<int64_t>(t, 0, len - 1))[c];
+                        line[static_cast<size_t>(k * 3 + c)] = static_cast<uint8_t>(sum / (2 * r + 1));
+                    }
+                for (int64_t k = 0; k < len; ++k)
+                    for (int c = 0; c < 3; ++c)
+                        at(k)[c] = line[static_cast<size_t>(k * 3 + c)];
+            }
+        }
+    }
+    fk::test::writeTestTiff(p, img, o);
     return p;
 }
 
@@ -505,4 +547,112 @@ TEST(Detection, PartlyVisibleObjectIsReportedAsPossiblyMissed) {
     const auto d = detect(writeScene(dir, s, "part.tif"), 0);
     EXPECT_EQ(d.res.items.size(), 2u);
     EXPECT_TRUE(hasWarning(d.res, "possible_missed: 1"));
+}
+
+// ---------------------------------------------------------------- UX-02: outer accuracy (U012)
+
+namespace {
+/// Mean signed distance (px) of the detected outer outside the card's side `side` (0 top … 3 left), over the
+/// middle 80 %: positive = slack, negative = cut.
+double sideSlack(const Scene& s, const Card& c, const Shape& outer, int side) {
+    double sum = 0;
+    for (int k = 0; k < 40; ++k) {
+        const double t = 0.1 + 0.8 * (k + 0.5) / 40;
+        const Vec2 uv = side == 0   ? Vec2{t * c.w, 0}
+                        : side == 1 ? Vec2{c.w, t * c.h}
+                        : side == 2 ? Vec2{t * c.w, c.h}
+                                    : Vec2{0, t * c.h};
+        sum += signedDistance(outer, toScan(s, c, uv.x, uv.y));
+    }
+    return sum / 40;
+}
+} // namespace
+
+TEST(Detection, WhitePrintOnWhiteLidExcludesTheShadowBand) {
+    // owner's 826 dpi scan: shadow band ≈ 0.5 mm beyond the top/bottom edges, a dark edge line and a soft
+    // shade beyond the sides; the outer used to land 0.9–1.9 mm out, on the lid
+    TempDir dir;
+    Scene s;
+    s.wMm = 110;
+    s.hMm = 130;
+    s.bg = 0.97;
+    s.bandMm = 0.5;
+    s.bandLevel = 0.78;
+    s.lineMm = 0.25;
+    s.lineLevel = 0.79;
+    s.rampMm = 1.2;
+    Card a;
+    a.w = 88;
+    a.h = 107;
+    a.ix = 6;
+    a.iy = 8;
+    a.iw = 76;
+    a.ih = 78;
+    a.frame = {0.86, 0.86, 0.85};
+    a.cx = 55 * pxPerMm(s);
+    a.cy = 65 * pxPerMm(s);
+    a.angleDeg = 0.6;
+    s.cards = {a};
+    const auto d = detect(writeScene(dir, s, "white-on-white.tif"), 0);
+    ASSERT_EQ(d.res.items.size(), 1u);
+    const DetectedItem& it = d.res.items[0];
+    EXPECT_GE(worstContainment(s, a, it.outer), -0.5) << "never cut the paper";
+    for (int side = 0; side < 4; ++side) {
+        const double slackMm = sideSlack(s, a, it.outer, side) / pxPerMm(s);
+        EXPECT_LE(slackMm, 0.30) << "side " << side << ": on the shadow band or the lid";
+        EXPECT_GE(slackMm, 0.0) << "side " << side;
+    }
+}
+
+TEST(Detection, DarkPrintOnLighterBackingIsNotCut) {
+    // a soft (out-of-focus) step toward a lighter backing: only half way is past the paper — a quarter of the
+    // way would cut into the blurred edge (found on a generated corpus scan: 0.74 px)
+    TempDir dir;
+    Scene s;
+    s.bg = 0.35;
+    s.blurPx = 4;
+    Card a;
+    a.cx = 600;
+    a.cy = 650;
+    a.angleDeg = 1.3;
+    a.frame = {0.12, 0.12, 0.12};
+    s.cards = {a};
+    const auto d = detect(writeScene(dir, s, "dark-on-grey.tif"), 0);
+    ASSERT_EQ(d.res.items.size(), 1u);
+    EXPECT_GE(worstContainment(s, a, d.res.items[0].outer), -0.5);
+    for (int side = 0; side < 4; ++side)
+        EXPECT_LE(sideSlack(s, a, d.res.items[0].outer, side) / pxPerMm(s), 0.30) << "side " << side;
+}
+
+TEST(Detection, SinglePrintLeavingTheScanIsContained) {
+    // owner's img001: a tightly cropped scan where one side of the print leaves the scan part of the way; the
+    // side used to be turned between its clamped corners and cut up to 5 px of paper
+    TempDir dir;
+    Scene s;
+    Card a;
+    s.wMm = a.w + 1.0;
+    s.hMm = a.h + 1.0;
+    s.bg = 0.05;
+    a.cx = (s.wMm / 2 - 0.3) * pxPerMm(s);
+    a.cy = s.hMm / 2 * pxPerMm(s);
+    a.angleDeg = 0.5;
+    s.cards = {a};
+    const auto p = writeScene(dir, s, "leaving.tif");
+    const auto d = detect(p, 0);
+    ASSERT_EQ(d.res.items.size(), 1u);
+    const DetectedItem& it = d.res.items[0];
+    const double W = static_cast<double>(d.src->info().width), H = static_cast<double>(d.src->info().height);
+    for (const Vec2& q : it.outer.quad.p) {
+        EXPECT_GE(q.x, -1e-9);
+        EXPECT_GE(q.y, -1e-9);
+        EXPECT_LE(q.x, W + 1e-9);
+        EXPECT_LE(q.y, H + 1e-9);
+    }
+    for (int k = 0; k <= 80; ++k)
+        for (const Vec2 uv : {Vec2{k * a.w / 80, 0}, Vec2{a.w, k * a.h / 80}, Vec2{k * a.w / 80, a.h},
+                              Vec2{0, k * a.h / 80}}) {
+            Vec2 q = toScan(s, a, uv.x, uv.y);
+            if (q.x < 0 || q.y < 0 || q.x > W || q.y > H) continue; // outside the scan: nothing to contain
+            EXPECT_GE(signedDistance(it.outer, q), -0.5) << "card (" << uv.x << ", " << uv.y << ") mm";
+        }
 }

@@ -42,4 +42,14 @@ if(FK_BUILD_TOOLS)
       -DREPORT=${CMAKE_BINARY_DIR}/eval-report.json
       -P ${CMAKE_CURRENT_SOURCE_DIR}/eval_corpus.cmake)
   set_tests_properties(eval_corpus PROPERTIES LABELS eval TIMEOUT 900)
+  # Real-scan GT evaluation tool on generated scans (UX-02, U012; docs/v1/REAL-SCAN-GT.md)
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME realeval_fixture
+      COMMAND ${CMAKE_COMMAND}
+        -DFKFIXTURE=$<TARGET_FILE:fkfixture> -DFKCLI=$<TARGET_FILE:fkcli> -DPYTHON=${Python3_EXECUTABLE}
+        -DCONVERT=${PROJECT_SOURCE_DIR}/tools/gt/fixture-to-realgt.py -DWORK=${CMAKE_BINARY_DIR}/realeval-fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/realeval_fixture.cmake)
+    set_tests_properties(realeval_fixture PROPERTIES LABELS eval TIMEOUT 600)
+  endif()
 endif()

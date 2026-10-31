@@ -3,6 +3,12 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.2 — U012: outer edges from the paper side, exact straightening, real-scan GT tools (UX-02)
+- The outer edge is found from the paper side: on a white lid the shadow band is no longer included (owner's
+  scan: 0.9–1.9 mm → 0.1–0.5 mm), a single-print scan's side that leaves the scan becomes the scan border instead of
+  cutting paper; "straightened" maps a quad image area exactly onto the output (no frame slivers from scanner
+  shear). New `fkcli realeval` and `tools/gt/draft-gt.py`. Notes: docs/release-notes/v0.7.0-alpha.2.md.
+
 ## 0.7.0-alpha.1 — U011: automatic print count (UX-01)
 - Scans are counted automatically by default (no count warning made from a default number); each scan can switch to
   a manual expected count, kept while automatic; the count warning follows the setting at once, without detecting
