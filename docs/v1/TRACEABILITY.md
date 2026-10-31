@@ -26,7 +26,7 @@
 | FK-004 | P1 | 隐私预设覆盖 XMP 作者 | U009 | 核心 `KnownIssue.FK004_RemoveIdentityDropsCreatorFromSourceXmp`（WILL_FAIL） | R：测试失败，XMP 含 dc:creator | 未开始（已复现） |
 | FK-005 | P1 | 统一内存预算与缓存生命周期 | U017 | 计划（批次内存测量） | S | 未开始 |
 | FK-006 | P1 | 异步代次、取消与失败状态 | U002（框架）、U017 | 自检 TS1–TS4（U002） | U002：变异测试——去掉过期检查后 TS1 存旧预览、TS2 编辑被覆盖 | 部分完成（框架：U002；预算与队列：U017） |
-| FK-007 | P1 | 源文件与调色图变更校验 | U007 | 核心 `KnownIssue.FK007_ReplacedScanAtSamePathIsNotTrusted`（WILL_FAIL） | R：同路径同尺寸替换被当作原扫描 | 未开始（已复现） |
+| FK-007 | P1 | 源文件与调色图变更校验 | U007 | 核心 `SourceIdentity.*` ×5（含原 `KnownIssue.FK007_*`）；自检 FK-007 6 项 | R：修复前同路径同尺寸替换被当作原扫描；U007：全文件哈希核对，替换/中间改动/读取中改动被拒绝并说明原因；再次调色（同画面）照常使用；改名移动按内容找回 | 已完成（自动验证；真机待验收） |
 | FK-008 | P1 | 备份恢复与可重现工程 | U008、U018 | 核心 `KnownIssue.FK008_DamagedProjectOffersItsBackup`（WILL_FAIL） | R：损坏工程只报“damaged”，不提有效 .bak | 未开始（已复现） |
 | FK-009 | P1 | Windows 文字与真实窗口验收 | U024 | 计划；真机部分待验收 | C：历史 offscreen 截图问题；本地 Linux 截图中英文可读 | 未开始 |
 | FK-010 | P1 | 真实输出计划驱动无损提示 | U010 | 应用 known-issue “16→8-bit export still claims bit-identical pixels” | R：16-bit 扫描设 8-bit 导出仍标逐像素一致 | 未开始（已复现） |
@@ -40,7 +40,7 @@
 | 测试 | 类型 | 需求 | 期望（v1.0 行为） | 当前结果 | 转常规于 |
 | --- | --- | --- | --- | --- | --- |
 | `KnownIssue.FK004_RemoveIdentityDropsCreatorFromSourceXmp` | 核心 gtest，WILL_FAIL | FK-004 | 移除身份后 XMP 不含作者 | 失败（XMP 含 `dc:creator`） | U009 |
-| `KnownIssue.FK007_ReplacedScanAtSamePathIsNotTrusted` | 核心 gtest，WILL_FAIL | FK-007 | 同路径被替换的扫描不被信任 | 失败（被接受） | U007 |
+| `KnownIssue.FK007_ReplacedScanAtSamePathIsNotTrusted` | 核心 gtest，WILL_FAIL | FK-007 | 同路径被替换的扫描不被信任 | 已转常规（U007）：`SourceIdentity.ReplacedScanAtSamePathIsNotTrusted` | U007 |
 | `KnownIssue.FK008_DamagedProjectOffersItsBackup` | 核心 gtest，WILL_FAIL | FK-008 | 损坏工程提示可用备份 | 失败（只报损坏） | U008 |
 | UX-01 count warning stays after the count is corrected | 应用自检 known-issue | UX-01 | 更正片数后警告更新 | 复现 | U011 |
 | UX-07 renamed graded file without XMP or sidecar: no match | 应用自检 known-issue | UX-07 | 可选目标并完成回导 | 已转常规（U004）：“renamed file without metadata: offered by its picture, not pre-selected”“renamed file relinks once its print is chosen” | U004 |

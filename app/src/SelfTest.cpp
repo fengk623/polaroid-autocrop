@@ -5,6 +5,7 @@
 #include "Jobs.hpp"
 #include "util.hpp"
 
+#include "fk/hash.hpp"
 #include "fk/image_io.hpp"
 #include "fk/util.hpp"
 
@@ -19,6 +20,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRectF>
+#include <QUrl>
 
 #include <algorithm>
 #include <cstring>
@@ -82,6 +84,38 @@ bool samePixels(const QString& a, const QString& b, QString& why) {
             return false;
         }
     return true;
+}
+/// Writes `src`'s pixels brightened by `delta` (16-bit units; 8-bit scaled), keeping its profile — a "grade
+/// again".
+bool rewriteBrighter(const QString& src, const QString& dst, int delta) {
+    fk::ImageInfo info;
+    auto img = fk::readImageFile(toPath(src), &info);
+    if (!img) return false;
+    for (int64_t y = 0; y < img->height(); ++y)
+        for (int64_t x = 0; x < img->width() * img->channels(); ++x) {
+            if (img->bits() == 16) {
+                uint16_t v;
+                std::memcpy(&v, img->row(y) + x * 2, 2);
+                v = static_cast<uint16_t>(std::min(65535, v + delta));
+                std::memcpy(img->row(y) + x * 2, &v, 2);
+            } else {
+                uint8_t& v = img->row(y)[x];
+                v = static_cast<uint8_t>(std::min(255, v + delta / 257 + 1));
+            }
+        }
+    fk::WriteOptions opt;
+    opt.bits = img->bits();
+    opt.icc = info.icc;
+    const QString tmp = dst + QStringLiteral(".tmp.tif");
+    QFile::remove(tmp);
+    auto sink = fk::createSink(toPath(tmp), opt);
+    if (!sink) return false;
+    if (!(*sink)->begin({img->width(), img->height()}, img->channels(), img->bits())) return false;
+    for (int64_t y = 0; y < img->height(); ++y)
+        if (!(*sink)->writeRows(img->row(y), 1, img->rowBytes())) return false;
+    if (!(*sink)->finish()) return false;
+    QFile::remove(dst);
+    return QFile::rename(tmp, dst);
 }
 /// Mean absolute difference of two images of the same layout, 0…1 (−1 if they cannot be compared).
 double meanDifference(const QString& a, const QString& b) {
@@ -556,6 +590,104 @@ void SelfTest::runKnownIssues(const QString& exportDir) {
         check(QStringLiteral("new session: unchanged export through a new alignment is bit-exact"),
               exact || row.value("alignmentMode").toString() != QLatin1String("pixel_crop"),
               row.value("alignmentMode").toString() + QLatin1Char(' ') + why);
+    }
+
+    // FK-007 (U007, was a known issue): sources are verified before output. Works on a copy of the scan; the
+    // original is never modified.
+    {
+        const QString d = QDir(kiDir).filePath(QStringLiteral("fk007"));
+        QDir(d).removeRecursively();
+        QDir().mkpath(d);
+        const QString scanCopy = QDir(d).filePath(QStringLiteral("scan.tif"));
+        const bool copied = QFile::copy(scan_, scanCopy);
+        QStringList notes; // what the user is told: the refusals must say why
+        auto nc = connect(app_, &AppController::notification, this,
+                          [&](const QString& text, const QString&) { notes << text; });
+        auto told = [&](const QString& what) {
+            return std::any_of(notes.begin(), notes.end(),
+                               [&](const QString& n) { return n.contains(what); });
+        };
+        app_->newProject();
+        app_->importScans({scanCopy});
+        app_->waitIdle(300000);
+        const fk::ScanRecord* sr = app_->project().scans.empty() ? nullptr : &app_->project().scans.front();
+        check(QStringLiteral("import hashes the whole scan"),
+              copied && sr && !sr->fingerprint.fullSha256.empty(),
+              sr ? QString::number(sr->fingerprint.size) : QStringLiteral("no scan"));
+        const QString exp = QDir(d).filePath(QStringLiteral("export"));
+        const QString prevFolder = app_->settings().value("exportFolder").toString();
+        app_->setExportFolder(QUrl::fromLocalFile(exp));
+        const QVariantList targets = app_->relinkTargets();
+        const QString id = targets.isEmpty() ? QString() : targets.first().toMap().value("id").toString();
+        app_->exportImageAreas({id});
+        app_->waitIdle(300000);
+        const QStringList ex = filesMatching(exp, QStringLiteral("*_EDIT_v001.tif"));
+        QVariantList rows = ex.isEmpty() ? QVariantList() : relinkRows(ex.first());
+        QVariantMap row = rows.isEmpty() ? QVariantMap() : rows.first().toMap();
+        row["accept"] = true;
+        app_->applyRelink({row});
+        app_->setSetting(QStringLiteral("finalMode"), QStringLiteral("real"));
+        auto finals = [&]() { return filesMatching(exp, QStringLiteral("*_FINAL_v*.tif")).size(); };
+        auto relinkedSha = [&]() -> QString {
+            const fk::ItemRecord* it = app_->item(id.toStdString());
+            if (!it) return {};
+            for (auto e = it->edits.rbegin(); e != it->edits.rend(); ++e)
+                if (!e->relinkedPath.empty()) return QString::fromStdString(e->relinkedSha256);
+            return {};
+        };
+        // graded again in the editor and saved over: same picture, size and profile → used, new hash recorded
+        const bool regraded = !ex.isEmpty() && rewriteBrighter(ex.first(), ex.first(), 600);
+        const qsizetype f0 = finals();
+        app_->exportFinal({id}, {});
+        app_->waitIdle(300000);
+        const auto newSha = fk::sha256File(toPath(ex.isEmpty() ? QString() : ex.first()));
+        check(QStringLiteral("graded file graded again (same picture): output made, new hash recorded"),
+              regraded && finals() == f0 + 1 && newSha && relinkedSha() == QString::fromStdString(*newSha),
+              QStringLiteral("finals +%1").arg(finals() - f0));
+        // replaced by a different picture of the same size → refused
+        const bool replaced =
+            !ex.isEmpty() && rewriteRotated180(ex.first(), ex.first() + QStringLiteral(".r.tif")) &&
+            QFile::remove(ex.first()) && QFile::rename(ex.first() + QStringLiteral(".r.tif"), ex.first());
+        const qsizetype f1 = finals();
+        app_->exportFinal({id}, {});
+        app_->waitIdle(300000);
+        check(QStringLiteral("graded file replaced by another picture: no output, the user is told why"),
+              replaced && finals() == f1 && told(QStringLiteral("replaced by a different picture")),
+              QStringLiteral("finals +%1; %2")
+                  .arg(finals() - f1)
+                  .arg(notes.isEmpty() ? QString() : notes.last()));
+        // the scan replaced at the same path (same size, one byte changed in the middle) → refused
+        const QString proj = QDir(d).filePath(QStringLiteral("fk007.fkproj"));
+        app_->saveProjectAs(proj);
+        bool tampered = false;
+        {
+            QFile f(scanCopy);
+            if (f.open(QIODevice::ReadWrite)) {
+                const qint64 mid = f.size() / 2;
+                f.seek(mid);
+                char c = 0;
+                f.getChar(&c);
+                f.seek(mid);
+                tampered = f.putChar(static_cast<char>(c ^ 0x5a));
+            }
+        }
+        const QStringList before = filesMatching(exp, QStringLiteral("*_EDIT_v*.tif"));
+        app_->exportImageAreas({id});
+        app_->waitIdle(300000);
+        check(QStringLiteral("scan changed in the middle: export refused, the user is told why"),
+              tampered && filesMatching(exp, QStringLiteral("*_EDIT_v*.tif")).size() == before.size() &&
+                  told(QStringLiteral("changed since it was imported")),
+              QStringLiteral("exports +%1; %2")
+                  .arg(filesMatching(exp, QStringLiteral("*_EDIT_v*.tif")).size() - before.size())
+                  .arg(notes.isEmpty() ? QString() : notes.last()));
+        app_->openProject(proj);
+        app_->waitIdle(300000);
+        check(QStringLiteral("scan changed: shown as changed after reopening, not loaded"),
+              app_->currentScan().value("state").toString() == QLatin1String("changed"),
+              app_->currentScan().value("state").toString() + QLatin1Char(' ') +
+                  app_->currentScan().value("error").toString());
+        app_->setExportFolder(QUrl::fromLocalFile(prevFolder));
+        disconnect(nc);
     }
 }
 

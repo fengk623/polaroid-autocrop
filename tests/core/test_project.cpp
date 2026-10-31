@@ -874,3 +874,131 @@ TEST(RelinkTransform, StoredWithTheRelinkAndKeptBySaving) {
     EXPECT_FALSE(old->scans[0].items[0].edits.back().relinkTransform.set);
     EXPECT_FALSE(old->scans[0].items[0].edits.back().relinkedPath.empty());
 }
+
+// ---- source identity (FK-007, U007, RFC-0009 §Source identity)
+// ---------------------------------------------------
+
+void writePatternBytes(const std::filesystem::path& p, size_t n, uint8_t seed, size_t flipAt = SIZE_MAX) {
+    std::vector<char> b(n);
+    for (size_t i = 0; i < n; ++i)
+        b[i] = static_cast<char>((i * 131u + seed) & 0xff);
+    if (flipAt < n) b[flipAt] = static_cast<char>(b[flipAt] ^ 0x5a);
+    std::ofstream(p, std::ios::binary | std::ios::trunc)
+        .write(b.data(), static_cast<std::streamsize>(b.size()));
+}
+
+TEST(SourceIdentity, ReplacedScanAtSamePathIsNotTrusted) {
+    // formerly KnownIssue.FK007_ReplacedScanAtSamePathIsNotTrusted
+    TempDir t;
+    const auto scan = t / "scan.tif";
+    writePatternBytes(scan, 3u << 20, 1);
+    auto fp = fingerprintFile(scan, true);
+    ASSERT_TRUE(fp);
+    Project p = newProject("t");
+    ScanRecord s;
+    s.scanId = newUuid();
+    s.path = pathToUtf8(scan);
+    s.fingerprint = *fp;
+    p.scans.push_back(s);
+    writePatternBytes(scan, 3u << 20, 2); // replaced: same name and size, other content
+    resolveScanPaths(p, t.path());
+    EXPECT_FALSE(p.scans[0].missing);
+    EXPECT_EQ(verifyScans(p), 1);
+    EXPECT_TRUE(p.scans[0].changed) << "a different file at the recorded path was accepted as the scan";
+    EXPECT_EQ(p.scans[0].changeReason, "quick");
+}
+
+TEST(SourceIdentity, TheWholeFileIsComparedWhenItsHashIsKnown) {
+    TempDir t;
+    const auto f = t / "scan.tif";
+    const size_t n = 5u << 20;
+    writePatternBytes(f, n, 7);
+    auto quickOnly = fingerprintFile(f, false);
+    auto full = fingerprintFile(f, true);
+    ASSERT_TRUE(quickOnly && full);
+    EXPECT_FALSE(full->fullSha256.empty());
+    EXPECT_EQ(verifyFileIdentity(f, *full).state, Identity::same);
+    EXPECT_TRUE(verifyFileIdentity(f, *full).fullChecked);
+    // edited in the middle (outside the first and last MiB): only the full hash sees it
+    writePatternBytes(f, n, 7, n / 2);
+    EXPECT_EQ(verifyFileIdentity(f, *quickOnly).state, Identity::same) << "quick fingerprint cannot see it";
+    const IdentityCheck c = verifyFileIdentity(f, *full);
+    EXPECT_EQ(c.state, Identity::changed);
+    EXPECT_EQ(c.reason, "full");
+    // size changed / gone
+    writePatternBytes(f, n + 1, 7);
+    EXPECT_EQ(verifyFileIdentity(f, *full).reason, "size");
+    std::filesystem::remove(f);
+    EXPECT_EQ(verifyFileIdentity(f, *full).state, Identity::missing);
+}
+
+TEST(SourceIdentity, RenamedOrMovedScansAreFoundByContentOnly) {
+    TempDir t;
+    std::filesystem::create_directories(t / "old");
+    std::filesystem::create_directories(t / "new" / "sub");
+    const auto orig = t / "old" / "a.tif";
+    writePatternBytes(orig, 2u << 20, 3);
+    Project p = newProject("t");
+    ScanRecord s;
+    s.scanId = newUuid();
+    s.path = pathToUtf8(orig);
+    s.fingerprint = *fingerprintFile(orig, true);
+    p.scans.push_back(s);
+    // moved and renamed; a decoy with the old name but other content sits next to it
+    std::filesystem::rename(orig, t / "new" / "sub" / "renamed.tif");
+    writePatternBytes(t / "new" / "a.tif", 2u << 20, 4);
+    EXPECT_EQ(relocateScans(p, t.path(), t / "new"), 1);
+    EXPECT_EQ(pathFromUtf8(p.scans[0].path).filename(), "renamed.tif");
+    EXPECT_EQ(verifyScans(p), 0);
+}
+
+TEST(SourceIdentity, ChangesWhileReadingAreSeenByTheStamp) {
+    TempDir t;
+    const auto f = t / "x.bin";
+    writePatternBytes(f, 1000, 1);
+    const FileStamp before = fileStamp(f);
+    EXPECT_TRUE(before.exists);
+    EXPECT_EQ(fileStamp(f), before);
+    writePatternBytes(f, 1001, 1);
+    EXPECT_NE(fileStamp(f), before);
+    std::filesystem::remove(f);
+    EXPECT_FALSE(fileStamp(f).exists);
+}
+
+TEST(SourceIdentity, AGradedFileSavedOverIsCheckedAgain) {
+    auto f = smoothExport();
+    const Sidecar& rec = f->p.exportRecords[0];
+    auto px = readImageFile(f->editPath);
+    ASSERT_TRUE(px.ok());
+    RelinkTransform t;
+    t.set = true;
+    t.gradedSize = {px->width(), px->height()};
+    t.gradedIccRecorded = true; // no embedded profile at relink
+    // graded again in the editor (brighter, same picture) → still the same picture
+    ImageBuffer regraded = std::move(px->clone().value());
+    for (int64_t y = 0; y < regraded.height(); ++y) {
+        auto* r = reinterpret_cast<uint16_t*>(regraded.row(y));
+        for (int64_t i = 0; i < regraded.width() * 3; ++i)
+            r[i] = static_cast<uint16_t>(std::min(65535, r[i] + 3000));
+    }
+    const GradedRecheck same = recheckGraded(rec, t, regraded, {});
+    EXPECT_TRUE(same.samePicture) << same.reason << " " << same.score;
+    // replaced by another picture of the same size
+    const ImageBuffer other = makeSmoothImage(px->width(), px->height(), 3.7);
+    const GradedRecheck diff = recheckGraded(rec, t, other, {});
+    EXPECT_FALSE(diff.samePicture);
+    EXPECT_EQ(diff.reason, "picture");
+    // resized
+    auto small = ImageBuffer::create(px->width() / 2, px->height() / 2, 3, 16);
+    ASSERT_TRUE(small.ok());
+    EXPECT_EQ(recheckGraded(rec, t, *small, {}).reason, "size");
+    // a profile appeared → colours would be read differently
+    ImageInfo withIcc;
+    withIcc.icc = {1, 2, 3};
+    EXPECT_EQ(recheckGraded(rec, t, regraded, withIcc).reason, "profile");
+    // turned 180° at relink: the picture is compared at the confirmed turn
+    RelinkTransform turnedT = t;
+    turnedT.rotate = 2;
+    EXPECT_TRUE(recheckGraded(rec, turnedT, turned(regraded, 2), {}).samePicture);
+    EXPECT_FALSE(recheckGraded(rec, turnedT, regraded, {}).samePicture);
+}

@@ -173,6 +173,7 @@ void ScanCanvas::rebuildPyramid() {
     scanH_ = cs.height;
     status_ = cs.state == QLatin1String("missing")         ? tr("Scan not found — use Relocate…")
               : cs.state == QLatin1String("error")         ? tr("Cannot read scan: %1").arg(cs.error)
+              : cs.state == QLatin1String("changed")       ? cs.error
               : cs.display.isNull() && !cs.state.isEmpty() ? tr("Loading…")
                                                            : QString();
     if (cs.display.isNull()) {

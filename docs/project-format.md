@@ -51,6 +51,9 @@ none/content/user, `scale` (resampling to the export size confirmed), `lowerDept
 Preview and output use it as stored. Absent (relinks of earlier versions; earlier versions drop it on save): the
 turn is taken from the picture only when unambiguous. `matchedBy` lists the supporting evidence since 0.6.0-alpha.4
 (older values: `xmp`, `sidecar`, `file_name`).
+`fingerprint.fullSha256` (FK-007): written at import since 0.6.0-alpha.7 (added when a scan of an older project is
+opened); with it every change of the scan file is detected before output. `transform.gradedIccSha256` (since
+0.6.0-alpha.7): the graded file's embedded profile at relink, to tell a re-grade from a re-profiled file.
 `iccProfiles` and `transform.iccSource`/`iccSha256` (since 0.6.0-alpha.6, FK-003): how the colours of a graded
 file without a usable embedded profile are read (export/scan/srgb/adobe_rgb/file), confirmed by the user; the
 profile bytes are stored once per SHA-256 (verified on load) so the choice survives a missing profile file or scan.

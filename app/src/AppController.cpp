@@ -127,6 +127,71 @@ bool relinkAdjust(const fk::EditVersion& ev, const fk::Sidecar& rec, const fk::I
     return true;
 }
 
+/// FK-007 wording of IdentityCheck::reason for a scan.
+QString scanChangeText(const std::string& reason) {
+    if (reason == "missing") return AppController::tr("The scan file is missing.");
+    if (reason == "cancelled") return AppController::tr("Cancelled");
+    if (reason == "size")
+        return AppController::tr(
+            "The scan file has changed since it was imported (different size); it is not used.");
+    return AppController::tr(
+        "The scan file has changed since it was imported (different content); it is not used.");
+}
+
+/// FK-007: every scan an output is made from is verified before it is read (streamed, inside the job) and its
+/// stamp is compared after reading; a scan replaced meanwhile never produces an output.
+class ScanGuard {
+  public:
+    /// Empty = verified (kept for the job while the file's stamp stays the same); else the reason.
+    QString verify(const fk::ScanRecord& s, const fk::CancelToken& cancel) {
+        const auto path = fk::pathFromUtf8(s.path);
+        const fk::FileStamp now = fk::fileStamp(path);
+        if (auto f = stamps_.find(s.path); f != stamps_.end() && f->second == now) return {};
+        const fk::IdentityCheck c = fk::verifyFileIdentity(path, s.fingerprint, &cancel);
+        if (c.state != fk::Identity::same || c.reason == "cancelled") {
+            stamps_.erase(s.path);
+            return scanChangeText(c.state == fk::Identity::same ? c.reason : c.reason);
+        }
+        stamps_[s.path] = now;
+        return {};
+    }
+    /// False when the file changed since verify(): whatever was made from it is discarded.
+    bool unchanged(const fk::ScanRecord& s) const {
+        auto f = stamps_.find(s.path);
+        return f != stamps_.end() && f->second == fk::fileStamp(fk::pathFromUtf8(s.path));
+    }
+
+  private:
+    std::map<std::string, fk::FileStamp> stamps_;
+};
+
+QString changedWhileReading() {
+    return AppController::tr("The scan file changed while it was read; the output was discarded.");
+}
+
+/// FK-007: the relinked graded file is still the one confirmed (same bytes), or was graded again with the
+/// same size, picture and profile (`regradedSha` set); otherwise the reason it is refused.
+QString verifyGraded(const fk::EditVersion& ev, const fk::Sidecar& rec, const fk::ImageBuffer& px,
+                     const fk::ImageInfo& ei, const std::string& sha, std::string& regradedSha) {
+    if (ev.relinkedSha256.empty() || sha == ev.relinkedSha256) return {};
+    if (!ev.relinkTransform.set)
+        return AppController::tr("The graded file changed since it was relinked. Relink it again.");
+    const fk::GradedRecheck r = fk::recheckGraded(rec, ev.relinkTransform, px, ei);
+    if (r.samePicture) {
+        regradedSha = sha;
+        return {};
+    }
+    if (r.reason == "size")
+        return AppController::tr("The graded file changed size since it was relinked. Relink it again.");
+    if (r.reason == "profile")
+        return AppController::tr(
+            "The graded file's colour profile changed since it was relinked. Relink it again to "
+            "confirm how to read its colours.");
+    return AppController::tr(
+        "The graded file was replaced by a different picture since it was relinked. Relink "
+        "it again.");
+}
+
 } // namespace
 
 // ---- construction / settings ---------------------------------------------------------------------------
@@ -375,7 +440,10 @@ bool AppController::openProject(const QVariant& url) {
     settings_["privacy"] = toQ(ps.privacy);
     for (const auto& s : project_.scans) {
         ScanRuntime& r = rt_[s.scanId];
-        r.state = s.missing ? QStringLiteral("missing") : QStringLiteral("pending");
+        r.state = s.missing   ? QStringLiteral("missing")
+                  : s.changed ? QStringLiteral("changed")
+                              : QStringLiteral("pending");
+        if (s.changed) r.error = scanChangeText(s.changeReason);
         for (const auto& it : s.items)
             detected_[it.itemId] = {it.outer, it.inner};
     }
@@ -389,7 +457,7 @@ bool AppController::openProject(const QVariant& url) {
     Q_EMIT projectChanged();
     Q_EMIT settingsChanged();
     for (const auto& s : project_.scans)
-        if (!s.missing) loadPreview(s.scanId);
+        if (!s.missing && !s.changed) loadPreview(s.scanId);
     if (!project_.scans.empty()) selectScan(toQ(project_.scans.front().scanId));
     return true;
 }
@@ -554,7 +622,9 @@ void AppController::relocateMissing(const QVariant& folderUrl) {
     notify(tr("Relocated %n scan(s).", nullptr, n));
     if (n > 0) {
         for (const auto& s : project_.scans)
-            if (!s.missing && rt_[s.scanId].state == QLatin1String("missing")) {
+            if (!s.missing && !s.changed &&
+                (rt_[s.scanId].state == QLatin1String("missing") ||
+                 rt_[s.scanId].state == QLatin1String("changed"))) {
                 rt_[s.scanId].state = QStringLiteral("pending");
                 loadPreview(s.scanId);
             }
@@ -575,6 +645,9 @@ struct DetectResult {
     fk::DetectionResult det;
     QImage display;
     int proxyScale = 1;
+    bool changed = false; ///< FK-007: the file at the path is not the imported scan
+    std::string changeReason;
+    std::string fullSha256; ///< computed while opening a scan whose fingerprint had none (older projects)
 };
 } // namespace
 
@@ -584,6 +657,7 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
     rt_[scanId].state = QStringLiteral("detecting");
     rebuildModels();
     const std::string path = s->path;
+    const fk::Fingerprint known = s->fingerprint;
     const int expected = s->expectedCount;
     const double safety = settings_.value("safetyMargin").toDouble();
     auto res = std::make_shared<DetectResult>();
@@ -591,7 +665,18 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
     const QString title = tr("Detecting prints — %1").arg(QFileInfo(toQ(path)).fileName());
     jobs_->start(
         Lane::detect, title,
-        [res, path, expected, safety, tmpl](JobContext& ctx) {
+        [res, path, expected, safety, tmpl, known](JobContext& ctx) {
+            // FK-007: a scan detected before must still be the same file (its exports refer to it)
+            if (!known.quickSha256.empty()) {
+                const fk::IdentityCheck c =
+                    fk::verifyFileIdentity(fk::pathFromUtf8(path), known, &ctx.cancel);
+                if (c.state != fk::Identity::same) {
+                    res->error = scanChangeText(c.reason);
+                    res->changed = c.state == fk::Identity::changed;
+                    res->changeReason = c.reason;
+                    return;
+                }
+            }
             auto src = fk::openTiff(fk::pathFromUtf8(path));
             if (!src) {
                 res->error = errText(src.error());
@@ -600,7 +685,8 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
             res->info = (*src)->info();
             res->iccSha =
                 res->info.icc.empty() ? "" : fk::sha256Hex(res->info.icc.data(), res->info.icc.size());
-            if (auto fp = fk::fingerprintFile(fk::pathFromUtf8(path))) res->fp = *fp;
+            // the whole file is hashed once at import (streamed), so later checks see any change
+            if (auto fp = fk::fingerprintFile(fk::pathFromUtf8(path), true, &ctx.cancel)) res->fp = *fp;
             auto proxy = fk::buildProxy(**src, 3000, ctx.cancel, [&](double f, std::string_view) {
                 ctx.progress(0.5 * f, tr("Reading"));
             });
@@ -636,8 +722,10 @@ void AppController::startDetect(const std::string& scanId, std::shared_ptr<fk::T
                 return JobApply::applied;
             }
             if (!res->ok) {
-                r.state = QStringLiteral("error");
+                r.state = res->changed ? QStringLiteral("changed") : QStringLiteral("error");
                 r.error = res->error;
+                s->changed = res->changed;
+                s->changeReason = res->changeReason;
                 notify(tr("%1: %2").arg(QFileInfo(toQ(s->path)).fileName(), res->error),
                        QStringLiteral("error"));
                 rebuildModels();
@@ -707,11 +795,27 @@ void AppController::loadPreview(const std::string& scanId) {
     if (r.state == QLatin1String("loading")) return;
     r.state = QStringLiteral("loading");
     const std::string path = s->path;
+    const fk::Fingerprint known = s->fingerprint;
     auto res = std::make_shared<DetectResult>();
     const JobSnapshot snap = snapshotFor(scanId, {});
     jobs_->start(
         Lane::detect, tr("Opening %1").arg(QFileInfo(toQ(path)).fileName()),
-        [res, path](JobContext& ctx) {
+        [res, path, known](JobContext& ctx) {
+            // FK-007: verify the file against its fingerprint (streamed, off the UI thread) before showing it
+            if (!known.quickSha256.empty()) {
+                const fk::IdentityCheck c =
+                    fk::verifyFileIdentity(fk::pathFromUtf8(path), known, &ctx.cancel);
+                if (c.state != fk::Identity::same || c.reason == "cancelled") {
+                    res->error = scanChangeText(c.reason);
+                    res->changed = c.state == fk::Identity::changed;
+                    res->changeReason = c.reason;
+                    return;
+                }
+                // projects from before U007 have no whole-file hash: add it now, so later checks see every
+                // change
+                if (known.fullSha256.empty())
+                    if (auto fh = fk::sha256File(fk::pathFromUtf8(path), &ctx.cancel)) res->fullSha256 = *fh;
+            }
             auto src = fk::openTiff(fk::pathFromUtf8(path));
             if (!src) {
                 res->error = errText(src.error());
@@ -738,11 +842,18 @@ void AppController::loadPreview(const std::string& scanId) {
                 return JobApply::applied;
             }
             if (!res->ok) {
-                r.state = QStringLiteral("error");
+                r.state = res->changed ? QStringLiteral("changed") : QStringLiteral("error");
                 r.error = res->error;
+                if (fk::ScanRecord* sr = findScan(scanId)) {
+                    sr->changed = res->changed;
+                    sr->changeReason = res->changeReason;
+                }
                 rebuildModels();
                 return {JobApply::failed, res->error};
             }
+            if (fk::ScanRecord* sr = findScan(scanId);
+                sr && !res->fullSha256.empty() && sr->fingerprint.fullSha256.empty())
+                sr->fingerprint.fullSha256 = res->fullSha256; // saved with the next save
             r.display = res->display;
             r.proxyScale = res->proxyScale;
             r.thumb = boxDownscale(res->display, kThumbLong);
@@ -797,7 +908,8 @@ void AppController::selectScan(const QString& scanId) {
     selection_.clear();
     if (!curItem_.empty()) selection_.push_back(curItem_);
     ScanRuntime& r = rt_[id];
-    if (r.display.isNull() && r.state != QLatin1String("detecting") && r.state != QLatin1String("missing"))
+    if (r.display.isNull() && r.state != QLatin1String("detecting") && r.state != QLatin1String("missing") &&
+        r.state != QLatin1String("changed"))
         loadPreview(id);
     rebuildModels();
     Q_EMIT selectionChanged();
@@ -1405,6 +1517,7 @@ void AppController::requestCompositePreview(const QString& itemId) {
     const std::string scanPath = s->path, editPath = ev->relinkedPath, id = it->itemId;
     const fk::ItemRecord itemCopy = *it;
     const fk::EditVersion evCopy = *ev;
+    const fk::ScanRecord scanCopy = *s;
     const fk::IccStore iccStore = project_.iccProfiles;
     const fk::Result<fk::Sidecar> record = fk::exportRecordFor(project_, *ev);
     const QVariantMap check = relinkChecks_.count(id) ? relinkChecks_.at(id) : QVariantMap();
@@ -1417,6 +1530,10 @@ void AppController::requestCompositePreview(const QString& itemId) {
     previewJob_[id] = jobs_->start(
         Lane::exportJob, tr("Composite preview %1").arg(toQ(it->label)),
         [=](JobContext& ctx) {
+            if (QString e = ScanGuard().verify(scanCopy, ctx.cancel); !e.isEmpty()) {
+                *err = e;
+                return;
+            }
             auto src = fk::openTiff(fk::pathFromUtf8(scanPath));
             if (!src) {
                 *err = errText(src.error());
@@ -1428,9 +1545,19 @@ void AppController::requestCompositePreview(const QString& itemId) {
                 return;
             }
             fk::ImageInfo ei;
+            auto gradedSha = fk::sha256File(fk::pathFromUtf8(editPath), &ctx.cancel);
             auto edited = fk::readImageFile(fk::pathFromUtf8(editPath), &ei);
             if (!edited) {
                 *err = errText(edited.error());
+                return;
+            }
+            std::string regraded;
+            if (!gradedSha) {
+                *err = errText(gradedSha.error());
+                return;
+            }
+            if (QString e = verifyGraded(evCopy, *sc, *edited, ei, *gradedSha, regraded); !e.isEmpty()) {
+                *err = e;
                 return;
             }
             fk::CompositeRequest req;
@@ -1579,7 +1706,9 @@ struct ExportOutcome {
     fk::EditVersion ev;
     std::optional<fk::Sidecar> record; ///< export record kept in the project (UX-07)
     std::string fullPath;
+    std::string regradedSha256; ///< FK-007: graded file graded again (same picture) — new hash to record
 };
+
 } // namespace
 
 void AppController::exportImageAreas(const QStringList& itemIds) {
@@ -1604,11 +1733,18 @@ void AppController::exportImageAreas(const QStringList& itemIds) {
         [work, projCopy, outcomes, dir, writeSidecar](JobContext& ctx) {
             std::string openPath;
             std::unique_ptr<fk::TiffSource> src;
+            ScanGuard guard;
             for (size_t i = 0; i < work.size(); ++i) {
                 if (ctx.cancel.cancelled()) return;
                 const auto& w = work[i];
                 ExportOutcome o;
                 o.itemId = w.item.itemId;
+                if (QString e = guard.verify(w.scan, ctx.cancel); !e.isEmpty()) {
+                    o.error = e;
+                    outcomes->push_back(o);
+                    openPath.clear();
+                    continue;
+                }
                 if (openPath != w.scan.path) {
                     auto s = fk::openTiff(fk::pathFromUtf8(w.scan.path));
                     if (!s) {
@@ -1636,6 +1772,14 @@ void AppController::exportImageAreas(const QStringList& itemIds) {
                 if (!rep) {
                     o.error = errText(rep.error());
                     outcomes->push_back(o);
+                    continue;
+                }
+                if (!guard.unchanged(w.scan)) {
+                    std::error_code ec;
+                    std::filesystem::remove(rep->output, ec);
+                    o.error = changedWhileReading();
+                    outcomes->push_back(o);
+                    openPath.clear();
                     continue;
                 }
                 ev.path = fk::pathToUtf8(rep->output);
@@ -1711,11 +1855,17 @@ void AppController::exportFullPrints(const QStringList& itemIds) {
     jobs_->start(
         Lane::exportJob, tr("Exporting %n full print(s)", nullptr, static_cast<int>(work.size())),
         [work, outcomes, dir, projectId](JobContext& ctx) {
+            ScanGuard guard;
             for (size_t i = 0; i < work.size(); ++i) {
                 if (ctx.cancel.cancelled()) return;
                 const auto& w = work[i];
                 ExportOutcome o;
                 o.itemId = w.item.itemId;
+                if (QString e = guard.verify(w.scan, ctx.cancel); !e.isEmpty()) {
+                    o.error = e;
+                    outcomes->push_back(o);
+                    continue;
+                }
                 auto s = fk::openTiff(fk::pathFromUtf8(w.scan.path));
                 if (!s) {
                     o.error = errText(s.error());
@@ -1735,7 +1885,11 @@ void AppController::exportFullPrints(const QStringList& itemIds) {
                 });
                 if (!rep)
                     o.error = errText(rep.error());
-                else {
+                else if (!guard.unchanged(w.scan)) {
+                    std::error_code ec;
+                    std::filesystem::remove(rep->output, ec);
+                    o.error = changedWhileReading();
+                } else {
                     o.ok = true;
                     o.fullPath = fk::pathToUtf8(rep->output);
                 }
@@ -1807,7 +1961,8 @@ const QStringList kChoiceKeys = {"itemId",
                                  "iccChoices",
                                  "iccChoice",
                                  "iccSha256",
-                                 "iccInvalid"};
+                                 "iccInvalid",
+                                 "gradedIccSha256"};
 
 /// Copies the chosen option into the row's top-level fields (what applyRelink and the dialog read).
 void selectOption(QVariantMap& row, int choice, bool accept) {
@@ -2012,6 +2167,9 @@ void AppController::relinkFiles(const QVariantList& urls, const QString& targetI
                         om["depthLower"] = chk.depthLower;
                         // FK-003: no usable embedded profile → the user confirms how to read the colours
                         om["iccInvalid"] = chk.iccInvalid;
+                        om["gradedIccSha256"] = info.icc.empty()
+                                                    ? QString()
+                                                    : toQ(fk::sha256Hex(info.icc.data(), info.icc.size()));
                         if (chk.iccMissing || chk.iccInvalid) {
                             QVariantList choices;
                             QString def, defSha;
@@ -2206,6 +2364,8 @@ void AppController::applyRelink(const QVariantList& rows) {
         t.gradedSize = {r.value("gradedW").toLongLong(), r.value("gradedH").toLongLong()};
         t.iccSource.clear();
         t.iccSha256.clear();
+        t.gradedIccSha256 = toStd(r.value("gradedIccSha256").toString());
+        t.gradedIccRecorded = true;
         if (needsIcc) {
             t.iccSource = toStd(r.value("iccChoice").toString());
             t.iccSha256 = iccSha;
@@ -2300,6 +2460,7 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
         Lane::exportJob, tr("Final export of %n print(s)", nullptr, static_cast<int>(work.size())),
         [work, st, allowScale, allowDepth, dir, projectId, outcomes, iccStore](JobContext& ctx) {
             const bool synthetic = st.value("finalMode").toString() == QLatin1String("synthetic");
+            ScanGuard guard;
             for (size_t i = 0; i < work.size(); ++i) {
                 if (ctx.cancel.cancelled()) return;
                 const auto& w = work[i];
@@ -2309,6 +2470,10 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                     o.error = toQ(w.item.label) + QStringLiteral(": ") + e;
                     outcomes->push_back(o);
                 };
+                if (QString e = guard.verify(w.scan, ctx.cancel); !e.isEmpty()) {
+                    fail(e);
+                    continue;
+                }
                 auto src = fk::openTiff(fk::pathFromUtf8(w.scan.path));
                 if (!src) {
                     fail(errText(src.error()));
@@ -2319,10 +2484,23 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                     fail(errText(sc.error()));
                     continue;
                 }
+                // FK-007: the graded file is the confirmed one, or graded again with the same picture
+                const auto gradedPath = fk::pathFromUtf8(w.ev.relinkedPath);
+                const fk::FileStamp gradedStamp = fk::fileStamp(gradedPath);
+                auto gradedSha = fk::sha256File(gradedPath, &ctx.cancel);
                 fk::ImageInfo ei;
-                auto edited = fk::readImageFile(fk::pathFromUtf8(w.ev.relinkedPath), &ei);
+                auto edited = fk::readImageFile(gradedPath, &ei);
                 if (!edited) {
                     fail(errText(edited.error()));
+                    continue;
+                }
+                if (!gradedSha || !(fk::fileStamp(gradedPath) == gradedStamp)) {
+                    fail(tr("The graded file changed while it was read."));
+                    continue;
+                }
+                if (QString e = verifyGraded(w.ev, *sc, *edited, ei, *gradedSha, o.regradedSha256);
+                    !e.isEmpty()) {
+                    fail(e);
                     continue;
                 }
                 fk::WriteOptions wo;
@@ -2376,6 +2554,12 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                     });
                     if (!rep) {
                         fail(errText(rep.error()));
+                        continue;
+                    }
+                    if (!guard.unchanged(w.scan)) {
+                        std::error_code ec;
+                        std::filesystem::remove(rep->output, ec);
+                        fail(changedWhileReading());
                         continue;
                     }
                     o.fullPath = fk::pathToUtf8(rep->output);
@@ -2464,6 +2648,19 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                     it->finalExport = o.fullPath;
                     it->composite.lastOutput = o.fullPath;
                     it->composite.lastOutputAt = fk::isoDateTimeNowUtc();
+                    if (!o.regradedSha256.empty()) {
+                        // graded again with the same picture, size and profile: the new bytes are the
+                        // relinked file
+                        for (auto e = it->edits.rbegin(); e != it->edits.rend(); ++e)
+                            if (!e->relinkedPath.empty()) {
+                                e->relinkedSha256 = o.regradedSha256;
+                                break;
+                            }
+                        notify(tr("%1: the graded file was graded again since it was relinked; same picture, "
+                                  "size "
+                                  "and profile — used.")
+                                   .arg(toQ(it->label)));
+                    }
                     ++ok;
                 }
             }

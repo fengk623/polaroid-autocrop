@@ -29,7 +29,7 @@ FkDialog {
     readonly property var choiceKeys: ["itemId", "editVersionId", "label", "scanName", "source", "actions", "score", "signaturePass",
                                        "sizeMatches", "rotate", "depthLower", "ok", "newAlignment", "alignmentKey", "conflict", "alignmentMode",
                                        "rotationReliable", "rotateSource", "allowedRotations", "rotationScores", "gradedW", "gradedH",
-                                       "iccChoices", "iccChoice", "iccSha256", "iccInvalid"]
+                                       "iccChoices", "iccChoice", "iccSha256", "iccInvalid", "gradedIccSha256"]
     function choose(index, value) {
         const next = rows.slice()
         const r = Object.assign({}, next[index])

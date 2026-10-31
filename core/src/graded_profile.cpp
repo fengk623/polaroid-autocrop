@@ -5,6 +5,7 @@
 #include "fk/color.hpp"
 #include "fk/hash.hpp"
 #include "fk/project.hpp"
+#include "fk/relink.hpp"
 
 namespace fk {
 
@@ -70,6 +71,28 @@ Result<std::vector<uint8_t>> gradedProfile(const ImageInfo& graded, const Relink
     return makeError(
         Errc::needs_confirmation,
         "The graded file has no colour profile; relink it and choose how to interpret its colours");
+}
+
+GradedRecheck recheckGraded(const Sidecar& rec, const RelinkTransform& t, const ImageBuffer& pixels,
+                            const ImageInfo& info) {
+    GradedRecheck r;
+    const SizeI now{pixels.width(), pixels.height()};
+    if (t.gradedSize.w > 0 && !(now == t.gradedSize)) {
+        r.reason = "size";
+        return r;
+    }
+    const std::string iccNow = info.icc.empty() ? std::string() : shaOf(info.icc);
+    if (t.gradedIccRecorded && iccNow != t.gradedIccSha256) {
+        r.reason = "profile"; // the colours would be read differently: confirm again
+        return r;
+    }
+    r.score = compareSignatures(rotateSignature(rec.signature, t.rotate), computeSignature(pixels));
+    if (r.score < kSignatureMatchThreshold) {
+        r.reason = "picture";
+        return r;
+    }
+    r.samePicture = true;
+    return r;
 }
 
 } // namespace fk
