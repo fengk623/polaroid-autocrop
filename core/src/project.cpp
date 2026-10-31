@@ -441,6 +441,7 @@ json scanJson(const ScanRecord& s) {
                   {"dpiUsed", s.dpiUsed},
                   {"proxyScale", s.proxyScale},
                   {"warnings", s.warnings}}},
+                {"view", {{"rotation", s.rotation}}},
                 {"items", items}};
 }
 
@@ -470,6 +471,10 @@ ScanRecord scanFrom(const json& j) {
     s.dpiUsed = d.value("dpiUsed", 0.0);
     s.proxyScale = d.value("proxyScale", 1);
     s.warnings = d.value("warnings", std::vector<std::string>{});
+    // UX-04 (0.7.0-alpha.4): absent in older projects = not rotated; any integer is taken modulo 4
+    const auto& v = j.value("view", json::object());
+    const json rot = v.is_object() ? v.value("rotation", json(0)) : json(0);
+    s.rotation = rot.is_number_integer() ? ((rot.get<int>() % 4) + 4) % 4 : 0;
     for (const auto& it : j.value("items", json::array()))
         s.items.push_back(itemFrom(it));
     return s;
@@ -740,6 +745,14 @@ void updateCountWarning(ScanRecord& s) {
         for (auto& it : s.items)
             it.reasons.push_back("count_mismatch");
     }
+}
+
+int exportTurns(const ScanRecord& scan, const ItemRecord& item, bool applyUpright) {
+    return ((applyUpright ? item.upright : scan.rotation) % 4 + 4) % 4;
+}
+
+void rotateScanView(ScanRecord& s, int delta) {
+    s.rotation = ((s.rotation + delta) % 4 + 4) % 4;
 }
 
 int verifyScans(Project& p, const CancelToken* cancel) {

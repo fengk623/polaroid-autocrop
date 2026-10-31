@@ -77,8 +77,11 @@ P.MenuBar {
         P.MenuItem { text: qsTr("Edit Inner") + "   I"; onTriggered: canvas.tool = "inner" }
         P.MenuItem { text: qsTr("Switch Outer ↔ Inner") + "   " + qsTr("tap ⇧"); onTriggered: win.switchBoundary(false) }
         P.MenuSeparator {}
-        P.MenuItem { text: qsTr("Rotate Upright Left"); shortcut: "Ctrl+["; onTriggered: App.rotateUpright(App.currentItemId, -1) }
-        P.MenuItem { text: qsTr("Rotate Upright Right"); shortcut: "Ctrl+]"; onTriggered: App.rotateUpright(App.currentItemId, 1) }
+        // UX-04: the whole scan (every print) vs one print's export orientation — named apart
+        P.MenuItem { text: qsTr("Rotate Whole Scan 90° Counterclockwise"); enabled: App.currentScanId.length > 0; onTriggered: App.rotateScan(App.currentScanId, -1) }
+        P.MenuItem { text: qsTr("Rotate Whole Scan 90° Clockwise"); enabled: App.currentScanId.length > 0; onTriggered: App.rotateScan(App.currentScanId, 1) }
+        P.MenuItem { text: qsTr("Turn This Print Upright Left"); shortcut: "Ctrl+["; onTriggered: App.rotateUpright(App.currentItemId, -1) }
+        P.MenuItem { text: qsTr("Turn This Print Upright Right"); shortcut: "Ctrl+]"; onTriggered: App.rotateUpright(App.currentItemId, 1) }
         P.MenuItem { text: qsTr("Snap Outer to Edges"); onTriggered: App.snapOuter(App.currentItemId) }
         P.MenuItem { text: qsTr("Reset to Detected"); onTriggered: App.resetToDetected(App.currentItemId) }
         P.MenuSeparator {}

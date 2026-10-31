@@ -341,3 +341,32 @@ TEST(Edit, TransformsKeepACircleExactlyRound) {
     // a non-uniform scale makes a real ellipse
     EXPECT_FALSE(isCircle(transformShape(c, Mat3::scale(2, 1)).ellipse));
 }
+
+TEST(Geometry, QuarterTurnsAreExactPermutations) {
+    // UX-04: the whole-scan view rotation and export uprights: integer corners map to integer corners, four
+    // turns are the identity, the inverse is exact, sizes swap for odd turns
+    const double w = 1234, h = 567;
+    for (int k = -4; k <= 4; ++k) {
+        const Mat3 m = quarterTurnMatrix(k, w, h);
+        const SizeI t = quarterTurnSize(k, {1234, 567});
+        EXPECT_EQ(t.w, (k & 1) ? 567 : 1234) << k;
+        for (Vec2 p : {Vec2{0, 0}, Vec2{w, 0}, Vec2{w, h}, Vec2{0, h}, Vec2{17, 33}}) {
+            const Vec2 q = m.apply(p);
+            EXPECT_EQ(q.x, std::round(q.x));
+            EXPECT_GE(q.x, 0);
+            EXPECT_LE(q.x, static_cast<double>(t.w));
+            EXPECT_GE(q.y, 0);
+            EXPECT_LE(q.y, static_cast<double>(t.h));
+            EXPECT_EQ(m.inverse()->apply(q), p) << k;
+        }
+    }
+    Mat3 four = Mat3::identity();
+    double cw = w, ch = h;
+    for (int k = 0; k < 4; ++k) {
+        four = quarterTurnMatrix(1, cw, ch) * four;
+        std::swap(cw, ch);
+    }
+    EXPECT_EQ(four, Mat3::identity());
+    // one clockwise turn: the top-left corner goes to the top right
+    EXPECT_EQ(quarterTurnMatrix(1, w, h).apply({0, 0}), (Vec2{h, 0}));
+}

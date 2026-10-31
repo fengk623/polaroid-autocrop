@@ -138,6 +138,9 @@ struct ScanRecord {
     std::string detectedAt;
     int expectedCount = 4;  ///< the manual count; kept while counting automatically (UX-01)
     bool autoCount = false; ///< UX-01: count automatically (no count warning); projects before 0.7 = manual
+    /// UX-04: whole-scan view rotation, quarter turns clockwise (0–3). Display only: every boundary stays in
+    /// the scan file's coordinates, the file is never rewritten.
+    int rotation = 0;
     double dpiUsed = 0;
     int proxyScale = 1;
     std::vector<std::string> warnings;
@@ -225,6 +228,12 @@ int verifyScans(Project& p, const CancelToken* cancel = nullptr);
 /// setting without detecting again: manual → warn when the number of prints differs; automatic → no count
 /// warning.
 void updateCountWarning(ScanRecord& s);
+/// UX-04: quarter turns clockwise for an export of `item`: its own upright when uprights are applied (the
+/// whole-scan rotation does not change which way is up for a print), otherwise the scan's view rotation (the
+/// export looks like the canvas). Never both.
+int exportTurns(const ScanRecord& scan, const ItemRecord& item, bool applyUpright);
+/// UX-04: turns the whole-scan view by `delta` quarter turns (normalised to 0–3).
+void rotateScanView(ScanRecord& s, int delta);
 /// Finds missing scans in `folder` by file name, then by quick fingerprint. Returns how many were relocated.
 int relocateScans(Project& p, const std::filesystem::path& projectDir, const std::filesystem::path& folder);
 /// Resolves `relPath` against the project folder when `path` is missing.

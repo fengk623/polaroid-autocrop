@@ -23,8 +23,10 @@ Contract version: **1** · RFC-0011 · Applies to `app/` (Qt Quick) and any futu
 `exported (latest edit version)` · `relinked` · `sizeAnomaly` · `iccAnomaly` · `composited` · `finalExported`.
 
 ## 4. Canvas contract
-- View transform: `scale` (screen px per scan px, device-independent), `offset`. 100 % = one scan pixel per
-  physical device pixel. `mapFromScan()`/`mapToScan()` are the only conversion functions.
+- View transform: `scale` (screen px per scan px, device-independent), `offset`, and the whole-scan view rotation
+  (UX-04, quarter turns `quarterTurnMatrix`, applied once before scale and offset). 100 % = one scan pixel per
+  physical device pixel. `mapFromScan()`/`mapToScan()` are the only conversion functions; boundaries, hits,
+  edits and exports stay in scan coordinates.
 - Resolution state: `Preview` when scale ≤ 1/proxy.scale × 1.05, else `Full` once all visible tiles are
   loaded (`Full…` while loading). Badge text exactly `Preview` / `Full` / `Full…`.
 - Overlays are drawn from `fk::Shape` values; colours: Outer `#3D8BFF` solid, Inner `#F2C744` solid with inward

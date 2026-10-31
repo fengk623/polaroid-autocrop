@@ -45,6 +45,12 @@ canvas previews its result during a drag and commits the same value; arrow-key n
   radii otherwise drift apart in the last bits after a translation + rotation.
 Tests: `Edit.*` in `tests/core/test_geometry.cpp`.
 
+## Quarter turns (UX-04, U014)
+`quarterTurnMatrix(k, w, h)` maps a w×h image to its `k` clockwise quarter turns (`quarterTurnSize` swaps w and h
+for odd k): integer pixel corners map to integer corners, four turns are the identity, the inverse is exact. It is
+the export upright permutation and the canvas's whole-scan view mapping (scan → display, applied once, before
+scale and offset). Tests: `Geometry.QuarterTurnsAreExactPermutations`.
+
 ## Containment
 `maskWeight(shape, mode, x, y)` = 1/0 by pixel-centre containment (hard), or a linear ramp of width
 `feather` on the inside distance; `Preserve edge` shrinks the shape by N px. Used by compositing,

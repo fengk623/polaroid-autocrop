@@ -61,6 +61,10 @@ class SelfTest : public QObject {
     /// circles, Shift+click / Shift+arrows / typing / dialogs / focus loss never switch, undo/redo, menu and
     /// tool buttons, saved and reopened.
     void runShapeEditing();
+    /// UX-04 (U014): whole-scan rotation on a scan with four prints turned 0/90/180/270°: every print follows
+    /// (clicks at the expected screen positions), count kept, four turns restore the view, one undo, exports
+    /// before the turn relink bit-exact after it, uprights never doubled, saved, source file unchanged.
+    void runScanRotation();
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.
     void key(int key, Qt::KeyboardModifiers mods, bool press, const QString& text = {});

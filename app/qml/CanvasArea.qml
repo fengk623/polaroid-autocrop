@@ -111,7 +111,8 @@ Item {
             id: navImg
             anchors.fill: parent
             anchors.margins: 4
-            source: App.currentScanId.length ? "image://fk/scan/" + App.currentScanId + "?" + Date.now() : ""
+            // the rotation in the URL reloads the navigator when the whole scan is turned (UX-04)
+            source: App.currentScanId.length ? "image://fk/scan/" + App.currentScanId + "?" + (App.currentScan.rotation || 0) + "-" + Date.now() : ""
             fillMode: Image.PreserveAspectFit
             cache: false
             visible: scanCanvas.mode === "scan"

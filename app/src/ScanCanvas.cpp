@@ -171,13 +171,15 @@ void ScanCanvas::onScanImage(const QString& scanId) {
     if (!app_ || scanId != app_->currentScanId()) return;
     const bool newScan = scanId != scanId_;
     const bool had = hasImage();
+    const int rotationBefore = rotation_;
     scanId_ = scanId;
     rebuildPyramid();
     if (had != hasImage()) Q_EMIT badgeChanged();
-    if (newScan) {
+    if (newScan || rotation_ != rotationBefore) {
+        // another scan, or the same scan turned (UX-04): the content changed shape
         detail_ = QImage();
         cancelDrag();
-        setHandle(std::nullopt);
+        if (newScan) setHandle(std::nullopt);
         fit();
     } else if (atFit_) {
         fit(); // e.g. the proxy arrived after the scan was selected: fit the real size now
@@ -201,6 +203,8 @@ void ScanCanvas::rebuildPyramid() {
     proxyScale_ = std::max(1, cs.proxyScale);
     scanW_ = cs.width;
     scanH_ = cs.height;
+    rotation_ = cs.rotation;
+    updateDisplayMapping();
     status_ = cs.state == QLatin1String("missing")         ? tr("Scan not found — use Relocate…")
               : cs.state == QLatin1String("error")         ? tr("Cannot read scan: %1").arg(cs.error)
               : cs.state == QLatin1String("changed")       ? cs.error
@@ -219,6 +223,7 @@ void ScanCanvas::rebuildPyramid() {
     if (scanW_ <= 0) {
         scanW_ = static_cast<int64_t>(cs.display.width()) * proxyScale_;
         scanH_ = static_cast<int64_t>(cs.display.height()) * proxyScale_;
+        updateDisplayMapping();
     }
     Q_EMIT badgeChanged();
 }
@@ -230,13 +235,35 @@ const fk::Shape* ScanCanvas::currentShape(bool outer) const {
     return outer ? &it->outer : &it->inner;
 }
 
+void ScanCanvas::updateDisplayMapping() {
+    disp_ = fk::quarterTurnMatrix(rotation_, static_cast<double>(scanW_), static_cast<double>(scanH_));
+    dispInv_ = fk::quarterTurnMatrix(4 - rotation_, dispW(), dispH());
+}
+
+QTransform ScanCanvas::viewTransform() const {
+    const auto& m = disp_.m;
+    return QTransform(m[0] * scale_, m[3] * scale_, m[1] * scale_, m[4] * scale_, m[2] * scale_ + offset_.x(),
+                      m[5] * scale_ + offset_.y());
+}
+
+QRectF ScanCanvas::scanRectOf(const QRectF& screen) const {
+    const fk::Vec2 a = toScan(screen.topLeft()), b = toScan(screen.bottomRight());
+    return QRectF(QPointF(std::min(a.x, b.x), std::min(a.y, b.y)),
+                  QPointF(std::max(a.x, b.x), std::max(a.y, b.y)))
+        .intersected(QRectF(0, 0, static_cast<double>(scanW_), static_cast<double>(scanH_)));
+}
+
 QRectF ScanCanvas::contentRect() const {
-    const QRectF scan(0, 0, static_cast<double>(scanW_), static_cast<double>(scanH_));
-    if (mode_ == QLatin1String("scan") || !app_) return scan;
+    // display coordinates (the turned scan)
+    const QRectF all(0, 0, dispW(), dispH());
+    if (mode_ == QLatin1String("scan") || !app_) return all;
     const fk::Shape* s = currentShape(mode_ != QLatin1String("image"));
-    if (!s) return scan;
+    if (!s) return all;
     const fk::RectD b = fk::boundsOf(*s);
-    return QRectF(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0).intersected(scan);
+    const fk::Vec2 a = disp_.apply({b.x0, b.y0}), c = disp_.apply({b.x1, b.y1});
+    return QRectF(QPointF(std::min(a.x, c.x), std::min(a.y, c.y)),
+                  QPointF(std::max(a.x, c.x), std::max(a.y, c.y)))
+        .intersected(all);
 }
 
 // ---- view -------------------------------------------------------------------------------------------------
@@ -295,8 +322,8 @@ void ScanCanvas::clampView() {
 }
 
 void ScanCanvas::zoomAround(double newScale, QPointF anchor) {
-    const fk::Vec2 p = toScan(anchor);
-    setView(newScale, QPointF(anchor.x() - p.x * newScale, anchor.y() - p.y * newScale));
+    const QPointF p = toDisplay(anchor);
+    setView(newScale, QPointF(anchor.x() - p.x() * newScale, anchor.y() - p.y() * newScale));
 }
 
 void ScanCanvas::zoomTo(double percent) {
@@ -338,9 +365,9 @@ void ScanCanvas::centerOnRelative(double rx, double ry) {
 QRectF ScanCanvas::navigatorView() const {
     const QRectF r = contentRect();
     if (r.isEmpty()) return {0, 0, 1, 1};
-    const fk::Vec2 a = toScan({0, 0}), b = toScan({width(), height()});
-    QRectF v(QPointF((a.x - r.left()) / r.width(), (a.y - r.top()) / r.height()),
-             QPointF((b.x - r.left()) / r.width(), (b.y - r.top()) / r.height()));
+    const QPointF a = toDisplay({0, 0}), b = toDisplay({width(), height()});
+    QRectF v(QPointF((a.x() - r.left()) / r.width(), (a.y() - r.top()) / r.height()),
+             QPointF((b.x() - r.left()) / r.width(), (b.y() - r.top()) / r.height()));
     return v.intersected(QRectF(0, 0, 1, 1));
 }
 
@@ -370,10 +397,7 @@ void ScanCanvas::requestDetail() {
         updateBadge();
         return;
     }
-    const fk::Vec2 a = toScan({0, 0}), b = toScan({width(), height()});
-    const QRectF vis =
-        QRectF(QPointF(a.x, a.y), QPointF(b.x, b.y))
-            .intersected(QRectF(0, 0, static_cast<double>(scanW_), static_cast<double>(scanH_)));
+    const QRectF vis = scanRectOf(QRectF(0, 0, width(), height()));
     if (vis.isEmpty()) return;
     const QRectF r(std::floor(vis.left()), std::floor(vis.top()),
                    std::ceil(vis.right()) - std::floor(vis.left()),
@@ -425,37 +449,37 @@ void ScanCanvas::paint(QPainter* p) {
         ++L;
     const QImage& img = pyramid_[static_cast<size_t>(L)];
     const double lvl = proxyScale_ * std::pow(2.0, L); // scan px per level px
-    const fk::Vec2 a = toScan({0, 0}), b = toScan({width(), height()});
-    QRectF src(std::floor(std::max(0.0, a.x / lvl)) - 1, std::floor(std::max(0.0, a.y / lvl)) - 1, 0, 0);
-    src.setRight(std::min<double>(img.width(), std::ceil(b.x / lvl) + 1));
-    src.setBottom(std::min<double>(img.height(), std::ceil(b.y / lvl) + 1));
+    // images are drawn in scan coordinates under the view transform (UX-04: turned by quarter turns)
+    const QRectF vis = scanRectOf(QRectF(0, 0, width(), height()));
+    QRectF src(std::floor(vis.left() / lvl) - 1, std::floor(vis.top() / lvl) - 1, 0, 0);
+    src.setRight(std::ceil(vis.right() / lvl) + 1);
+    src.setBottom(std::ceil(vis.bottom() / lvl) + 1);
     src = src.intersected(QRectF(0, 0, img.width(), img.height()));
     p->setRenderHint(QPainter::SmoothPixmapTransform, !pixelExact);
-    if (!src.isEmpty()) {
-        const QRectF dst(toScreen({src.left() * lvl, src.top() * lvl}),
-                         toScreen({src.right() * lvl, src.bottom() * lvl}));
-        p->drawImage(dst, img, src);
-    }
-    if (!detail_.isNull()) {
-        const QRectF dst(toScreen({detailRect_.left(), detailRect_.top()}),
-                         toScreen({detailRect_.right(), detailRect_.bottom()}));
-        p->drawImage(dst, detail_);
-    }
-    // Composite mode: graded image inside the real frame (split: Original left, Composite right)
+    p->save();
+    p->setTransform(viewTransform(), true);
+    if (!src.isEmpty())
+        p->drawImage(QRectF(src.left() * lvl, src.top() * lvl, src.width() * lvl, src.height() * lvl), img,
+                     src);
+    if (!detail_.isNull()) p->drawImage(detailRect_, detail_);
+    p->restore();
+    // Composite mode: graded image inside the real frame (split: Original left, Composite right — on screen)
     if (mode_ == QLatin1String("composite") && app_ && !showOriginal_) {
         const QImage comp = app_->compositePreview(app_->currentItemId().toStdString());
         const fk::Shape* outer = currentShape(true);
         if (!comp.isNull() && outer) {
             const fk::RectI bi = fk::boundingRect(*outer);
-            const QRectF dst(toScreen({static_cast<double>(bi.x), static_cast<double>(bi.y)}),
-                             toScreen({static_cast<double>(bi.right()), static_cast<double>(bi.bottom())}));
+            const QRectF box(static_cast<double>(bi.x), static_cast<double>(bi.y), static_cast<double>(bi.w),
+                             static_cast<double>(bi.h));
+            const QRectF dst = screenRect(box);
             p->save();
             if (compare_) {
                 const double x = dst.left() + comparePos_ * dst.width();
                 p->setClipRect(QRectF(QPointF(x, dst.top()), dst.bottomRight()));
             }
             p->setRenderHint(QPainter::SmoothPixmapTransform, true);
-            p->drawImage(dst, comp);
+            p->setTransform(viewTransform(), true);
+            p->drawImage(box, comp);
             p->restore();
             if (compare_) {
                 const double x = dst.left() + comparePos_ * dst.width();
@@ -482,10 +506,16 @@ void ScanCanvas::paint(QPainter* p) {
             QPainterPath all;
             all.addRect(QRectF(0, 0, width(), height()));
             QPainterPath hole;
-            if (s->kind == fk::ShapeKind::quad)
+            if (s->kind == fk::ShapeKind::quad) {
                 hole.addPolygon(quadPoly(s->quad, [this](fk::Vec2 v) { return toScreen(v); }));
-            else
-                hole.addEllipse(toScreen(s->ellipse.c), s->ellipse.rx * scale_, s->ellipse.ry * scale_);
+            } else {
+                QPainterPath e;
+                e.addEllipse(QPointF(0, 0), s->ellipse.rx, s->ellipse.ry);
+                QTransform t;
+                t.translate(s->ellipse.c.x, s->ellipse.c.y);
+                t.rotate(qRadiansToDegrees(s->ellipse.angleRad));
+                hole = viewTransform().map(t.map(e));
+            }
             hole.closeSubpath();
             p->fillPath(all.subtracted(hole), QColor(0, 0, 0, 128));
         }
@@ -516,7 +546,7 @@ void ScanCanvas::drawShape(QPainter* p, const fk::Shape& s, const QPen& pen, boo
             const auto& e = s.ellipse;
             p->save();
             p->translate(toScreen(e.c));
-            p->rotate(qRadiansToDegrees(e.angleRad));
+            p->rotate(qRadiansToDegrees(e.angleRad) + 90.0 * rotation_);
             p->drawEllipse(QPointF(0, 0), e.rx * scale_, e.ry * scale_);
             if (ticks) {
                 for (int k = 0; k < 4; ++k) {
@@ -575,7 +605,10 @@ void ScanCanvas::drawOverlays(QPainter* p) {
         if (it->excluded) pi.setColor(QColor(160, 160, 160, 160));
         drawShape(p, inner, pi, true);
         // label capsule + state marks
-        const QPointF tl = toScreen(outer.quad.p[0]);
+        // the label sits at the corner that is top-left on screen (the view may be turned, UX-04)
+        QPointF tl = toScreen(outer.quad.p[0]);
+        for (const auto& c : outer.quad.p)
+            if (const QPointF q = toScreen(c); q.x() + q.y() < tl.x() + tl.y()) tl = q;
         const QString label = QString::fromStdString(it->label);
         const QRectF lab(tl + QPointF(6, 6), QSizeF(30, 18));
         p->setPen(Qt::NoPen);
@@ -596,7 +629,8 @@ void ScanCanvas::drawOverlays(QPainter* p) {
         }
         if (relinked) {
             const fk::RectD ib = fk::boundsOf(inner);
-            const QPointF o = toScreen({ib.x1, ib.y0}) + QPointF(4, -18);
+            const QRectF sr = screenRect(QRectF(QPointF(ib.x0, ib.y0), QPointF(ib.x1, ib.y1)));
+            const QPointF o = sr.topRight() + QPointF(4, -18);
             p->setBrush(Qt::NoBrush);
             p->setPen(QPen(kRelinked, 2));
             p->drawEllipse(QRectF(o, QSizeF(8, 8)));
@@ -689,9 +723,11 @@ void ScanCanvas::nudge(int dx, int dy) {
     if (!handle_ || !app_ || dragging_) return;
     const fk::Shape* start = currentShape(handle_->outer);
     if (!start) return;
-    // arrows move the selected handle freely (Shift = 10 px steps, never the constraint)
-    const auto s = fk::editShape(
-        *start, {handle_->kind, handle_->index, {static_cast<double>(dx), static_cast<double>(dy)}, false});
+    // arrows move the selected handle freely (Shift = 10 px steps, never the constraint), in screen
+    // directions: with a turned view (UX-04) → is still "right" on screen
+    const fk::Vec2 d =
+        dispInv_.apply({static_cast<double>(dx), static_cast<double>(dy)}) - dispInv_.apply({0, 0});
+    const auto s = fk::editShape(*start, {handle_->kind, handle_->index, d, false});
     if (s) app_->commitShape(app_->currentItemId().toStdString(), handle_->outer, *s);
 }
 
@@ -707,7 +743,9 @@ void ScanCanvas::mousePressEvent(QMouseEvent* e) {
     if (compare_ && mode_ == QLatin1String("composite")) {
         if (const fk::Shape* o = currentShape(true)) {
             const fk::RectI b = fk::boundingRect(*o);
-            const double x = toScreen({b.x + comparePos_ * b.w, 0.0}).x();
+            const QRectF sr = screenRect(QRectF(static_cast<double>(b.x), static_cast<double>(b.y),
+                                                static_cast<double>(b.w), static_cast<double>(b.h)));
+            const double x = sr.left() + comparePos_ * sr.width();
             if (std::abs(e->position().x() - x) < 12) {
                 compareDrag_ = true;
                 return;
@@ -753,9 +791,9 @@ void ScanCanvas::mouseMoveEvent(QMouseEvent* e) {
     } else if (compareDrag_) {
         if (const fk::Shape* o = currentShape(true)) {
             const fk::RectI b = fk::boundingRect(*o);
-            const double x0 = toScreen({static_cast<double>(b.x), 0.0}).x();
-            const double x1 = toScreen({static_cast<double>(b.right()), 0.0}).x();
-            setComparePos((pos.x() - x0) / std::max(1.0, x1 - x0));
+            const QRectF sr = screenRect(QRectF(static_cast<double>(b.x), static_cast<double>(b.y),
+                                                static_cast<double>(b.w), static_cast<double>(b.h)));
+            setComparePos((pos.x() - sr.left()) / std::max(1.0, sr.width()));
         }
     }
     lastPos_ = pos;

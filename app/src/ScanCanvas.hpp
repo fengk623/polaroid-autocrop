@@ -9,6 +9,7 @@
 #include <QPointF>
 #include <QQuickPaintedItem>
 #include <QTimer>
+#include <QTransform>
 
 #include <optional>
 
@@ -124,10 +125,26 @@ class ScanCanvas : public QQuickPaintedItem {
     QRectF contentRect() const; ///< scan coordinates of what "fit" shows
     void setView(double scale, QPointF offset, bool fromFit = false);
     void clampView();
-    QPointF toScreen(fk::Vec2 p) const { return {p.x * scale_ + offset_.x(), p.y * scale_ + offset_.y()}; }
-    fk::Vec2 toScan(QPointF p) const {
-        return {(p.x() - offset_.x()) / scale_, (p.y() - offset_.y()) / scale_};
+    // UX-04: the view shows the scan turned by `rotation_` quarter turns. Boundaries stay in scan
+    // coordinates; the display mapping D (scan → turned scan) is applied once, here, then scale and offset.
+    QPointF toScreen(fk::Vec2 p) const {
+        const fk::Vec2 d = disp_.apply(p);
+        return {d.x * scale_ + offset_.x(), d.y * scale_ + offset_.y()};
     }
+    fk::Vec2 toScan(QPointF p) const {
+        return dispInv_.apply({(p.x() - offset_.x()) / scale_, (p.y() - offset_.y()) / scale_});
+    }
+    /// screen → display (turned scan) coordinates
+    QPointF toDisplay(QPointF p) const { return (p - offset_) / scale_; }
+    /// scan → screen as a painter transform (images are drawn in scan coordinates under it)
+    QTransform viewTransform() const;
+    /// screen rectangle covered by a scan rectangle (axis-aligned: the view turns by quarter turns only)
+    QRectF screenRect(const QRectF& scanRect) const { return viewTransform().mapRect(scanRect); }
+    /// scan rectangle seen through a screen rectangle, clamped to the scan
+    QRectF scanRectOf(const QRectF& screen) const;
+    double dispW() const { return static_cast<double>((rotation_ & 1) ? scanH_ : scanW_); }
+    double dispH() const { return static_cast<double>((rotation_ & 1) ? scanW_ : scanH_); }
+    void updateDisplayMapping();
     double dpr() const;
     void scheduleDetail();
     void requestDetail();
@@ -152,6 +169,8 @@ class ScanCanvas : public QQuickPaintedItem {
     std::vector<QImage> pyramid_; ///< [0] = proxy, then halves
     int proxyScale_ = 1;
     int64_t scanW_ = 0, scanH_ = 0;
+    int rotation_ = 0;        ///< UX-04: whole-scan view, quarter turns clockwise
+    fk::Mat3 disp_, dispInv_; ///< scan → display and back
 
     // view
     double scale_ = 0.1;

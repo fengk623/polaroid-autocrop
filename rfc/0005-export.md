@@ -61,3 +61,17 @@ and its angle differs from the frame's (tightly cropped scans: frame = scan bord
 Measured: G6 0.37 mm → 0.05 mm (= the detected inner's own error). Tests:
 `Geometry.StraightenedImageAreaFillsTheOutputExactly` (sheared window, exact corners and edges), `realeval` G6.
 
+
+## Orientation of exports from a turned scan (v0.7.0-alpha.4, U014, UX-04)
+
+Status: Accepted, implemented in U014. The whole-scan view rotation (RFC-0011 §Whole-scan rotation) never moves a
+boundary, so export geometry is computed in scan coordinates as before; only the output's quarter turns follow
+`exportTurns(scan, item, applyUpright)`:
+- uprights applied (default): the print's own upright. The view rotation does not change which way is up for a
+  print, so it is **never added** (no double rotation);
+- uprights off ("as in the scan"): the scan's view rotation, so the export looks like the canvas.
+Quarter turns are pixel permutations (pixel crop stays bit-exact, RFC-0002). Export records keep the geometry used
+at export time, so files exported before a turn relink and composite exactly after it (RFC-0006). The same rule
+gives the final output's orientation. Tests: `ScanRotation.ExportTurnsNeverAddTheViewToThePrintsUpright`; self-test
+UX-04 (exports before the turn relinked after it, final = full print bit for bit; uprights off = the earlier export
+turned 90° pixel for pixel; uprights on = identical whether turned or not).

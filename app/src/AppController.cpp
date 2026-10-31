@@ -22,10 +22,12 @@
 #include <QLocale>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QTransform>
 #include <QUrl>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace fkapp {
 
@@ -1225,24 +1227,47 @@ void AppController::restore(fk::ItemRecord& it, const Snapshot& s) {
 void AppController::pushUndo(fk::ItemRecord& it) {
     auto& u = undo_[it.itemId];
     u.undo.push_back(snap(it));
+    u.undo.back().seq = ++undoSeq_;
     if (u.undo.size() > 100) u.undo.erase(u.undo.begin());
     u.redo.clear();
 }
 
 bool AppController::canUndo() const {
     auto it = undo_.find(curItem_);
-    return it != undo_.end() && !it->second.undo.empty();
+    auto sc = scanUndo_.find(curScan_);
+    return (it != undo_.end() && !it->second.undo.empty() && item(curItem_)) ||
+           (sc != scanUndo_.end() && !sc->second.undo.empty());
 }
 bool AppController::canRedo() const {
     auto it = undo_.find(curItem_);
-    return it != undo_.end() && !it->second.redo.empty();
+    auto sc = scanUndo_.find(curScan_);
+    return (it != undo_.end() && !it->second.redo.empty() && item(curItem_)) ||
+           (sc != scanUndo_.end() && !sc->second.redo.empty());
 }
 
+// One history per scan view: the current print's steps and the scan's steps (UX-04 rotation) interleave by
+// `seq`. Undo takes the most recent; redo the most recently undone.
 void AppController::undo() {
     fk::ItemRecord* it = findItemMut(curItem_);
-    if (!it || !canUndo()) return;
-    auto& u = undo_[curItem_];
-    u.redo.push_back(snap(*it));
+    fk::ScanRecord* sc = findScan(curScan_);
+    auto ui = undo_.find(curItem_);
+    auto us = scanUndo_.find(curScan_);
+    const quint64 si = it && ui != undo_.end() && !ui->second.undo.empty() ? ui->second.undo.back().seq : 0;
+    const quint64 ss =
+        sc && us != scanUndo_.end() && !us->second.undo.empty() ? us->second.undo.back().seq : 0;
+    if (ss > si) {
+        auto& u = us->second;
+        u.redo.push_back({sc->rotation, ss});
+        sc->rotation = u.undo.back().rotation;
+        u.undo.pop_back();
+        afterScanRotation(curScan_);
+        return;
+    }
+    if (si == 0) return;
+    auto& u = ui->second;
+    Snapshot now = snap(*it);
+    now.seq = si;
+    u.redo.push_back(now);
     restore(*it, u.undo.back());
     u.undo.pop_back();
     invalidateItem(curItem_);
@@ -1253,15 +1278,53 @@ void AppController::undo() {
 
 void AppController::redo() {
     fk::ItemRecord* it = findItemMut(curItem_);
-    if (!it || !canRedo()) return;
-    auto& u = undo_[curItem_];
-    u.undo.push_back(snap(*it));
+    fk::ScanRecord* sc = findScan(curScan_);
+    auto ui = undo_.find(curItem_);
+    auto us = scanUndo_.find(curScan_);
+    const quint64 none = std::numeric_limits<quint64>::max();
+    const quint64 si =
+        it && ui != undo_.end() && !ui->second.redo.empty() ? ui->second.redo.back().seq : none;
+    const quint64 ss =
+        sc && us != scanUndo_.end() && !us->second.redo.empty() ? us->second.redo.back().seq : none;
+    if (ss < si) {
+        auto& u = us->second;
+        u.undo.push_back({sc->rotation, ss});
+        sc->rotation = u.redo.back().rotation;
+        u.redo.pop_back();
+        afterScanRotation(curScan_);
+        return;
+    }
+    if (si == none) return;
+    auto& u = ui->second;
+    Snapshot now = snap(*it);
+    now.seq = si;
+    u.undo.push_back(now);
     restore(*it, u.redo.back());
     u.redo.pop_back();
     invalidateItem(curItem_);
     refreshItemThumbs(curScan_);
     touch(false);
     Q_EMIT geometryChanged(toQ(curItem_));
+}
+
+void AppController::rotateScan(const QString& scanId, int delta) {
+    if (readOnly_) return;
+    const std::string id = toStd(scanId);
+    fk::ScanRecord* s = findScan(id);
+    if (!s || ((delta % 4) + 4) % 4 == 0) return;
+    auto& u = scanUndo_[id];
+    u.undo.push_back({s->rotation, ++undoSeq_});
+    if (u.undo.size() > 100) u.undo.erase(u.undo.begin());
+    u.redo.clear();
+    fk::rotateScanView(*s, delta);
+    afterScanRotation(id);
+}
+
+void AppController::afterScanRotation(const std::string& scanId) {
+    // the view only: no boundary, export record or file changes; thumbnails and the canvas turn at once
+    ++rt_[scanId].rev;
+    touch(false);
+    Q_EMIT scanImageChanged(toQ(scanId));
 }
 
 void AppController::commitShape(const std::string& itemId, bool outer, const fk::Shape& s) {
@@ -1505,7 +1568,11 @@ QImage AppController::thumbnail(const QString& id) const {
     const std::string key = toStd(id.section(QLatin1Char('/'), 1).section(QLatin1Char('?'), 0, 0));
     if (kind == QLatin1String("scan")) {
         auto f = rt_.find(key);
-        return f == rt_.end() ? QImage() : f->second.thumb;
+        if (f == rt_.end()) return {};
+        const fk::ScanRecord* s = findScan(key);
+        // UX-04: scan thumbnails (scan list, navigator) show the view rotation; lossless quarter turns
+        if (!s || s->rotation == 0 || f->second.thumb.isNull()) return f->second.thumb;
+        return f->second.thumb.transformed(QTransform().rotate(90.0 * s->rotation));
     }
     const fk::ScanRecord* s = scanOf(key);
     if (!s) return {};
@@ -1557,6 +1624,7 @@ QVariantMap AppController::currentScan() const {
         w << toQ(x);
     m["warnings"] = w;
     m["itemCount"] = static_cast<int>(s->items.size());
+    m["rotation"] = s->rotation * 90; // UX-04: whole-scan view, degrees clockwise
     if (auto f = rt_.find(s->scanId); f != rt_.end()) {
         m["state"] = f->second.state;
         m["error"] = f->second.error;
@@ -1647,6 +1715,7 @@ AppController::CanvasScan AppController::canvasScan() const {
     if (s->missing) c.state = QStringLiteral("missing");
     c.width = s->info.width;
     c.height = s->info.height;
+    c.rotation = s->rotation;
     c.ready = !c.display.isNull() && c.width > 0;
     for (const auto& it : s->items)
         c.items.push_back(&it);
@@ -1935,7 +2004,10 @@ fk::ExportRequest AppController::baseExportRequest(const fk::ItemRecord& it, boo
     r.mode = settings_.value("geometryMode").toString() == QLatin1String("straighten")
                  ? fk::GeometryMode::straightened
                  : fk::GeometryMode::pixel_crop;
-    r.upright = settings_.value("applyUpright").toBool() ? it.upright : 0;
+    // UX-04: the print's own upright, or (uprights off) as the canvas shows the scan — never both
+    const fk::ScanRecord* sc = scanOf(it.itemId);
+    r.upright = sc ? fk::exportTurns(*sc, it, settings_.value("applyUpright").toBool())
+                   : (settings_.value("applyUpright").toBool() ? it.upright : 0);
     r.write.format = formatOf(settings_.value("exportFormat").toString());
     r.write.bits = settings_.value("exportBits").toInt();
     r.write.compression = compressionOf(settings_.value("exportCompression").toString());
@@ -2837,7 +2909,7 @@ void AppController::exportFinal(const QStringList& itemIds, const QVariantMap& c
                     req.outputMode = st.value("geometryMode").toString() == QLatin1String("straighten")
                                          ? fk::GeometryMode::straightened
                                          : fk::GeometryMode::pixel_crop;
-                    req.upright = st.value("applyUpright").toBool() ? w.item.upright : 0;
+                    req.upright = fk::exportTurns(w.scan, w.item, st.value("applyUpright").toBool());
                     req.write = wo;
                     req.privacy = privacyOf(st.value("privacy").toString());
                     req.output = fk::nextFreeVersionPath(fk::pathFromUtf8(dir),

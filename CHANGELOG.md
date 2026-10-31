@@ -3,6 +3,14 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.4 — U014: rotate the whole scan (UX-04)
+- Print ▸ Rotate Whole Scan 90° Counterclockwise / Clockwise (also in the left rail and the scan list menu): every
+  print, its boundaries, the canvas, scan thumbnails, hits and edits follow; the scan file is never rewritten (a
+  view saved with the project). One undo restores the whole scan; four turns are the start. Exports keep each
+  print's own upright (never doubled) or, with uprights off, follow the turned view losslessly; files exported
+  before a turn relink bit-exact after it. The per-print command is now "Turn This Print Upright". Notes:
+  docs/release-notes/v0.7.0-alpha.4.md.
+
 ## 0.7.0-alpha.3 — U013: Shift switches Outer/Inner, constrained rectangle and circle editing (UX-03)
 - A lone Shift tap switches the edited boundary (Outer ↔ Inner); the canvas always says which one is edited.
   Holding Shift constrains a drag instead: rectangle corners keep right angles, side ratio and rotation about the
