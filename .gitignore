@@ -5,6 +5,8 @@
 CMakeUserPresets.json
 *.user
 compile_commands.json
+__pycache__/
+*.pyc
 .cache/
 .clangd/
 
