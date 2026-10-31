@@ -46,14 +46,33 @@ Status: Accepted · Module: `core/detection` · PRD F02, F03, F09 · Tests: `tes
 ## Stage B — full-resolution refinement (memory O(band))
 All profile lines of all prints are sampled in one increasing-row pass (`readRows`, 64-row bands). Outer
 lines: ≤ 200 per side, perpendicular to the proxy edge, from `half = 4·s + 16` px outside to `half` + 2 mm
-inside (the inner end must be real paper even when the proxy outline includes a scanner shadow). Per line:
-background = median of the outer fifth, paper = median of the inner fifth, distance in RGB; a crossing is the
-first position after the **last background run** (≥ persist+1 samples) where the 3-px smoothed distance to the
-background exceeds half the contrast for persist+1 samples **and** those samples are closer to the paper
-than half the contrast (a detached dust speck, or a light scratch on a dark frame, is not paper). Robust
-line fit (LMedS-initialised Tukey IRLS) on the lines outside the corner zones; the line is translated outward
-until every accepted crossing (isolated single-line outliers excepted) is inside — **containment by
-construction** — plus the safety margin (default 1 px). Corners = intersections.
+inside (the inner end must be real paper even when the proxy outline includes a scanner shadow).
+**Outer crossing, paper side first (since 0.7.0-alpha.2, U012, UX-02).** Per line: paper = median of the inner
+fifth, backing = median of the outer fifth. Walking from the paper end outward, the paper ends at the first of
+(each persisting, on 3-px smoothed values):
+- *toward the backing*: the colour projected on the paper→backing direction passes half way. On a backing
+  lighter than the paper, where the print casts a soft shade rising to the lid, a quarter of the way — but only
+  on such a ramp (quarter → three quarters wider than max(6 px, 0.2 mm)); on a sharp step the quarter point is
+  still inside the blurred edge (a generated scan showed a 0.74 px cut), so half way. On a darker backing a
+  rolled, darker paper edge ("shoulder") stays paper until half way.
+- *darker than the paper on a lighter backing*: the luminance drops below the paper's by 0.3 of the
+  backing–paper luminance difference (persist samples; two samples when the drop reaches 1.5× that) — the
+  shadow band (≈ 0.5–2 mm, darker than paper and lid) and the dark edge line of a white print on a white lid.
+  A colour shift without darkening (yellowed paper) stays paper.
+The previous rule crossed from the backing side and landed on the outer end of that band: on the owner's
+826 dpi white-on-white scan 0.9–1.9 mm outside the paper. Lines whose inner end is not this side's paper
+(colour ≠ the side's median paper by > max(0.25 C, 4σ)) are dropped — near the corners they run into the
+neighbouring side's shadow. The contrast is judged against the backing's noise.
+**Profiles cut off by the scan border** (tightly cropped single-print scans): their backing is the most distant
+in-scan samples and their threshold uses the print's contrast from complete profiles; when the paper reaches
+the border, the border position is a containment point (not a fit point) — the paper continues outside the scan.
+Robust line fit (LMedS-initialised Tukey IRLS) on the lines outside the corner zones; the line is translated
+outward until every accepted crossing is inside — **containment by construction** — plus the safety margin
+(default 1 px). Not counted for the translation: isolated single-line outliers beyond 4σ + 2 px, and outliers
+beyond that gate inside the corner zones (the corner is contained by the two side lines; profiles there cross
+the neighbour side's shadow or the rounded corner). Corners = intersections.
+**Single-print scans**: a side whose line passes its own scan border (the paper leaves the scan there) becomes
+that border; clamping its corners instead turned the side and cut paper between them (owner's img001: 3–5 px).
 **Locked sides**: a side whose probes 1.5 mm outside are foreground in the stage-A mask (> 30 %) abuts a
 neighbour; it keeps the proxy estimate plus the safety margin (no background to measure against),
 `touching_neighbour`, confidence ≤ 0.55.
@@ -107,6 +126,9 @@ merged; it only decides the `count_mismatch` warning.
   both (`missed_scans_flagged_automatic == missed_scans`, `false_possible_missed == 0`).
 
 ## Known limits (measured, TEST-PLAN §4)
+On a backing lighter than the paper, a paper edge that is itself darker than the paper by more than 0.3 of the
+backing–paper luminance difference (a dirty or darkened edge) ends the paper early: that edge would be cut.
+Generated and real scans do not show it; it is the price of excluding the shadow band (real-scan GT, U012).
 A frame whose colour is within ΔE ≈ 4 of the background (black frame on a black backing) cannot be outlined
 from pixels: the print is either contained conservatively and flagged, or missed with a count warning (manual
 count) or a `possible_missed` / `no_prints_found` hint (automatic count) when its picture is dark too. Users are told to scan dark frames on a light backing (docs/HUMAN-VERIFICATION.md,

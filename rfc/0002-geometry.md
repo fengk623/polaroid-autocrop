@@ -19,11 +19,13 @@ and `resampled`.
 | Mode | Source rect | Mapping |
 | --- | --- | --- |
 | PixelCrop | floor/ceil bounding box of the shape, clamped to the scan | translation (+ 90° permutation if upright ≠ 0) — exact |
-| Straightened | bounding box of the rotated region | rotation by the frame angle (+ upright) — resampled |
-| StandardSize | as Straightened | rotation + uniform scale to `standard` — resampled |
+| Straightened | quad: bounding box of the quad (+ support); ellipse: bounding box of the rotated region | quad: projective map of the quad's corners onto the output corners (U012, RFC-0005 §Exact straightening); ellipse: rotation by the frame angle (+ upright) — resampled |
+| StandardSize | as Straightened | as Straightened, scaled to `standard` — resampled |
 
 Frame angle = mean direction of the frame quad's long edges (robust to small non-parallelism).
-Perspective correction is not offered in v1 (flatbed scans are affine; ADR-0014).
+No user-facing perspective correction in v1 (flatbed scans are affine; ADR-0014). The only projective map is the
+quad image area's exact straightening, which absorbs the window's small shear (≈ 0.3°) so no frame remains;
+`outToScan`/`scanToOut` are therefore general 3×3 matrices (stored as such in export records).
 
 ## Containment
 `maskWeight(shape, mode, x, y)` = 1/0 by pixel-centre containment (hard), or a linear ramp of width

@@ -15,6 +15,10 @@ namespace fk::detail {
 namespace {
 
 constexpr double kPi = std::numbers::pi;
+/// Outer edge on a backing lighter than the paper: fraction of the backing–paper luminance difference by
+/// which the luminance must drop below the paper's to end the paper (shadow band, dark edge line). On the
+/// owner's 826 dpi white-on-white scan the band is 0.3–1.0 of that difference darker than the paper.
+constexpr double kPaperDeparture = 0.3;
 
 enum class Kind : uint8_t { outer = 0, inner = 1, innerCircle = 2 };
 
@@ -37,16 +41,18 @@ struct Need {
 
 struct Sample {
     float v[3];
-    float tau; ///< projection of the pixel centre on the line normal, relative to base
+    float tau;            ///< projection of the pixel centre on the line normal, relative to base
+    bool outside = false; ///< the position lies outside the scan (the value repeats the border pixel)
 };
 
 double medianOf(std::vector<double> v) {
     return cv::median(std::move(v));
 }
 
-/// Analyses one profile; returns the edge position τ (relative to base along n) or NaN.
-/// `outerMode`: background at the start (τ < 0), paper at the end.
-double analyse(const Sample* s, int n, bool outerMode, double& contrastOut, double& noiseOut, int persist) {
+/// Inner edge: frame at the start of the profile (τ < 0), picture at the end; the crossing is the first
+/// position where the 3-px smoothed distance to the frame exceeds half the contrast for persist+1 samples.
+/// Returns τ or NaN.
+double analyse(const Sample* s, int n, double& contrastOut, double& noiseOut, int persist) {
     const int q = std::max(3, n / 5);
     std::vector<double> c0[3], c1[3];
     for (int i = 0; i < q; ++i)
@@ -74,8 +80,66 @@ double analyse(const Sample* s, int n, bool outerMode, double& contrastOut, doub
     const double noise = std::max(0.3, cv::madSigma(head, cv::median(head)) + 0.5 * cv::median(head));
     contrastOut = C;
     noiseOut = noise;
-    if (C < std::max(4.0 * noise, outerMode ? 3.0 : 4.0)) return std::numeric_limits<double>::quiet_NaN();
-    std::vector<double> sm(n), smB(n), distB(n);
+    if (C < std::max(4.0 * noise, 4.0)) return std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> sm(n);
+    for (int i = 0; i < n; ++i) {
+        const int i0 = std::max(0, i - 1), i1 = std::min(n - 1, i + 1);
+        sm[i] = (dist[i0] + dist[i] + dist[i1]) / 3.0;
+    }
+    const double thr = 0.5 * C;
+    for (int i = 1; i + persist < n; ++i) {
+        bool ok = true;
+        for (int k = 0; k <= persist; ++k)
+            if (sm[i + k] <= thr) {
+                ok = false;
+                break;
+            }
+        if (!ok) continue;
+        const double f = (thr - sm[i - 1]) / std::max(1e-9, sm[i] - sm[i - 1]);
+        return s[i - 1].tau + std::clamp(f, 0.0, 1.0) * (s[i].tau - s[i - 1].tau);
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
+/// Outer edge, paper side first (UX-02, U012; RFC-0004 §Stage B). Walking from the paper end of the profile
+/// outward, the paper ends at the first of:
+///  - **toward the backing**: the colour, projected on the paper→backing direction, passes half way (a
+///  quarter
+///    on a backing lighter than the paper), persisting persist+1 samples. On a clean step this is the
+///    crossing seen from the backing side; on a darker backing a rolled, darker paper edge ("shoulder") stays
+///    paper until the step; on a lighter backing the soft shade the print casts rises to the lid from the
+///    paper edge.
+///  - **darker than the paper on a lighter backing**: the luminance drops below the paper's by
+///    `kPaperDeparture` of the backing–paper luminance difference for persist samples — the shadow band and
+///    the dark edge line along a print on a white lid (≈ 0.5–2 mm, darker than both). A colour shift
+///    without darkening (yellowed paper) stays paper; an edge darkened by more than that fraction would be
+///    cut (RFC-0004 §Known limits).
+/// Positions beyond the scan border: when the paper reaches the border, the edge is the border (`atBorder`) —
+/// the paper continues outside the scan and must be contained; such profiles use the print's contrast
+/// (`contrastHint`, from complete profiles) and only the "toward" rule. Returns τ or NaN.
+double analyseOuter(const Sample* s, int n, double contrastHint, double& contrastOut, double& noiseOut,
+                    int persist, double rampMinPx, bool& atBorder, bool& truncated,
+                    std::array<double, 3>& paperOut) {
+    atBorder = false;
+    truncated = false;
+    contrastOut = std::numeric_limits<double>::quiet_NaN();
+    int k0 = 0;
+    while (k0 < n && s[k0].outside)
+        ++k0;
+    const int q = std::max(3, n / 5);
+    if (k0 >= n - 2 * q) return std::numeric_limits<double>::quiet_NaN();
+    double a[3], b[3];
+    for (int c = 0; c < 3; ++c) {
+        std::vector<double> c0, c1;
+        for (int i = 0; i < q; ++i) {
+            c0.push_back(s[k0 + i].v[c]);
+            c1.push_back(s[n - 1 - i].v[c]);
+        }
+        a[c] = medianOf(c0);
+        b[c] = medianOf(c1);
+    }
+    paperOut = {b[0], b[1], b[2]};
+    std::vector<double> distB(n), smB(n);
     for (int i = 0; i < n; ++i) {
         double d2 = 0;
         for (int c = 0; c < 3; ++c)
@@ -83,34 +147,134 @@ double analyse(const Sample* s, int n, bool outerMode, double& contrastOut, doub
         distB[i] = std::sqrt(d2) * 100.0;
     }
     for (int i = 0; i < n; ++i) {
-        const int i0 = std::max(0, i - 1), i1 = std::min(n - 1, i + 1);
-        sm[i] = (dist[i0] + dist[i] + dist[i1]) / 3.0;
+        const int i0 = std::max(k0, i - 1), i1 = std::min(n - 1, i + 1);
         smB[i] = (distB[i0] + distB[i] + distB[i1]) / 3.0;
     }
-    const double thr = 0.5 * C;
-    // Outer edges: paper is connected to the inner end of the profile. A detached speck (dust on the
-    // glass) is followed by background again; start after the last background run so that it is ignored.
-    int start = 1;
-    if (outerMode) {
-        int run = 0;
-        for (int i = 0; i < n; ++i) {
-            run = sm[i] <= thr ? run + 1 : 0;
-            if (run >= persist + 1) start = std::max(start, i + 1);
+    // A profile cut off by the scan border may keep only a sliver of background (or none): its first q
+    // samples mix in paper. Its background is then its most distant in-scan samples (median of three) and,
+    // for the threshold, the print's contrast from complete profiles (`contrastHint`) when there is one.
+    if (k0 > 0) {
+        std::vector<std::pair<double, int>> far;
+        for (int i = k0; i < (k0 + n) / 2; ++i)
+            far.push_back({distB[i], i});
+        std::sort(far.begin(), far.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+        far.resize(std::min<size_t>(3, far.size()));
+        for (int c = 0; c < 3; ++c) {
+            std::vector<double> v;
+            for (const auto& f : far)
+                v.push_back(s[f.second].v[c]);
+            a[c] = medianOf(v);
         }
-        if (start >= n - persist) return std::numeric_limits<double>::quiet_NaN();
     }
-    for (int i = start; i + persist < n; ++i) {
-        bool ok = true;
+    double C2 = 0;
+    for (int c = 0; c < 3; ++c)
+        C2 += (b[c] - a[c]) * (b[c] - a[c]);
+    const double own = std::sqrt(C2) * 100.0;
+    const double C = k0 > 0 && contrastHint > 0 ? contrastHint : own;
+    std::vector<double> tail(distB.end() - q, distB.end());
+    const double noise = std::max(0.3, cv::madSigma(tail, cv::median(tail)) + 0.5 * cv::median(tail));
+    contrastOut = own;
+    truncated = k0 > 0;
+    noiseOut = noise;
+    // the contrast is judged against the backing's noise (as before U012): the paper's own texture (dust,
+    // handwriting) must not discard a measurable edge
+    double noiseBg = noise;
+    if (k0 == 0) {
+        std::vector<double> head;
+        for (int i = 0; i < q; ++i) {
+            double d2 = 0;
+            for (int c = 0; c < 3; ++c)
+                d2 += (s[i].v[c] - a[c]) * (s[i].v[c] - a[c]);
+            head.push_back(std::sqrt(d2) * 100.0);
+        }
+        noiseBg = std::max(0.3, cv::madSigma(head, cv::median(head)) + 0.5 * cv::median(head));
+    }
+    if (C < std::max(4.0 * noiseBg, 3.0) || (k0 > 0 && own < std::max(4.0 * noise, 3.0))) {
+        if (k0 > 0) { // nothing but paper up to the scan border
+            atBorder = true;
+            return s[k0].tau - 0.5;
+        }
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    // projection on the paper→background direction (0 = paper, 1 = background), smoothed like smB
+    const bool ownBackground = k0 == 0;
+    std::vector<double> proj(n, 0.0);
+    if (ownBackground) {
+        double ab2 = 0;
+        for (int c = 0; c < 3; ++c)
+            ab2 += (a[c] - b[c]) * (a[c] - b[c]);
+        std::vector<double> raw(n);
+        for (int i = 0; i < n; ++i) {
+            double d = 0;
+            for (int c = 0; c < 3; ++c)
+                d += (s[i].v[c] - b[c]) * (a[c] - b[c]);
+            raw[i] = d / std::max(1e-12, ab2);
+        }
+        for (int i = 0; i < n; ++i) {
+            const int i0 = std::max(0, i - 1), i1 = std::min(n - 1, i + 1);
+            proj[i] = (raw[i0] + raw[i] + raw[i1]) / 3.0;
+        }
+    }
+    // darkening relative to the paper (luminance, scaled like the RGB distances: √3·ΔL·100); the "away" rule
+    // applies only on a backing lighter than the paper (a shadow band is darker than both)
+    std::vector<double> dark(n, 0.0);
+    const double Lb = (b[0] + b[1] + b[2]) / 3.0, La = (a[0] + a[1] + a[2]) / 3.0;
+    const double kL = std::sqrt(3.0) * 100.0;
+    const bool lighterBacking = ownBackground && (La - Lb) * kL > std::max(4.0 * noise, 3.0);
+    if (lighterBacking) {
+        std::vector<double> raw(n);
+        for (int i = 0; i < n; ++i)
+            raw[i] = (Lb - (s[i].v[0] + s[i].v[1] + s[i].v[2]) / 3.0) * kL;
+        for (int i = 0; i < n; ++i) {
+            const int i0 = std::max(0, i - 1), i1 = std::min(n - 1, i + 1);
+            dark[i] = (raw[i0] + raw[i] + raw[i1]) / 3.0;
+        }
+    }
+    const double thrAway = std::max({kPaperDeparture * (La - Lb) * kL, 4.0 * noise, 3.0});
+    const double thrToward = 0.5 * C;
+    // On a lighter backing the print casts a soft shade: the colour rises to the lid over a ramp that starts
+    // at the paper edge, so a quarter of the way is already past the paper — but only on a ramp (a quarter to
+    // three quarters wider than `rampMinPx`); on a sharp step a quarter of the way is still inside the
+    // blurred edge, and half way is the edge. On a darker backing a rolled, darker paper edge ("shoulder")
+    // darkens toward the backing: half way.
+    const double towardLevel = lighterBacking ? 0.25 : 0.5;
+    auto crossing = [&](const std::vector<double>& v, int i, double level) {
+        const double f = (level - v[i + 1]) / (std::abs(v[i] - v[i + 1]) < 1e-12 ? 1e-12 : v[i] - v[i + 1]);
+        return s[i + 1].tau + std::clamp(f, 0.0, 1.0) * (s[i].tau - s[i + 1].tau);
+    };
+    // first position at or beyond index `from` (walking outward) where proj exceeds `level`, or NaN
+    auto beyond = [&](int from, double level) {
+        for (int j = from; j >= k0; --j)
+            if (proj[j] > level) return j + 1 < n ? crossing(proj, j, level) : s[j].tau;
+        return std::numeric_limits<double>::quiet_NaN();
+    };
+    for (int i = n - 2; i >= k0 + persist; --i) {
+        bool toward = true;
         for (int k = 0; k <= persist; ++k)
-            // outer: the pixels past the crossing must also be paper coloured (a light scratch or dust
-            // crossing a dark frame edge is far from both background and paper)
-            if (sm[i + k] <= thr || (outerMode && smB[i + k] > std::max(thr, 0.75 * C))) {
-                ok = false;
-                break;
-            }
-        if (!ok) continue;
-        const double f = (thr - sm[i - 1]) / std::max(1e-9, sm[i] - sm[i - 1]);
-        return s[i - 1].tau + std::clamp(f, 0.0, 1.0) * (s[i].tau - s[i - 1].tau);
+            if (ownBackground ? proj[i - k] <= towardLevel : smB[i - k] <= thrToward) toward = false;
+        // darkening: persist samples, or — the edge line on the lit sides is only 2–3 px wide — two samples
+        // reaching 1.5× the threshold
+        bool away = false;
+        if (lighterBacking && dark[i] > thrAway) {
+            int run = 0;
+            double peak = 0;
+            for (int j = i; j >= k0 && dark[j] > thrAway && run < persist; --j, ++run)
+                peak = std::max(peak, dark[j]);
+            away = run >= persist || (run >= 2 && peak >= 1.5 * thrAway);
+        }
+        if (toward) {
+            if (!ownBackground) return crossing(smB, i, thrToward);
+            const double t25 = crossing(proj, i, towardLevel);
+            if (!lighterBacking) return t25;
+            const double t50 = beyond(i, 0.5), t75 = beyond(i, 0.75);
+            if (!std::isnan(t75) && std::abs(t25 - t75) > rampMinPx) return t25; // shade ramp
+            return std::isnan(t50) ? t25 : t50;                                  // step: half way
+        }
+        if (away) return crossing(dark, i, thrAway);
+    }
+    if (k0 > 0) { // paper all the way to the scan border
+        atBorder = true;
+        return s[k0].tau - 0.5;
     }
     return std::numeric_limits<double>::quiet_NaN();
 }
@@ -177,10 +341,14 @@ Status refineItems(ImageSource& src, std::vector<DetectedItem>& items, double dp
     for (const auto& l : lines) {
         for (int t = -l.half; t <= l.half + l.extraIn; ++t) {
             const Vec2 p = l.base + l.n * static_cast<double>(t);
-            const int64_t x = std::clamp<int64_t>(static_cast<int64_t>(std::floor(p.x)), 0, info.width - 1);
-            const int64_t y = std::clamp<int64_t>(static_cast<int64_t>(std::floor(p.y)), 0, info.height - 1);
+            const int64_t ux = static_cast<int64_t>(std::floor(p.x)),
+                          uy = static_cast<int64_t>(std::floor(p.y));
+            const int64_t x = std::clamp<int64_t>(ux, 0, info.width - 1);
+            const int64_t y = std::clamp<int64_t>(uy, 0, info.height - 1);
             const size_t idx = l.offset + static_cast<size_t>(t + l.half);
-            samples[idx].tau = static_cast<float>(dot(Vec2{x + 0.5, y + 0.5} - l.base, l.n));
+            samples[idx].outside = ux != x || uy != y;
+            samples[idx].tau =
+                static_cast<float>(samples[idx].outside ? t : dot(Vec2{x + 0.5, y + 0.5} - l.base, l.n));
             needs.push_back({y, x, static_cast<uint32_t>(idx)});
         }
     }
@@ -230,6 +398,22 @@ Status refineItems(ImageSource& src, std::vector<DetectedItem>& items, double dp
         std::array<Line, 4> finalLines{};
         int validTotal = 0, linesTotal = 0;
         std::vector<double> contrasts, residAll;
+        const double rampMin = std::max(6.0, 0.2 * pxPerMm);
+        // the print's paper–background contrast from profiles that lie wholly inside the scan
+        double itemC = 0;
+        {
+            std::vector<double> cs;
+            for (const auto& l : lines) {
+                if (l.item != i || l.kind != Kind::outer) continue;
+                double C = 0, noise = 1;
+                bool atBorder = false, truncated = false;
+                std::array<double, 3> paper{};
+                analyseOuter(&samples[l.offset], 2 * l.half + 1 + l.extraIn, 0, C, noise, 3, rampMin,
+                             atBorder, truncated, paper);
+                if (!truncated && !std::isnan(C)) cs.push_back(C);
+            }
+            if (!cs.empty()) itemC = cv::median(cs);
+        }
         for (int s = 0; s < 4; ++s) {
             const Vec2 a = start.quad.p[s], b = start.quad.p[(s + 1) % 4];
             const double len = norm(b - a);
@@ -240,21 +424,54 @@ Status refineItems(ImageSource& src, std::vector<DetectedItem>& items, double dp
                 st.sidesLocked++;
                 continue;
             }
-            std::vector<Vec2> pts, fitPts;
-            std::vector<double> alongs;
+            // the inner end of every profile must be this side's paper: near the corners a profile may end in
+            // the neighbouring side's shadow band or on the backing (its "edge" would be meaningless)
+            struct OuterHit {
+                const ProfileLine* l;
+                double tau, C, noise;
+                bool atBorder, truncated;
+                std::array<double, 3> paper;
+            };
+            std::vector<OuterHit> hits;
             for (const auto& l : lines) {
                 if (l.item != i || l.kind != Kind::outer || l.side != s) continue;
                 ++linesTotal;
-                double C = 0, noise = 1;
-                const double tau = analyse(&samples[l.offset], 2 * l.half + 1 + l.extraIn, true, C, noise, 3);
-                if (noise > 0) contrasts.push_back(C / noise);
-                if (std::isnan(tau)) continue;
+                OuterHit h{&l, 0, 0, 1, false, false, {}};
+                h.tau = analyseOuter(&samples[l.offset], 2 * l.half + 1 + l.extraIn, itemC, h.C, h.noise, 3,
+                                     rampMin, h.atBorder, h.truncated, h.paper);
+                if (h.noise > 0 && !std::isnan(h.C)) contrasts.push_back(h.C / h.noise);
+                hits.push_back(h);
+            }
+            std::array<double, 3> sidePaper{};
+            double sideC = 0;
+            {
+                std::array<std::vector<double>, 3> pc;
+                std::vector<double> cs;
+                for (const auto& h : hits)
+                    if (!std::isnan(h.tau)) {
+                        for (int c = 0; c < 3; ++c)
+                            pc[c].push_back(h.paper[c]);
+                        if (!h.truncated && !std::isnan(h.C)) cs.push_back(h.C);
+                    }
+                for (int c = 0; c < 3; ++c)
+                    sidePaper[c] = pc[c].empty() ? 0.0 : cv::median(pc[c]);
+                sideC = cs.empty() ? 0.0 : cv::median(cs);
+            }
+            std::vector<Vec2> pts, fitPts;
+            std::vector<double> alongs;
+            for (const auto& h : hits) {
+                if (std::isnan(h.tau)) continue;
+                double d2 = 0;
+                for (int c = 0; c < 3; ++c)
+                    d2 += (h.paper[c] - sidePaper[c]) * (h.paper[c] - sidePaper[c]);
+                if (std::sqrt(d2) * 100.0 > std::max(0.25 * sideC, 4.0 * h.noise)) continue; // not this paper
                 ++validTotal;
-                const Vec2 p = l.base + l.n * tau;
+                const ProfileLine& l = *h.l;
+                const Vec2 p = l.base + l.n * h.tau;
                 pts.push_back(p);
                 alongs.push_back(l.along);
                 const double along = l.along * len;
-                if (along > cornerZone && along < len - cornerZone) fitPts.push_back(p);
+                if (along > cornerZone && along < len - cornerZone && !h.atBorder) fitPts.push_back(p);
             }
             if (fitPts.size() < 6) {
                 // cannot refine this side: keep the (outward) proxy estimate
@@ -282,6 +499,11 @@ Status refineItems(ImageSource& src, std::vector<DetectedItem>& items, double dp
                 double o = outward[k];
                 if (o <= shift) continue;
                 if (o - (-med) > outlierGate) {
+                    // corner zones: profiles there cross the neighbouring side's shadow band or the rounded
+                    // corner, and the corner itself is contained by the two side lines — an outlier there is
+                    // not paper beyond the line
+                    const double along = alongs[k] * len;
+                    if (along < cornerZone || along > len - cornerZone) continue;
                     const bool prev = k > 0 && outward[k - 1] > o - 2.0;
                     const bool next = k + 1 < pts.size() && outward[k + 1] > o - 2.0;
                     if (!prev && !next) continue; // isolated speck, not paper
@@ -329,7 +551,7 @@ Status refineItems(ImageSource& src, std::vector<DetectedItem>& items, double dp
                     ++innerTotal;
                     double C = 0, noise = 1;
                     // orientation: inner normal points into the image; frame is at τ < 0
-                    const double tau = analyse(&samples[l.offset], 2 * l.half + 1, false, C, noise, 2);
+                    const double tau = analyse(&samples[l.offset], 2 * l.half + 1, C, noise, 2);
                     if (std::isnan(tau)) continue;
                     ++innerValid;
                     pts.push_back(l.base + l.n * tau);
@@ -371,7 +593,7 @@ Status refineItems(ImageSource& src, std::vector<DetectedItem>& items, double dp
                 if (l.item != i || l.kind != Kind::innerCircle) continue;
                 ++innerTotal;
                 double C = 0, noise = 1;
-                const double tau = analyse(&samples[l.offset], 2 * l.half + 1, false, C, noise, 2);
+                const double tau = analyse(&samples[l.offset], 2 * l.half + 1, C, noise, 2);
                 if (std::isnan(tau)) continue;
                 ++innerValid;
                 pts.push_back(l.base + l.n * tau);

@@ -25,6 +25,7 @@ bool writeOverlay(const std::filesystem::path& out, const fk::Proxy& proxy,
                   const std::vector<std::vector<fk::Vec2>>* gtOuter = nullptr);
 
 int cmdEval(const std::vector<std::string>& args);
+int cmdRealEval(const std::vector<std::string>& args);
 
 struct Args {
     std::vector<std::string> positional;

@@ -44,3 +44,20 @@ acceptable").
 
 Tests: core `ExportPlan.*` ×3 (the matrix; consent; round area per format), self-test: default straightening
 labelled, FK-010 (no "bit-identical" claim for 16 → 8; no export without consent, one with it).
+
+## Exact straightening of a quad image area (v0.7.0-alpha.2, U012, UX-02)
+
+Status: Accepted, implemented in U012. "Straightened" used to rotate by the **frame's** angle and take the bounding
+box of the rotated image area. On real scans the image window is not a perfect rectangle (scanner shear ≈ 0.3°)
+and its angle differs from the frame's (tightly cropped scans: frame = scan border, angle 0), so the box kept
+6–17 px of frame per side (owner's scans; real-scan GT G6, baseline 0.37 mm).
+- A **quad** image area is now mapped projectively onto the output rectangle: its four corners are the output's
+  corners, its edges the output's edges (`squareToQuad`, Heckbert). Output size = mean lengths of opposite edges
+  (rounded up). One resampling with the same Lanczos-3 kernel; the label's angle is the mean of the window's top
+  and bottom edges. A rotated rectangle maps exactly as before.
+- Round image areas keep rotation by the frame angle plus their bounding box (the circle is clipped as before).
+- Exports keep their geometry matrices in the export record, so files exported earlier composite as before;
+  new alignments (RFC-0006) use the new geometry.
+Measured: G6 0.37 mm → 0.05 mm (= the detected inner's own error). Tests:
+`Geometry.StraightenedImageAreaFillsTheOutputExactly` (sheared window, exact corners and edges), `realeval` G6.
+
