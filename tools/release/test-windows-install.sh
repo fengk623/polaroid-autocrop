@@ -17,8 +17,12 @@ WORK=${FK_TEST_WORK:-$(mktemp -d)} # logs and reports stay here (CI: build/insta
 mkdir -p "$WORK"; WORK=$(cygpath -u "$WORK")
 noconv() { MSYS2_ARG_CONV_EXCL='*' "$@"; } # Inno Setup and reg.exe options start with "/": no path conversion
 FAILED=0
-pass() { echo "PASS FK-014 $*"; }
-fail() { echo "FAIL FK-014 $*"; FAILED=1; }
+PASSED=0 NFAILED=0 SKIPPED=0
+pass() { echo "PASS FK-014 $*"; PASSED=$((PASSED + 1)); }
+fail() { echo "FAIL FK-014 $*"; FAILED=1; NFAILED=$((NFAILED + 1)); }
+skipped() { echo "SKIP FK-014 $*"; SKIPPED=$((SKIPPED + 1)); }
+# the counts as a CI annotation, so that a green run's result can be read back too (FK-014 evidence)
+finish() { echo "::notice title=FK-014 Windows installer::$PASSED passed, $NFAILED failed, $SKIPPED skipped"; exit $FAILED; }
 check() { local what=$1; shift; if "$@"; then pass "$what"; else fail "$what"; fi; }
 
 regval() { noconv reg query "$1" /v "$2" 2> /dev/null | tr -d '\r' | sed -n "s/^ *$2 *REG_[A-Z_]* *//p"; }
@@ -72,9 +76,20 @@ same_tree() { # <installed dir> <package dir> <label> [leftovers-ok]: every pack
 }
 oldrun() { # <exe> <dir> <version>: an earlier release starts and reports its own version (its own checks may
   # differ from this version's, so only the report's version is required)
+  local rc to
+  # the PATH given to the command is also where bash looks the command up: without the full path, the
+  # restricted PATH finds Windows' own timeout.exe (a pause command), which never starts the app (first run)
+  to=$(command -v timeout)
   PATH="/c/Windows/system32:/c/Windows" QT_QPA_PLATFORM=offscreen FK_SETTINGS_DIR="$(cygpath -w "$2-settings")" \
-    timeout 1200 "$1" --self-test "$(cygpath -w "$2")" --scan "$(cygpath -w "$SCAN")" > "$2.log" 2>&1
+    QT_FORCE_STDERR_LOGGING=1 "$to" 1200 "$1" --self-test "$(cygpath -w "$2")" --scan "$(cygpath -w "$SCAN")" > "$2.log" 2>&1
+  rc=$?
   grep -E '^self-test' "$2.log" | head -3
+  if [ ! -f "$2/report.json" ]; then
+    echo "no report from $1 (exit code $rc); last lines of its output:"
+    tail -15 "$2.log" | sed 's/^/  | /'
+    ls "$2" 2> /dev/null | head -5 | sed 's/^/  dir: /'
+    return 1
+  fi
   python -c "import json,sys; r=json.load(open(sys.argv[1])); print('report:', r.get('version'), 'ok' if r.get('ok') else 'not ok'); sys.exit(r.get('version') != sys.argv[2])" "$2/report.json" "$3"
 }
 seed_data() { # the user's own files, which no install step may touch
@@ -113,13 +128,13 @@ check "uninstall: Start menu shortcut removed" test ! -e "$(shortcut)"
 
 # 2. upgrade from every published release; rollback to the newest; upgrade again; uninstall keeps user data
 if [ -z "${GH_TOKEN:-}" ]; then
-  echo "SKIP FK-014 upgrade and rollback: no GH_TOKEN to download the published releases"
-  exit $FAILED
+  skipped "upgrade and rollback: no GH_TOKEN to download the published releases"
+  finish
 fi
 REPO=${GITHUB_REPOSITORY:-fengk623/polaroid-autocrop}
 PREVIOUS=$(gh release list -R "$REPO" --exclude-drafts --limit 20 --json tagName,createdAt \
   --jq 'sort_by(.createdAt) | reverse | .[].tagName' | grep -vx "v$VER" || true)
-[ -n "$PREVIOUS" ] || { echo "SKIP FK-014 upgrade: no earlier published release"; exit $FAILED; }
+[ -n "$PREVIOUS" ] || { skipped "upgrade: no earlier published release"; finish; }
 NEWEST=$(echo "$PREVIOUS" | head -1)
 for tag in $PREVIOUS; do
   pv=${tag#v}; d="$WORK/rel-$tag"; mkdir -p "$d"
@@ -135,6 +150,9 @@ for tag in $PREVIOUS; do
   check "upgrade $tag → $VER: the installed files are this package's ($(appdir))" same_tree "$(appdir)" "$STAGE" "upgrade from $tag"
   if [ "$tag" = "$NEWEST" ]; then
     check "upgrade $tag → $VER: the user's settings, templates, recovery files and projects unchanged" data_unchanged
+    # the earlier release as published (its ZIP) on this runner, before any rollback: tells a rollback problem
+    # from that release not running here at all
+    check "release $tag from its own ZIP starts and reports $pv (baseline)" oldrun "$d/zip/FrameKeeper/FrameKeeper.exe" "$WORK/st-baseline" "$pv"
     echo "== rollback $VER → $tag"
     check "rollback $VER → $tag registers $pv" install "$d"/*Setup.exe "back-$tag" "$pv"
     check "rollback $VER → $tag: the installed files are release $tag's" same_tree "$(appdir)" "$d/zip/FrameKeeper" "rollback to $tag" leftovers-ok
@@ -148,4 +166,4 @@ for tag in $PREVIOUS; do
   check "uninstall after the upgrade from $tag" uninstall
   [ "$tag" = "$NEWEST" ] && check "uninstall keeps the user's settings, templates, recovery files and projects" data_unchanged
 done
-exit $FAILED
+finish

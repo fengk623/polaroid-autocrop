@@ -14,8 +14,12 @@ mkdir -p "$WORK"
 APPS="$WORK/Applications" # stands in for /Applications (the runner's real one is not touched)
 FAILED=0
 MOUNTS=()
-pass() { echo "PASS FK-014 $*"; }
-fail() { echo "FAIL FK-014 $*"; FAILED=1; }
+PASSED=0 NFAILED=0 SKIPPED=0
+pass() { echo "PASS FK-014 $*"; PASSED=$((PASSED + 1)); }
+fail() { echo "FAIL FK-014 $*"; FAILED=1; NFAILED=$((NFAILED + 1)); }
+skipped() { echo "SKIP FK-014 $*"; SKIPPED=$((SKIPPED + 1)); }
+# the counts as a CI annotation, so that a green run's result can be read back too (FK-014 evidence)
+finish() { echo "::notice title=FK-014 macOS DMG::$PASSED passed, $NFAILED failed, $SKIPPED skipped"; exit $FAILED; }
 check() { local what=$1; shift; if "$@"; then pass "$what"; else fail "$what"; fi; }
 attach() { # <dmg> <mount point>
   local i
@@ -67,17 +71,17 @@ if arch -x86_64 /usr/bin/true 2> /dev/null; then
   check "the installed app (x86_64 under Rosetta) passes its self-test" \
     python3 "$ROOT/tools/release/check-report.py" "$WORK/st-x64/report.json" "$VER" "$SHA"
 else
-  echo "SKIP FK-014 x86_64 slice: Rosetta not available on this runner"
+  skipped "x86_64 slice: Rosetta not available on this runner"
 fi
 
 if [ -z "${GH_TOKEN:-}" ]; then
-  echo "SKIP FK-014 upgrade and rollback: no GH_TOKEN to download the published releases"
-  exit $FAILED
+  skipped "upgrade and rollback: no GH_TOKEN to download the published releases"
+  finish
 fi
 REPO=${GITHUB_REPOSITORY:-fengk623/polaroid-autocrop}
 TAG=$(gh release list -R "$REPO" --exclude-drafts --limit 20 --json tagName,createdAt \
   --jq 'sort_by(.createdAt) | reverse | .[].tagName' | grep -vx "v$VER" | head -1 || true)
-[ -n "$TAG" ] || { echo "SKIP FK-014 upgrade: no earlier published release"; exit $FAILED; }
+[ -n "$TAG" ] || { skipped "upgrade: no earlier published release"; finish; }
 PV=${TAG#v}
 mkdir -p "$WORK/rel"
 if ! gh release download "$TAG" -R "$REPO" -D "$WORK/rel" -p '*.dmg' -p 'SHA256SUMS.txt' > /dev/null; then
@@ -107,4 +111,4 @@ check "upgrade again: the app runs and reports $VER" bash -c \
 check "upgrade again: the user's data unchanged" data_unchanged
 rm -rf "$APPS/FrameKeeper.app"
 check "deleting the app (macOS uninstall) leaves the user's data" data_unchanged
-exit $FAILED
+finish

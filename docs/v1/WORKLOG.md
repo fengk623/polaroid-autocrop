@@ -869,3 +869,14 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   no longer reproduce), 0 not applicable" each; the FK-014 check shows the notice in the language of the run.
   The package checks and the install/upgrade/rollback/uninstall scripts need Windows and macOS runners: they run in
   PR #28's release workflow (next entry).
+- PR #28 (U028, stacked on #27) CI round 1: core and app jobs green on all platforms; the release workflow ran on a
+  unit-branch PR for the first time. macOS universal: green — DMG checks, signature, copied app's self-test,
+  upgrade from v0.6.0-alpha.1, rollback, upgrade again and data checks passed. Windows x64: the unpacked ZIP passed
+  (package check 0 problems, self-test 223 passed); the installer test's only FAIL lines were "rollback → v0.6.0-alpha.1:
+  release v0.6.0-alpha.1 starts and reports 0.6.0-alpha.1" — no report from the earlier release [my script error]:
+  `PATH=<system folders> timeout 1200 FrameKeeper.exe …` makes bash look `timeout` up in that restricted PATH,
+  where Windows' own `timeout.exe` (a pause command) is found, so the app never started (reproduced on Linux:
+  `PATH=/nonexistent timeout 1 true` → command not found) → the script uses the full path of Git Bash's
+  `timeout`, prints the earlier release's output when it writes no report, and first runs that release from its
+  own ZIP as a baseline. Both scripts now end with a notice annotation counting passed / failed / skipped checks,
+  so a green run's result can be read back.
