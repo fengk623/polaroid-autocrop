@@ -4,8 +4,10 @@
 #include <QPointer>
 #include <QRunnable>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <mutex>
 #include <thread>
 
@@ -19,6 +21,8 @@ bool isActive(const QString& state) {
 
 struct JobRunner::Job {
     int id = 0;
+    Lane lane = Lane::io;
+    uint64_t estimate = 0;
     JobContext ctx;
     std::atomic<bool> finished{false};
     std::mutex m;
@@ -39,10 +43,13 @@ JobRunner::~JobRunner() {
 }
 
 int JobRunner::start(Lane lane, const QString& title, std::function<void(JobContext&)> work,
-                     std::function<JobDone(const JobOutcome&)> done) {
+                     std::function<JobDone(const JobOutcome&)> done, uint64_t estimateBytes) {
     auto job = std::make_shared<Job>();
     job->id = nextId_++;
+    job->lane = lane;
+    job->estimate = estimateBytes;
     jobs_.push_back(job);
+    if (estimateBytes) reservationChanged(); // reserved before the work can start
     const bool visible = lane != Lane::io;
     if (visible) model_->add(job->id, title); // starts as "queued"
     const int id = job->id;
@@ -99,12 +106,35 @@ int JobRunner::start(Lane lane, const QString& title, std::function<void(JobCont
                     auto& v = self->jobs_;
                     v.erase(std::remove_if(v.begin(), v.end(), [id](const auto& j) { return j->id == id; }),
                             v.end());
+                    self->reservationChanged();
                     Q_EMIT self->busyChanged();
                 },
                 Qt::QueuedConnection);
         }));
     Q_EMIT busyChanged();
     return id;
+}
+
+uint64_t JobRunner::reservedBytes() const {
+    uint64_t total = 0;
+    for (const Lane lane : {Lane::detect, Lane::exportJob, Lane::io}) {
+        std::vector<uint64_t> est;
+        for (const auto& j : jobs_)
+            if (j->lane == lane && j->estimate) est.push_back(j->estimate);
+        const QThreadPool& pool = lane == Lane::detect ? detect_ : lane == Lane::exportJob ? export_ : io_;
+        const size_t parallel = static_cast<size_t>(std::max(1, pool.maxThreadCount()));
+        std::sort(est.begin(), est.end(), std::greater<>());
+        for (size_t i = 0; i < est.size() && i < parallel; ++i)
+            total += est[i];
+    }
+    return total;
+}
+
+void JobRunner::reservationChanged() {
+    const uint64_t r = reservedBytes();
+    if (r == lastReserved_) return;
+    lastReserved_ = r;
+    if (onReservation_) onReservation_(r);
 }
 
 QString JobRunner::finalState(int id) const {

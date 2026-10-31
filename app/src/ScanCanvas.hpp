@@ -122,6 +122,7 @@ class ScanCanvas : public QQuickPaintedItem {
     void onScanImage(const QString& scanId);
     void onGeometry(const QString& itemId);
     void rebuildPyramid();
+    void reportBytes();         ///< FK-005: pyramid levels and the full-resolution patch → the cache budget
     QRectF contentRect() const; ///< scan coordinates of what "fit" shows
     void setView(double scale, QPointF offset, bool fromFit = false);
     void clampView();

@@ -149,6 +149,7 @@ class TiffSourceImpl final : public TiffSource {
         budget_ = bytes;
         evict(0);
     }
+    uint64_t cachedBytes() const override { return used_ + lineBuf_.size(); }
     uint64_t decodeCount() const override { return decodes_; }
     uint64_t restartCount() const override { return restarts_; }
 

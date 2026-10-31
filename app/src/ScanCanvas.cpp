@@ -62,6 +62,10 @@ void ScanCanvas::setApp(QObject* a) {
             cancelDrag();
             setHandle(std::nullopt);
             if (mode_ != QLatin1String("scan")) fit();
+            // composite mode: another print, or a preview the memory budget gave back (FK-005) — compute it
+            if (mode_ == QLatin1String("composite") && !app_->currentItemId().isEmpty() &&
+                app_->compositePreview(app_->currentItemId().toStdString()).isNull())
+                app_->requestCompositePreview(app_->currentItemId());
             update();
         });
         connect(app_, &AppController::compositePreviewReady, this, [this] {
@@ -178,6 +182,7 @@ void ScanCanvas::onScanImage(const QString& scanId) {
     if (newScan || rotation_ != rotationBefore) {
         // another scan, or the same scan turned (UX-04): the content changed shape
         detail_ = QImage();
+        reportBytes();
         cancelDrag();
         if (newScan) setHandle(std::nullopt);
         fit();
@@ -211,6 +216,7 @@ void ScanCanvas::rebuildPyramid() {
               : cs.display.isNull() && !cs.state.isEmpty() ? tr("Loading…")
                                                            : QString();
     if (cs.display.isNull()) {
+        reportBytes();
         Q_EMIT badgeChanged();
         return;
     }
@@ -225,7 +231,17 @@ void ScanCanvas::rebuildPyramid() {
         scanH_ = static_cast<int64_t>(cs.display.height()) * proxyScale_;
         updateDisplayMapping();
     }
+    reportBytes();
     Q_EMIT badgeChanged();
+}
+
+void ScanCanvas::reportBytes() {
+    // FK-005: the canvas's own images count in the cache budget (level 0 is the controller's proxy, shared)
+    if (!app_) return;
+    uint64_t b = detail_.isNull() ? 0 : static_cast<uint64_t>(detail_.sizeInBytes());
+    for (size_t i = 1; i < pyramid_.size(); ++i)
+        b += static_cast<uint64_t>(pyramid_[i].sizeInBytes());
+    app_->setCanvasBytes(b);
 }
 
 const fk::Shape* ScanCanvas::currentShape(bool outer) const {
@@ -395,7 +411,10 @@ void ScanCanvas::requestDetail() {
     // a 2× display)
     if (scale_ * dpr() * proxyScale_ <= 1.05) {
         // the proxy is enough; release the full-resolution image
-        detail_ = QImage();
+        if (!detail_.isNull()) {
+            detail_ = QImage();
+            reportBytes();
+        }
         updateBadge();
         return;
     }
@@ -413,6 +432,7 @@ void ScanCanvas::requestDetail() {
     app_->requestDetail(r, ow, oh, gen, [this, scan](QImage img, QRectF rect, quint64 g) {
         if (scan != scanId_) return; // superseded: another scan is shown
         detail_ = std::move(img);
+        reportBytes();
         detailRect_ = rect;
         detailGen_ = g;
         if (g == generation_) detailPending_ = false;

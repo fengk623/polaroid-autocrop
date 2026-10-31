@@ -18,7 +18,7 @@ qt_add_qml_module(FrameKeeper
     src/AppController.hpp src/AppController.cpp src/Models.hpp src/Models.cpp src/Jobs.hpp src/Jobs.cpp
     src/Display.hpp src/Display.cpp src/ScanCanvas.hpp src/ScanCanvas.cpp src/ImageProvider.hpp
     src/ImageProvider.cpp src/Translator.hpp src/Translator.cpp src/SelfTest.hpp src/SelfTest.cpp
-    src/util.hpp src/util.cpp src/ShiftTap.hpp src/ShiftTap.cpp
+    src/util.hpp src/util.cpp src/ShiftTap.hpp src/ShiftTap.cpp src/MemoryPressure.hpp src/MemoryPressure.cpp
   RESOURCES
     resources/icon.png
     i18n/zh_CN.json

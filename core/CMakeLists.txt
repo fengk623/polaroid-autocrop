@@ -9,6 +9,7 @@ set(FK_CORE_SOURCES
   src/common.cpp
   src/util.cpp
   src/memory.cpp
+  src/cache.cpp
   src/image.cpp
   src/sha256.cpp
   src/color.cpp
