@@ -151,6 +151,12 @@ double edgeChange(const ImageBuffer& composite, const ImageBuffer& scanOnly, con
 `ScanRecord::rotation` (UX-04, quarter turns clockwise, display only); `void rotateScanView(ScanRecord&, int delta)`;
 `int exportTurns(const ScanRecord&, const ItemRecord&, bool applyUpright)` — a print's upright when uprights are
 applied, else the scan's view rotation, never both; `void updateCountWarning(ScanRecord&)` (UX-01).
+Compatibility (FK-014, `docs/project-format.md` §Compatibility): `Project::savedBy` (the `app.version` that last
+saved the file); `ProjectSettings::unknownJson`, `ScanRecord::unknownJson`, `ItemRecord::unknownJson` and
+`Sidecar::unknownJson` hold the keys a later version wrote and this one does not read (a JSON object or empty),
+written back unchanged; `Project::unknownJson` does so for top-level keys. In `fk/version.hpp`:
+`int compareVersions(const std::string& a, const std::string& b)` — SemVer 2.0 precedence, −1 / 0 / 1, and 0
+when either is not a version.
 
 ## 8. Colour, metadata, cache, jobs, diagnostics, capabilities
 See RFC-0012/13/14/10/15 and ADR-0007. Key types: `Profile`, `Transform`, `MetadataSet`, `PrivacyPreset {keep_all_safe=0, remove_location=1, remove_identity=2}`,
@@ -194,4 +200,5 @@ void fk_free(void*);
 | 0.7.0-alpha.4 | `quarterTurnMatrix`, `quarterTurnSize`, `ScanRecord::rotation`, `rotateScanView`, `exportTurns` (UX-04). |
 | 0.7.0-alpha.5 | `MaskChoice`, `naturalBlend`, `resolveMask`, `edgeChange`, `CompositeSettings::mask`/`maskSet`, `deltaE2000` (UX-08). |
 | 0.7.0-alpha.7 | `CacheLedger`, `defaultCacheBudget`, `systemMemory`, `TiffSource::cachedBytes` (FK-005). |
+| 0.7.0-alpha.15 | `compareVersions`, `Project::savedBy`, `unknownJson` on `ProjectSettings`, `ScanRecord`, `ItemRecord`, `Sidecar` (FK-014). Additive. |
 | 0.7.0-alpha.14 | Spec corrected to the headers (FK-013): `openTiff` returns `TiffSource`, `findMatch` / `checkEdited` signatures, `makeTemplate`, `fingerprintFile`, `boundingRect` clamp, `nextFreeVersionPath` version out; disk cache, job queue, capabilities and the C ABI marked planned. No code change. |

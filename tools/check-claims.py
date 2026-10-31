@@ -6,7 +6,7 @@ traceability, UI reference, format docs):
 
 1. Test references in backticks — a test program (`test_export`), a test (`Export.SourceFileUntouched`,
    `CacheLedger.*`), a self-test section (`runLayout`, `scenarioMemory`, `--scenario text`) or a file under
-   tests/, tools/, core/, app/, cmake/, .github/ — must name something in the repository.
+   tests/, tools/, core/, app/, cmake/, .github/, licenses/ — must name something in the repository.
 2. Every name declared in the API spec's code blocks (functions, types, enum values, constants) appears in the
    public headers core/include/fk/*.hpp, and every header the spec names exists.
 
@@ -25,10 +25,11 @@ DOCS = (
     sorted((ROOT / "PRD").glob("*.md"))
     + sorted((ROOT / "rfc").glob("*.md"))
     + [ROOT / n for n in ("ARCHITECTURE.md", "API-SPEC-core.md", "CONTRACT-ui-core.md", "TEST-PLAN.md",
-                          "PERFORMANCE-BUDGET.md", "SECURITY-PRIVACY.md", "RELEASE-CHECKLIST.md")]
+                          "PERFORMANCE-BUDGET.md", "SECURITY-PRIVACY.md", "RELEASE-CHECKLIST.md",
+                          "THIRD-PARTY-LICENSES.md", "licenses/README.md")]
     + [ROOT / "docs" / n for n in ("acceptance-matrix.md", "ui-reference.md", "project-format.md",
                                    "color-pipeline.md", "film-types.md", "mobile-portability.md",
-                                   "HUMAN-VERIFICATION.md")]
+                                   "HUMAN-VERIFICATION.md", "INSTALL.md")]
     + [ROOT / "docs" / "v1" / n for n in ("TRACEABILITY.md", "FORMAT-MATRIX.md", "FEATURE-FREEZE.md",
                                           "REAL-SCAN-GT.md", "UNITS.md")]
 )
@@ -66,7 +67,7 @@ def check_references(problems):
             for raw in TICK.findall(line):
                 ref = raw.strip()
                 why = None
-                path_ref = re.match(r"^(tests|tools|core|app|cmake|\.github)/[\w./*-]*$", ref)
+                path_ref = re.match(r"^(tests|tools|core|app|cmake|\.github|licenses)/[\w./*-]*$", ref)
                 if path_ref:
                     target = ref.rstrip("/")
                     if "*" in target:

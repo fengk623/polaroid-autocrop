@@ -608,6 +608,14 @@ bool AppController::openProject(const QVariant& url) {
     if (readOnly_)
         notify(tr("This project was saved by a newer version and is opened read-only."),
                QStringLiteral("warning"));
+    else if (fk::compareVersions(project_.savedBy, fk::productVersion()) > 0)
+        // FK-014: a later version saved it (the user went back to this version): what this version does not
+        // know is kept in the file unchanged (docs/project-format.md §Compatibility)
+        notify(
+            tr("This project was last saved by FrameKeeper %1, a later version. What this version does not "
+               "know is kept unchanged when you save.")
+                .arg(toQ(project_.savedBy)),
+            QStringLiteral("info"));
     QStringList recent = settings_.value("recentProjects").toStringList();
     recent.removeAll(path);
     recent.prepend(path);

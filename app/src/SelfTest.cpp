@@ -8,6 +8,7 @@
 #include "fk/hash.hpp"
 #include "fk/image_io.hpp"
 #include "fk/util.hpp"
+#include "fk/version.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -21,6 +22,7 @@
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRectF>
@@ -1188,6 +1190,66 @@ void SelfTest::runDataProtection() {
     check(QStringLiteral("FK-008 the restored project saves to its own path"),
           savedAgain && app_->openProject(saved) && scans() == 1);
     app_->waitIdle(300000);
+
+    // FK-014 (U028): after a rollback to this version, a project last saved by a later version opens
+    // normally, says so, and keeps what this version does not know when it is saved again
+    {
+        app_->newProject();
+        QJsonObject o;
+        {
+            QFile f(saved);
+            if (f.open(QIODevice::ReadOnly)) o = QJsonDocument::fromJson(f.readAll()).object();
+        }
+        QJsonObject appInfo = o.value(QStringLiteral("app")).toObject();
+        appInfo[QStringLiteral("version")] = QStringLiteral("99.0.0");
+        o[QStringLiteral("app")] = appInfo;
+        o[QStringLiteral("laterFeature")] = QJsonObject{{QStringLiteral("kept"), true}};
+        QJsonArray scansJson = o.value(QStringLiteral("scans")).toArray();
+        if (!scansJson.isEmpty()) {
+            QJsonObject s0 = scansJson.at(0).toObject();
+            s0[QStringLiteral("laterScanField")] = 7;
+            scansJson[0] = s0;
+            o[QStringLiteral("scans")] = scansJson;
+        }
+        {
+            QFile f(saved);
+            if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(QJsonDocument(o).toJson());
+        }
+        QStringList notes;
+        auto nc = connect(app_, &AppController::notification, this,
+                          [&](const QString& text, const QString&) { notes << text; });
+        const bool laterOpened = app_->openProject(saved);
+        app_->waitIdle(300000);
+        disconnect(nc);
+        const bool toldLater = std::any_of(notes.begin(), notes.end(), [](const QString& n) {
+            return n.contains(QLatin1String("99.0.0")) &&
+                   (n.contains(QLatin1String("a later version")) || n.contains(QStringLiteral("更新的")));
+        });
+        const bool laterSaved = laterOpened && !app_->readOnly() && app_->saveProject();
+        QJsonObject back;
+        {
+            QFile f(saved);
+            if (f.open(QIODevice::ReadOnly)) back = QJsonDocument::fromJson(f.readAll()).object();
+        }
+        const QJsonArray backScans = back.value(QStringLiteral("scans")).toArray();
+        const bool kept =
+            back.value(QStringLiteral("laterFeature")).toObject().value(QStringLiteral("kept")).toBool() &&
+            !backScans.isEmpty() &&
+            backScans.at(0).toObject().value(QStringLiteral("laterScanField")).toInt() == 7;
+        const QString savedByNow =
+            back.value(QStringLiteral("app")).toObject().value(QStringLiteral("version")).toString();
+        check(QStringLiteral(
+                  "FK-014 a project last saved by a later version opens, says so, and keeps what this "
+                  "version does not know when saved"),
+              laterOpened && toldLater && laterSaved && kept &&
+                  savedByNow == QString::fromStdString(fk::productVersion()),
+              QStringLiteral("opened %1, told %2, saved %3, kept %4, saved by %5 · %6")
+                  .arg(laterOpened)
+                  .arg(toldLater)
+                  .arg(laterSaved)
+                  .arg(kept)
+                  .arg(savedByNow, notes.join(QStringLiteral(" | ")).left(300)));
+    }
     app_->newProject();
 }
 

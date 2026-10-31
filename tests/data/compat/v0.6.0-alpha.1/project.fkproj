@@ -1,0 +1,222 @@
+{
+  "schema": "fk.project/1",
+  "projectId": "8b0c7c36-5d2e-4f51-9a3e-2f7a1d0c4e11",
+  "name": "Compatibility fixture",
+  "createdAt": "2026-10-01T10:00:00Z",
+  "modifiedAt": "2026-10-31T16:50:10Z",
+  "app": {
+    "name": "FrameKeeper",
+    "version": "0.6.0-alpha.1"
+  },
+  "settings": {
+    "expectedCount": 2,
+    "safetyMarginPx": 1.5,
+    "exportFolder": "/Users/example/Exports",
+    "exportFormat": "tif",
+    "exportBits": 16,
+    "exportCompression": "zip",
+    "colorPolicy": "keep",
+    "privacy": "keep_all_safe"
+  },
+  "scans": [
+    {
+      "scanId": "scan-0001",
+      "path": "/Users/example/Scans/roll-01.tif",
+      "relPath": "../../Scans/roll-01.tif",
+      "fingerprint": {
+        "size": 123456789,
+        "mtime": "2026-09-30T08:00:00Z",
+        "quickSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fullSha256": null
+      },
+      "info": {
+        "width": 6000,
+        "height": 4000,
+        "channels": 3,
+        "bits": 16,
+        "compression": "none",
+        "dpiX": 600.0,
+        "dpiY": 600.0,
+        "iccDescription": "Adobe RGB (1998)",
+        "iccSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "detection": {
+        "at": "2026-10-01T10:05:00Z",
+        "expectedCount": 2,
+        "dpiUsed": 600.0,
+        "proxyScale": 4,
+        "warnings": [
+          "count_mismatch"
+        ]
+      },
+      "items": [
+        {
+          "itemId": "item-0001",
+          "index": 1,
+          "label": "Beach",
+          "filmType": "instax_mini",
+          "outer": {
+            "kind": "quad",
+            "points": [
+              [
+                100.0,
+                120.0
+              ],
+              [
+                1300.0,
+                120.0
+              ],
+              [
+                1300.0,
+                2020.0
+              ],
+              [
+                100.0,
+                2020.0
+              ]
+            ],
+            "source": "manual",
+            "cornerRadiusPx": 12.0
+          },
+          "inner": {
+            "kind": "quad",
+            "points": [
+              [
+                180.0,
+                260.0
+              ],
+              [
+                1220.0,
+                260.0
+              ],
+              [
+                1220.0,
+                1660.0
+              ],
+              [
+                180.0,
+                1660.0
+              ]
+            ],
+            "source": "auto"
+          },
+          "upright": 1,
+          "confidence": 0.97,
+          "outerConfidence": 0.98,
+          "innerConfidence": 0.95,
+          "reasons": [
+            "ok"
+          ],
+          "reviewed": true,
+          "excluded": false,
+          "edits": [
+            {
+              "editVersionId": "ev-0001",
+              "version": 1,
+              "path": "/Users/example/Exports/roll-01_01_v1.tif",
+              "sidecar": "/Users/example/Exports/roll-01_01_v1.fk.json",
+              "exportedAt": "2026-10-01T10:30:00Z",
+              "fileSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "format": "tif",
+              "relinked": {
+                "path": "/Users/example/Graded/roll-01_01_v1.tif",
+                "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "matchedBy": "xmp",
+                "at": "2026-10-01T10:50:00Z"
+              }
+            }
+          ],
+          "composite": {
+            "maskMode": "feather",
+            "featherPx": 3.0,
+            "preserveEdgePx": 0.0,
+            "strokes": [
+              {
+                "points": [
+                  [
+                    300.0,
+                    400.0
+                  ],
+                  [
+                    320.0,
+                    420.0
+                  ]
+                ],
+                "radius": 15.0,
+                "add": false
+              }
+            ],
+            "lastOutput": "/Users/example/Exports/roll-01_01_final.tif",
+            "lastOutputAt": "2026-10-01T10:55:00Z"
+          },
+          "finalExport": "/Users/example/Exports/roll-01_01_final.tif",
+          "history": {
+            "undo": [],
+            "redo": []
+          }
+        },
+        {
+          "itemId": "item-0002",
+          "index": 2,
+          "label": "Round",
+          "filmType": "instax_square",
+          "outer": {
+            "kind": "quad",
+            "points": [
+              [
+                1500.0,
+                120.0
+              ],
+              [
+                3100.0,
+                120.0
+              ],
+              [
+                3100.0,
+                2020.0
+              ],
+              [
+                1500.0,
+                2020.0
+              ]
+            ],
+            "source": "auto",
+            "cornerRadiusPx": 0.0
+          },
+          "inner": {
+            "kind": "ellipse",
+            "center": [
+              2300.0,
+              1000.0
+            ],
+            "rx": 600.0,
+            "ry": 590.0,
+            "angle": 0.0,
+            "source": "auto"
+          },
+          "upright": 0,
+          "confidence": 0.9,
+          "outerConfidence": 0.0,
+          "innerConfidence": 0.0,
+          "reasons": [],
+          "reviewed": false,
+          "excluded": false,
+          "edits": [],
+          "composite": {
+            "maskMode": "hard_edge",
+            "featherPx": 0.0,
+            "preserveEdgePx": 0.0,
+            "strokes": [],
+            "lastOutput": null,
+            "lastOutputAt": ""
+          },
+          "finalExport": "",
+          "history": {
+            "undo": [],
+            "redo": []
+          }
+        }
+      ]
+    }
+  ]
+}

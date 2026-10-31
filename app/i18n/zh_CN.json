@@ -501,6 +501,7 @@
   "This print cannot take the file.": "这张相片无法使用该文件。",
   "This print has low detection confidence and must be reviewed first": "此相片识别置信度较低，须先复核",
   "This print has no export record for the file in the project (exported by another project, or the project was not saved).": "工程中没有这个文件的导出记录（由其他工程导出，或导出后未保存工程）。",
+  "This project was last saved by FrameKeeper %1, a later version. What this version does not know is kept unchanged when you save.": "此工程最后由更新的 FrameKeeper %1 保存。本版本不认识的内容在保存时原样保留。",
   "This project was saved by a newer version and is opened read-only.": "此项目由更新版本保存，已以只读方式打开。",
   "This scan has no reliable resolution: the width is in pixels.": "此扫描件没有可靠的分辨率：宽度以像素为单位。",
   "Tilt": "倾斜",
