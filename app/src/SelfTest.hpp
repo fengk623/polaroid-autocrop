@@ -79,6 +79,10 @@ class SelfTest : public QObject {
     /// reserved before the job starts, memory pressure (output unchanged), relink checks independent of the
     /// cache, cancelled detection.
     void runMemoryBudget();
+    /// FK-011 (U025): the window moves to a monitor with another profile (simulated): the proxy, the full
+    /// resolution and the thumbnails are converted again, Preview and Full agree, outputs unchanged, a proxy
+    /// converted for the previous monitor never shown; and back.
+    void runDisplayProfile();
     void doubleClick(QQuickItem* item, QPointF local = QPointF(-1, -1));
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.

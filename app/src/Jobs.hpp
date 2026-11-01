@@ -95,6 +95,8 @@ class JobRunner : public QObject {
     int lastJobId() const { return nextId_ - 1; }
     /// Final state of a finished job ("succeeded", "failed", "cancelled", "outdated"), empty while running.
     QString finalState(int id) const;
+    /// Test hook: the job's work has ended and its result is waiting for the UI thread (`done` not run yet).
+    bool workEnded(int id) const;
 
   Q_SIGNALS:
     void busyChanged();

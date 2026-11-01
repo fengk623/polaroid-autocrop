@@ -72,6 +72,19 @@ void ScanCanvas::setApp(QObject* a) {
             updateBadge();
             update();
         });
+        // FK-011: another display profile — the full-resolution patch and the composite preview were
+        // converted for the old one: dropped and asked for again (the proxy comes back through
+        // scanImageChanged)
+        connect(app_, &AppController::displayProfileChanged, this, [this] {
+            detail_ = QImage();
+            reportBytes();
+            ++generation_;
+            scheduleDetail();
+            if (mode_ == QLatin1String("composite") && !app_->currentItemId().isEmpty())
+                app_->requestCompositePreview(app_->currentItemId());
+            updateBadge();
+            update();
+        });
         onScanImage(app_->currentScanId());
     }
     Q_EMIT appChanged();
@@ -432,6 +445,7 @@ void ScanCanvas::requestDetail() {
     app_->requestDetail(r, ow, oh, gen, [this, scan](QImage img, QRectF rect, quint64 g) {
         if (scan != scanId_) return; // superseded: another scan is shown
         detail_ = std::move(img);
+        detailProfile_ = currentDisplayProfile().id; // delivered only when made for the current profile
         reportBytes();
         detailRect_ = rect;
         detailGen_ = g;

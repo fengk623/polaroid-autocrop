@@ -40,6 +40,8 @@ class ScanCanvas : public QQuickPaintedItem {
     Q_PROPERTY(bool spaceHeld READ spaceHeld WRITE setSpaceHeld NOTIFY toolChanged)
     Q_PROPERTY(QRectF navigatorView READ navigatorView NOTIFY viewChanged)
     Q_PROPERTY(QColor surroundColor READ surroundColor WRITE setSurroundColor NOTIFY appChanged)
+    /// FK-011 (self-test): the display profile the full-resolution patch on screen was converted for.
+    Q_PROPERTY(QString detailProfile READ detailProfile NOTIFY badgeChanged)
 
   public:
     explicit ScanCanvas(QQuickItem* parent = nullptr);
@@ -177,7 +179,9 @@ class ScanCanvas : public QQuickPaintedItem {
     double scale_ = 0.1;
     QPointF offset_;
     quint64 generation_ = 0;
+    QString detailProfile() const { return detail_.isNull() ? QString() : detailProfile_; }
     QImage detail_;
+    QString detailProfile_;
     QRectF detailRect_;
     quint64 detailGen_ = 0;
     bool detailPending_ = false;

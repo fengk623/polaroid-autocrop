@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 
 namespace fkapp {
@@ -48,6 +49,7 @@ class AppController : public QObject {
     Q_PROPERTY(QString buildCommit READ buildCommit CONSTANT)
     Q_PROPERTY(QString buildId READ buildId CONSTANT)
     Q_PROPERTY(QString platform READ platform CONSTANT)
+    Q_PROPERTY(QString displayProfileName READ displayProfileName NOTIFY displayProfileChanged)
 
   public:
     explicit AppController(QObject* parent = nullptr);
@@ -76,6 +78,8 @@ class AppController : public QObject {
     QString buildCommit() const;
     QString buildId() const;
     QString platform() const;
+    /// FK-011: the display profile the canvas converts to and where it came from (About dialog).
+    QString displayProfileName() const;
 
     // ---- project ----
     Q_INVOKABLE void newProject();
@@ -229,6 +233,15 @@ class AppController : public QObject {
     /// Test hook: another cache budget (0 = the device default).
     void setCacheBudget(uint64_t bytes);
     const fk::CacheLedger& cacheLedger() const { return cache_; }
+    // ---- display profile (FK-011) ----
+    /// The window is on `screen` now, or its ICC may have changed: read the profile and convert again if it
+    /// differs (main.cpp calls it on screen changes and every 5 s).
+    void refreshDisplayProfile(QScreen* screen);
+    /// Test hook: behave as if the window had moved to a monitor with this profile (the screen is ignored
+    /// until it is cleared with std::nullopt).
+    void setDisplayProfileOverride(std::optional<DisplayProfileInfo> p);
+    /// Display-space images in use were made for this generation (bumped when the display profile changes).
+    quint64 displayGeneration() const { return displayGen_; }
     fk::Project& project() { return project_; }
 
   Q_SIGNALS:
@@ -250,6 +263,9 @@ class AppController : public QObject {
     void relinkRowUpdated(const QVariantMap& row);
     void exportFinished(const QString& folder, int written, int failed);
     void confirmationNeeded(const QString& title, const QString& text);
+    /// FK-011: the display profile changed (another monitor, another ICC): display images were converted
+    /// again.
+    void displayProfileChanged();
 
   private:
     struct ScanRuntime {
@@ -333,6 +349,10 @@ class AppController : public QObject {
     fk::CacheLedger cache_;
     uint64_t defaultBudget_ = 0;
     uint64_t workToken_ = 0; ///< the jobs' reservation in the ledger
+    // ---- display profile (FK-011) ----
+    quint64 displayGen_ = 1;
+    bool displayOverridden_ = false;
+    void applyDisplayProfile(const DisplayProfileInfo& p);
     int pressureEvents_ = 0;
     /// Records an entry's current size and drops what no longer fits (least recently used first).
     void noteCache(const std::string& key, uint64_t bytes, bool kept = false);

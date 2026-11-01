@@ -20,6 +20,16 @@ FkDialog {
             horizontalAlignment: Text.AlignHCenter
             text: qsTr("Commit %1").arg(App.buildCommit) + "\n" + qsTr("Build %1").arg(App.buildId)
         }
+        // FK-011: what the canvas converts to (the window's monitor), for checking colour reports
+        Text {
+            objectName: "aboutDisplayProfile"
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+            font.pixelSize: Theme.fontCaption
+            color: Theme.textTertiary
+            text: qsTr("Display profile: %1").arg(App.displayProfileName)
+        }
         Text {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
