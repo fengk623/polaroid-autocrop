@@ -996,3 +996,52 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   recovery list compared the two [my error, Windows only]. Fix: the path is `QDir(folder).filePath(...)`; the check
   compares cleaned paths. The failing check is the regression test (red on Windows CI, green after; Linux green
   before and after).
+
+## 2026-11-13
+
+### 00:35–01:40 — U020 (UX-05): inside a library
+- Owner (22:22): package Windows and macOS downloads after all development and testing → U020, U021 part 2, then
+  test packages from the last PR's CI.
+- Core `fk/library_view.hpp` with its tests first (`LibraryView.*`, 5, green at once): fourteen sort keys, stable,
+  missing values last both ways; filters; manual order renumbering. `LibraryMeta::capturedAt` (EXIF only).
+- App: library grid model, view state (sort kept per list in `library.json`, written at once), info panel, rail
+  folders and import / export, keys, single view with the print at proxy resolution, lazy previews with thumbnails
+  cached in `cache/thumbs` (named by content and boundary), edit time and count on every undoable edit.
+- Self-test (10 "U020 …" checks; twelve quarter-size 8-bit copies of the fixture in two folders), first run 27/2:
+  - "opens without decoding every scan" — 12 of 12 decoded without the cache. A trace of the cells' requests showed
+    one request per scan in turn: prints imported in the same second sorted by their place on the scan (every P01,
+    then every P02), so the first 25 cells touched all 12 scans [my sort's tie-break; the virtualisation was right]
+    → "added" ties use the catalog order; core test extended; now 9 of 12 decoded cold, 1 with the cache.
+  - single view → went to a wrong print: the cell index was a QML binding computed under the previous sort
+    [real defect] → indexes are read again after every rebuild of the list (`libraryViewChanged` from the
+    rebuild); 29/29.
+  - The U019 card check now expects the library's grid (entering no longer switches to Edit Photos) and clicks
+    "All Libraries" first.
+- The snapshot showed the star buttons empty (a tool button has no text) → stars drawn as text; placeholder colour
+  of the search field.
+- Full self-test (fixture, English) 277 passed, 0 failed, 0 skipped. The library workspace joined the FK-009 text
+  checks (grid, single, scans list, limited to a scan and a folder; dark and light; 1100×700): planned for 1100 px,
+  the filter row would have been 30 px too wide with the "shown" count and the scan / folder chips → chips on a row
+  of their own, the search field fills what is left, the count only on wide views; English and Chinese 9 passed,
+  0 problems. Core suite 250 passed.
+
+### 01:40–02:20 — U021 part 2 (UX-06): the two workspaces divide the work
+- PR #34 (U020) opened; #32 and #33 green on all platforms after U018's Windows fix.
+- Shared selection and "back to the same print" were done in U020. Here: Edit Photos' rail loses "Open…" (now
+  "Libraries…" back to the Library workspace); the Library rail's Manage section gains "Open Project…" and
+  "New Project"; a project opened or created from the Library workspace opens in Edit Photos; the freeze list's
+  A02/A03 entry points updated; every command remains in the File menu.
+- Self-test: three "U021 …" checks. First run 31/1: the state-kept check used "detect again" as its running job,
+  and detecting again replaces the edited print by design (new prints, new selection) [my check's design] → an
+  export is the running job; 32/32.
+- With this all 26 items are built and verified automatically; the next step is the owner's real-machine test
+  with the packages of PR #35's release workflow.
+
+### 02:20–02:50 — PR #34 (U020) CI round 1: one Windows packaged-test failure
+- PR #34 CI round 1: the Windows release job's packaged self-test failed one check (only the count was in the log:
+  the packaged GUI program's lines go to the debugger) → the job log reproduced locally with the release workflow's
+  own scan (`fkfixture --seed 5`): its quarter-size copies have two prints each, 24 prints fit on a 1440×900
+  screen, so "only on-screen cells exist" could not hold [my check's precondition, not a defect]. The check now
+  shrinks the window to 1100×700 for the measurement and allows one decode per scan on screen plus the selected
+  one: seed 5 — 6 decoded of 12, 12 cells of 24; seed 3 — 4 of 12, 12 of 36. The Windows smoke step now sets
+  `QT_FORCE_STDERR_LOGGING=1`, so a failing check is named in the log.

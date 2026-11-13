@@ -23,6 +23,10 @@ ApplicationWindow {
     readonly property string workspace: App.settings.workspace === "library" ? "library" : "edit"
     // single-key editing shortcuts only act where their canvas is shown
     readonly property bool editKeys: !typing && workspace === "edit"
+    // U020: inside a library the Library workspace shows its prints; "All Libraries" goes back to the home page
+    property bool homeShown: false
+    readonly property bool showHome: !App.isLibrary || homeShown
+    readonly property bool libraryKeys: !typing && workspace === "library" && !showHome
 
     Binding {
         target: Theme
@@ -46,7 +50,7 @@ ApplicationWindow {
         function importProjectAsLibrary() { libraryImportDialog.open() }
         // U019: double-click on the home page; the open library is entered without asking
         function enterLibrary(folder) {
-            if (App.isLibrary && App.libraryFolder === folder) App.setSetting("workspace", "edit")
+            if (App.isLibrary && App.libraryFolder === folder) win.homeShown = false
             else win.replaceProject("enterLibrary", folder)
         }
         function renameLibrary(folder, name) {
@@ -60,6 +64,7 @@ ApplicationWindow {
         function save() { if (App.projectPath.length === 0) projectSaveDialog.open(); else App.saveProject() }
         function saveAs() { projectSaveDialog.open() }
         function newProject() { win.replaceProject("new", "") }
+        function newProjectToEdit() { win.replaceProject("newEdit", "") }
         function relocate() { folderDialog.purpose = "relocate"; folderDialog.open() }
         function chooseExportFolder() { folderDialog.purpose = "export"; folderDialog.open() }
         function exportImageAreas(ids) { exportDialog.openFor(ids === undefined ? App.selectedItemIds : ids, false) }
@@ -137,8 +142,23 @@ ApplicationWindow {
     Shortcut { sequence: "Shift+Right"; enabled: win.editKeys && !canvasArea.canvas.handleActive; onActivated: App.stepScan(1) }
     Shortcut { sequence: "Escape"; enabled: win.editKeys; onActivated: canvasArea.canvas.tool = "select" }
     // UX-05/06 (U019): G = Library, D = Edit Photos (as in Lightroom)
-    Shortcut { sequence: "G"; enabled: !win.typing; onActivated: App.setSetting("workspace", "library") }
+    Shortcut { sequence: "G"; enabled: !win.typing; onActivated: { App.setSetting("workspace", "library"); if (App.isLibrary) App.setLibraryView("mode", "grid") } }
     Shortcut { sequence: "D"; enabled: !win.typing; onActivated: App.setSetting("workspace", "edit") }
+    // U020: in the library — E one at a time, 0–5 stars, 6–9 colour labels, P / X / U pick, reject, unflag
+    Shortcut { sequence: "E"; enabled: !win.typing && App.isLibrary; onActivated: { App.setSetting("workspace", "library"); win.homeShown = false; App.setLibraryView("mode", "single") } }
+    Shortcut { sequence: "0"; enabled: win.libraryKeys; onActivated: App.libraryApply({ rating: 0 }) }
+    Shortcut { sequence: "1"; enabled: win.libraryKeys; onActivated: App.libraryApply({ rating: 1 }) }
+    Shortcut { sequence: "2"; enabled: win.libraryKeys; onActivated: App.libraryApply({ rating: 2 }) }
+    Shortcut { sequence: "3"; enabled: win.libraryKeys; onActivated: App.libraryApply({ rating: 3 }) }
+    Shortcut { sequence: "4"; enabled: win.libraryKeys; onActivated: App.libraryApply({ rating: 4 }) }
+    Shortcut { sequence: "5"; enabled: win.libraryKeys; onActivated: App.libraryApply({ rating: 5 }) }
+    Shortcut { sequence: "6"; enabled: win.libraryKeys; onActivated: App.libraryApply({ colorLabel: "red" }) }
+    Shortcut { sequence: "7"; enabled: win.libraryKeys; onActivated: App.libraryApply({ colorLabel: "yellow" }) }
+    Shortcut { sequence: "8"; enabled: win.libraryKeys; onActivated: App.libraryApply({ colorLabel: "green" }) }
+    Shortcut { sequence: "9"; enabled: win.libraryKeys; onActivated: App.libraryApply({ colorLabel: "blue" }) }
+    Shortcut { sequence: "P"; enabled: win.libraryKeys; onActivated: App.libraryApply({ pick: "picked" }) }
+    Shortcut { sequence: "X"; enabled: win.libraryKeys; onActivated: App.libraryApply({ pick: "rejected" }) }
+    Shortcut { sequence: "U"; enabled: win.libraryKeys; onActivated: App.libraryApply({ pick: "none" }) }
     // UX-03: a lone tap of Shift switches the edited boundary (Outer ↔ Inner). Holding Shift only constrains a
     // drag; Shift+click, Shift+arrows, Shift+wheel and Shift shortcuts never switch (ShiftTap). Not while typing,
     // not with a dialog or menu open, never mid-drag (the canvas refuses).
@@ -207,15 +227,27 @@ ApplicationWindow {
         LibraryRail {
             objectName: "libraryRail"
             cmd: cmd
+            home: win.showHome
+            onHomeRequested: (h) => win.homeShown = h
             Layout.preferredWidth: App.settings.leftRailWidth
             Layout.fillHeight: true
         }
         Rectangle { Layout.fillHeight: true; implicitWidth: 1; color: Theme.lineRegion }
-        HomePage {
-            id: homePage
-            cmd: cmd
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            HomePage {
+                id: homePage
+                cmd: cmd
+                anchors.fill: parent
+                visible: win.showHome
+            }
+            LibraryView {
+                id: libraryView
+                cmd: cmd
+                anchors.fill: parent
+                visible: !win.showHome && win.workspace === "library"
+            }
             Toasts {
                 id: libraryToasts
                 objectName: "libraryToasts"
@@ -224,6 +256,12 @@ ApplicationWindow {
                 anchors.bottomMargin: 16
                 width: Math.min(parent.width - 40, 600)
             }
+        }
+        Rectangle { visible: !win.showHome; Layout.fillHeight: true; implicitWidth: 1; color: Theme.lineRegion }
+        LibraryInfo {
+            visible: !win.showHome
+            Layout.preferredWidth: App.settings.rightRailWidth
+            Layout.fillHeight: true
         }
     }
     ColumnLayout {
@@ -470,13 +508,20 @@ ApplicationWindow {
     }
     function doReplace(action, url) {
         if (action === "new") App.newProject()
-        else if (action === "openUrl") App.openProject(url)
+        // U021: a new or opened project file is edited in Edit Photos (the Library workspace shows libraries)
+        else if (action === "newEdit") { App.newProject(); App.setSetting("workspace", "edit") }
+        else if (action === "openUrl") {
+            if (App.openProject(url)) {
+                if (App.isLibrary) win.homeShown = false
+                else App.setSetting("workspace", "edit")
+            }
+        }
         else if (action === "restore") App.restoreBackup(url)
-        else if (action === "openLibrary") App.openLibrary(url)
-        // U019: entering a library from the home page opens it in Edit Photos (its own grid comes with U020)
-        else if (action === "enterLibrary") { if (App.openLibrary(url)) App.setSetting("workspace", "edit") }
-        else if (action === "newLibrary") App.newLibrary(url.parent, url.name)
-        else if (action === "importLibrary") App.importProjectAsLibrary(url.project, url.parent, url.name)
+        else if (action === "openLibrary") { if (App.openLibrary(url)) win.homeShown = false }
+        // U020: entering a library from the home page shows its prints in the Library workspace
+        else if (action === "enterLibrary") { if (App.openLibrary(url)) win.homeShown = false }
+        else if (action === "newLibrary") { if (App.newLibrary(url.parent, url.name)) win.homeShown = false }
+        else if (action === "importLibrary") { if (App.importProjectAsLibrary(url.project, url.parent, url.name)) win.homeShown = false }
         else if (action === "recover") App.recoverSnapshot(url)
         else if (action === "quit") { quitConfirmed = true; win.close() }
     }

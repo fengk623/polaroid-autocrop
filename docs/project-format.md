@@ -82,7 +82,9 @@ clockwise 0–3 (other integers are taken modulo 4, anything else = 0). Display 
 file's coordinates and the scan file is never rewritten; exports use it only when uprights are off
 (`exportTurns`). Absent in older projects = 0. Earlier versions ignore it (and drop it on save): the scan shows
 unturned, nothing else changes.
-`library` on scans and prints (since 0.8.0-alpha.1, UX-05, RFC-0018 §2): `rating` (0–5), `pick` (`none` /
+`library` on scans and prints (since 0.8.0-alpha.1, UX-05, RFC-0018 §2; `capturedAt` since 0.8.0-alpha.3: a
+scan's EXIF capture time, ISO-8601 without zone, "" = unknown — never the scan date; `editedAt`/`editCount` are
+recorded by every undoable edit of a print in a library): `rating` (0–5), `pick` (`none` /
 `picked` / `rejected`), `colorLabel` (`none` / `red` / `yellow` / `green` / `blue` / `purple`), `textLabels`
 (strings), `manualOrder` (0 = not placed), `addedAt` (when it entered a library — never a capture date),
 `editedAt`, `editCount`. Written only when something is set, as the whole object; absent = nothing set. Values
@@ -133,7 +135,9 @@ Summer 2026.fklibrary/
   backups/catalog-YYYYMMDD-HHMMSS.fkproj   history: a copy of the catalog as saved, at most one per hour, ten kept
   library.lock            fk.lock/1 {pid, host, user, app, token, startedAt, heartbeatAt} while an app writes it
   cache/                  rebuildable data only; deleting it costs time, nothing else (cover.jpg: the home
-                          page card's picture, written when the library is saved)
+                          page card's picture, written when the library is saved; thumbs/<id>-<key>.jpg:
+                          the grid's thumbnails since 0.8.0-alpha.3, the key a hash of the scan's content and
+                          the print's Outer and upright, so a changed boundary never shows an old picture)
 ```
 - Scans and graded files are referenced (absolute path, `relPath` from the library folder, fingerprint), never
   copied, moved or deleted. A library moved together with its scans still finds them.
@@ -149,7 +153,9 @@ Summer 2026.fklibrary/
   read; the catalog keeps the project id, the library gets its own id; a failed import leaves nothing behind.
 - Recovery snapshots of a library are keyed by its library id and reopen the same library.
 - Home page (U019): the app lists the libraries it opened (setting `recentLibraries`) and reads only
-  `library.json` for each card. Opening a library for writing sets `openedAt` (only `library.json` is written);
+  `library.json` for each card.
+- Library workspace (U020): `sort` in `library.json` holds the sort of each list, `{"prints": {"key",
+  "descending"}, "scans": {…}}` (keys: `fk::librarySortKeyName`), written when it changes (only `library.json`). Opening a library for writing sets `openedAt` (only `library.json` is written);
   renaming changes `name`, never the folder, and is refused while another instance holds the lock.
 
 ## 3. Template `*.fktemplate.json` — schema `fk.template/1`

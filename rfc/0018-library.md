@@ -34,6 +34,11 @@ never copies, moves or deletes them (UX-05: "folder browsing is not copying or d
   left-hand folder list; a source is a reference, removing it never touches the disk), `sort` (last sort key and
   direction per view), `createdAt`, `openedAt`, `modifiedAt`, `app` (version that last wrote it).
 - Unknown values are shown as "unknown"; the scan date is never presented as the photo's capture date (UX-05).
+  Built in U020: `capturedAt` on a scan comes only from the file's EXIF DateTimeOriginal (read from the header when
+  the scan is first shown); the TIFF DateTime is shown apart as "Scanned". `editedAt`/`editCount` are recorded by
+  every undoable edit of a print in a library. Sorting and filtering are core functions (`fk/library_view.hpp`):
+  stable, entries without a value last in both directions; "added" ties (a folder imported in one second) keep
+  the order of adding.
 
 ## 3. Schema and versions
 - `library.json`: `schema: "fk.library/1"`; `catalog.fkproj`: `schema: "fk.project/1"` (unchanged).
@@ -101,6 +106,13 @@ never copies, moves or deletes them (UX-05: "folder browsing is not copying or d
 - `cache/` holds only data that can be rebuilt from the scans (proxies, thumbnails; ADR-0006 keys and cap). Deleting
   it — or a damaged cache — only costs time. No association, rating or edit is ever stored only in the cache.
 - Grid virtualisation (U020): only visible cells request thumbnails; no full scan is decoded for the grid.
+
+Built in U020 (0.8.0-alpha.3): a library opens without decoding its scans — the grid's thumbnails come from
+`cache/thumbs/<id>-<key>.jpg` (key: hash of the scan's quick fingerprint and, for a print, its Outer and upright;
+written by the instance that holds the lock whenever thumbnails are made), only the selected scan is decoded at
+once, and a grid cell that is on screen asks for its scan when neither memory nor the cache has the picture
+(measured in the self-test: twelve scans, 36 prints, 25 cells on screen: 1 scan decoded with the cache, 9
+without). A 100-scan memory measurement belongs to HV-05.
 
 ## 9. Save semantics (Q2: manual saving kept)
 Today saving is manual (RFC-0017 §1). Libraries are long-lived collections; the plan requires a separate review

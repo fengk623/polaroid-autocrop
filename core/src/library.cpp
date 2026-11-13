@@ -575,6 +575,17 @@ Status touchLibraryOpened(const fs::path& folder, const std::string& nowUtc) {
     return writeFileAtomic(libraryManifestPath(folder), manifestToJson(*m), false);
 }
 
+Status writeLibrarySort(const fs::path& folder, const std::string& sortJson) {
+    auto text = readTextFile(libraryManifestPath(folder));
+    if (!text) return text.error();
+    OpenMode mode = OpenMode::read_write;
+    auto m = manifestFromJson(*text, &mode);
+    if (!m) return m.error();
+    if (mode == OpenMode::read_only) return {}; // a later version's file is never rewritten
+    m->sortJson = sortJson;
+    return writeFileAtomic(libraryManifestPath(folder), manifestToJson(*m), false);
+}
+
 Status renameLibrary(const fs::path& folder, const std::string& name, const LockOwner& me) {
     const LibraryLock l = readLibraryLock(folder, me);
     if (l.present && !l.ours && !l.stale)

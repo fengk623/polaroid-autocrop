@@ -4,9 +4,9 @@ Read this first after any interruption. Newest entry on top.
 
 ## Current state
 - v1.0 work runs unit by unit (docs/v1/PLAN.md, docs/v1/UNITS.md); the per-step log is docs/v1/WORKLOG.md.
-- 2026-11-12: U001–U017 and U021 part 1–U029 merged (PR #30 brings the stacked part to `main`); RFC-0018 accepted;
-  current unit U018 (library storage, v0.8.0-alpha.1), then U019, U020, U021 part 2; the owner tests packages
-  after the last unit.
+- 2026-11-13: all 26 items built and verified automatically (0.8.0-alpha.4). Open PRs, in merge order: #30 (lands
+  U026–U029 on `main`), #31 (owner decisions: GPL-3.0-only, DNG guidance), #32 U018, #33 U019, #34 U020, #35 U021
+  part 2. The owner tests the packages of #35's release workflow on real machines; then merge and release.
 - Baseline: v0.5.0 = merge of PR #2 (`ce93e05`).
 - Last full test run: 2026-10-30, Linux local (core 135 + 3 known-issue WILL_FAIL, app self-test with 7 known issues
   reproduced); CI three platforms green on PR #2.

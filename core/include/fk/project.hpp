@@ -121,9 +121,13 @@ struct LibraryMeta {
     std::string addedAt;     ///< when it entered the library (ISO-8601 UTC); never the capture date
     std::string editedAt;    ///< last edit of the print (boundaries, relink, output)
     int editCount = 0;
+    /// A scan's capture time when its file says so (EXIF DateTimeOriginal, ISO-8601); "" = unknown. Never the
+    /// scan date (U020).
+    std::string capturedAt;
     bool empty() const {
         return rating == 0 && pick == "none" && colorLabel == "none" && textLabels.empty() &&
-               manualOrder == 0 && addedAt.empty() && editedAt.empty() && editCount == 0;
+               manualOrder == 0 && addedAt.empty() && editedAt.empty() && editCount == 0 &&
+               capturedAt.empty();
     }
     friend bool operator==(const LibraryMeta&, const LibraryMeta&) = default;
 };
