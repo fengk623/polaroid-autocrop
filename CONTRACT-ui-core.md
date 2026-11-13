@@ -24,6 +24,9 @@ Contract version: **1** · RFC-0011 · Applies to `app/` (Qt Quick) and any futu
   New/Open (FK-001). An open library is the project the app edits (`isLibrary`, `libraryFolder`); saving writes the
   catalog, the history and `library.json`; a library opened read-only (held by another instance, a later schema,
   an unwritable folder) refuses to save and offers Save As.
+- Workspaces (U019): setting `workspace` = `library` (home page; default on a fresh start) or `edit`; editing
+  single-key shortcuts act only in `edit`. Home page: `libraryCards` (property; reads `library.json` only),
+  `refreshHome()`, `renameLibrary(folder, name)`, `forgetLibrary(folder)` (the folder stays).
 - Memory (FK-005, RFC-0014 §Memory budget): every cached image the UI holds (scan proxy, decoded strips of the
   view, composite preview, thumbnails, canvas images) is counted in one byte budget; what is not on screen may
   be dropped at any time and is rebuilt from the files when shown again. Jobs pass their estimated working

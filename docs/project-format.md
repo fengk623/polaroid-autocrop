@@ -125,13 +125,15 @@ A normal folder (not a macOS package):
 ```
 Summer 2026.fklibrary/
   library.json            fk.library/1: libraryId, name, cover, sources[{path, relPath}], sort{}, createdAt,
-                          openedAt, modifiedAt, app{name, version}; unknown keys kept
+                          openedAt, modifiedAt, counts{scans, prints} (since 0.8.0-alpha.2, written at each
+                          save, for the home page), app{name, version}; unknown keys kept
   library.json.bak        the previous library.json
   catalog.fkproj          fk.project/1 — the library's content, read and written like any project
   catalog.fkproj.bak      the previous good catalog (a damaged one never replaces it)
   backups/catalog-YYYYMMDD-HHMMSS.fkproj   history: a copy of the catalog as saved, at most one per hour, ten kept
   library.lock            fk.lock/1 {pid, host, user, app, token, startedAt, heartbeatAt} while an app writes it
-  cache/                  rebuildable data only; deleting it costs time, nothing else
+  cache/                  rebuildable data only; deleting it costs time, nothing else (cover.jpg: the home
+                          page card's picture, written when the library is saved)
 ```
 - Scans and graded files are referenced (absolute path, `relPath` from the library folder, fingerprint), never
   copied, moved or deleted. A library moved together with its scans still finds them.
@@ -146,6 +148,9 @@ Summer 2026.fklibrary/
 - Old projects are imported as a copy ("Import Project into New Library"): the `.fkproj` and its `.bak` are only
   read; the catalog keeps the project id, the library gets its own id; a failed import leaves nothing behind.
 - Recovery snapshots of a library are keyed by its library id and reopen the same library.
+- Home page (U019): the app lists the libraries it opened (setting `recentLibraries`) and reads only
+  `library.json` for each card. Opening a library for writing sets `openedAt` (only `library.json` is written);
+  renaming changes `name`, never the folder, and is refused while another instance holds the lock.
 
 ## 3. Template `*.fktemplate.json` — schema `fk.template/1`
 ```json

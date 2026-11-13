@@ -31,6 +31,10 @@ and labels) · Tests: `test_library` (`Library.*`), self-test "U018 …"; U019/U
   `Library.ALockThatChangedSinceTheUserWasAskedIsNotTakenOver`; self-test "U018 a library open in another
   FrameKeeper …", "U018 an abandoned lock is taken over only after asking")
 - A6 Deleting the cache only costs time: reopening rebuilds it and loses nothing. (`Library.DeletingTheCacheOnlyCostsTime`)
+- A8 Home page (U019): a fresh start opens the Library workspace; cards show cover, name, scan and print counts,
+  last opened and modified; New / Open / Import project; double-click enters; Rename keeps the folder; Remove from
+  List keeps the folder; a missing folder is shown as missing; G / D switch workspaces. (`Library.TheHomePageReads…`,
+  `Library.RenamingKeepsTheFolderAndWaitsForAnotherInstance`; self-test "U019 …")
 - A7 Saving keeps a `.bak` and an hourly history of ten; a damaged catalog is restored from the most recent
   readable copy after asking, the damaged file kept. (`Library.BackupsRotateHourlyAndKeepTen`,
   `Library.ADamagedCatalogIsRestoredFromBakThenTheNewestBackupAndKeptAside`,

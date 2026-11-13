@@ -114,6 +114,14 @@ no reload, no cancelled jobs). Automatic commits would be a later revision of RF
   scan and print counts, opened/modified times, and offers New, Open, Rename, Recent. Removing a library from the
   list never deletes it; deleting a library folder is not offered in v1.0.
 - Default location for new libraries: the user's Documents folder (system API, D3), changeable when creating one.
+- Built in U019 (0.8.0-alpha.2): the Library workspace (switch at the top of the left rail, where "Project" was;
+  G / D from the keyboard; a fresh start opens it) with the home page: one card per known library — cover
+  (`cache/cover.jpg`, from the cover print's thumbnail at each save), name, scan and print counts (`counts` in
+  `library.json`, written at each save, so a card never reads the catalog), last opened (`openedAt`, written when
+  this instance takes the lock) and modified; New, Open, Import project; double-click enters; Rename (the name in
+  `library.json`; the folder keeps its name, so the recent list, other computers and relative paths stay valid;
+  refused while another instance holds the lock), Show in Finder / Explorer, Remove from List (the folder stays).
+  A library whose folder is gone stays listed as missing until removed.
 
 ## 11. Tests (U018)
 Core (`test_library`, `Library.*`): times; folder names; create; newer schemas read-only; ratings/labels/order and

@@ -3545,6 +3545,167 @@ void SelfTest::runLibrary() {
     app_->newProject();
 }
 
+void SelfTest::runHome() {
+    const QString d = QDir(dir_).filePath(QStringLiteral("home"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    auto settle = [] { waitFor([] { return false; }, 250); };
+    auto visible = [&](const QString& name) {
+        QQuickItem* i = findItem(name);
+        return i && i->isVisible();
+    };
+    auto cards = [&] { return app_->libraryCards(); };
+    auto card = [&](const QString& name) {
+        for (const QVariant& v : cards())
+            if (v.toMap().value("name").toString() == name) return v.toMap();
+        return QVariantMap();
+    };
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    app_->newProject();
+    app_->setSetting(QStringLiteral("recentLibraries"), QStringList{});
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("library"));
+    settle();
+    check(QStringLiteral("U019 a fresh start opens the Library workspace: the home page, no canvas"),
+          defaultWorkspace_ == QLatin1String("library") && visible(QStringLiteral("homePage")) &&
+              !visible(QStringLiteral("editWorkspace")) && cards().isEmpty(),
+          QStringLiteral("fresh start %1, home %2, edit %3, cards %4")
+              .arg(defaultWorkspace_)
+              .arg(visible(QStringLiteral("homePage")))
+              .arg(visible(QStringLiteral("editWorkspace")))
+              .arg(cards().size()));
+    snapshot(QStringLiteral("U019-home-empty"));
+
+    // New Library from the home page, with the mouse
+    QObject* dialog = window_->findChild<QObject*>(QStringLiteral("libraryDialog"));
+    const bool clicked = click(findItem(QStringLiteral("homeNew")));
+    settle();
+    const bool dialogShown = dialog && dialog->property("visible").toBool();
+    if (dialog) {
+        dialog->setProperty("parentFolder", d);
+        dialog->setProperty("name", QStringLiteral("Trip 2026"));
+    }
+    settle();
+    click(findItem(QStringLiteral("libraryCreate")));
+    app_->waitIdle(300000);
+    settle();
+    const QString trip = QDir(d).filePath(QStringLiteral("Trip 2026.fklibrary"));
+    QVariantMap c = card(QStringLiteral("Trip 2026"));
+    check(QStringLiteral(
+              "U019 New Library on the home page (mouse) creates the library; its card shows it open"),
+          clicked && dialogShown && app_->isLibrary() && app_->libraryFolder() == trip &&
+              c.value("current").toBool() && c.value("folder").toString() == trip,
+          QStringLiteral("clicked %1, dialog %2, library %3, card %4")
+              .arg(clicked)
+              .arg(dialogShown)
+              .arg(app_->libraryFolder(), c.value("name").toString()));
+
+    // scans, a save: the card shows the cover, the counts and the times
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("edit"));
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    settle();
+    const int prints = app_->counts().value("prints").toInt();
+    app_->saveProject();
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("library"));
+    settle();
+    c = card(QStringLiteral("Trip 2026"));
+    const QString cover = QDir(trip).filePath(QStringLiteral("cache/cover.jpg"));
+    auto onDisk = fk::readLibraryManifest(fk::pathFromUtf8(toStd(trip)));
+    check(QStringLiteral("U019 a saved library's card shows its cover, scan and print counts, opened and "
+                         "modified times"),
+          QFileInfo::exists(cover) && c.value("cover").toString().contains(QLatin1String("cover.jpg")) &&
+              c.value("scans").toInt() == 1 && c.value("prints").toInt() == prints && prints > 0 &&
+              !c.value("opened").toString().isEmpty() && !c.value("modified").toString().isEmpty() &&
+              onDisk.ok() && onDisk->scanCount == 1 && onDisk->printCount == prints,
+          QStringLiteral("cover %1, scans %2, prints %3/%4, opened %5, modified %6")
+              .arg(QFileInfo::exists(cover))
+              .arg(c.value("scans").toInt())
+              .arg(c.value("prints").toInt())
+              .arg(prints)
+              .arg(c.value("opened").toString(), c.value("modified").toString()));
+    snapshot(QStringLiteral("U019-home"));
+
+    // a second library; then double-click the first one's card
+    app_->newLibrary(d, QStringLiteral("Second"));
+    app_->waitIdle(300000);
+    settle();
+    QQuickItem* tripCard = findItemIf([](QQuickItem* i) {
+        return i->objectName() == QLatin1String("libraryCard") &&
+               i->property("modelData").toMap().value("name").toString() == QLatin1String("Trip 2026");
+    });
+    if (tripCard) doubleClick(tripCard);
+    app_->waitIdle(300000);
+    settle();
+    check(QStringLiteral("U019 double-clicking a library's card opens it in Edit Photos"),
+          tripCard && app_->isLibrary() && app_->libraryFolder() == trip &&
+              app_->settings().value("workspace").toString() == QLatin1String("edit") &&
+              app_->counts().value("scans").toInt() == 1,
+          QStringLiteral("card %1, library %2, workspace %3")
+              .arg(tripCard != nullptr)
+              .arg(app_->libraryFolder(), app_->settings().value("workspace").toString()));
+
+    // rename: the name changes, the folder does not
+    const bool renamed = app_->renameLibrary(trip, QStringLiteral("Trip 2026 — Kyoto"));
+    auto m = fk::readLibraryManifest(fk::pathFromUtf8(toStd(trip)));
+    check(QStringLiteral("U019 renaming a library changes its name everywhere, not its folder"),
+          renamed && m.ok() && m->name == "Trip 2026 — Kyoto" && QFileInfo(trip).isDir() &&
+              app_->projectName() == QStringLiteral("Trip 2026 — Kyoto") &&
+              !card(QStringLiteral("Trip 2026 — Kyoto")).isEmpty(),
+          QStringLiteral("renamed %1, title %2").arg(renamed).arg(app_->projectName()));
+
+    // Remove from List keeps the folder; a library whose folder is gone shows as missing
+    const QString second = QDir(d).filePath(QStringLiteral("Second.fklibrary"));
+    app_->forgetLibrary(second);
+    const bool forgotten = card(QStringLiteral("Second")).isEmpty() && QFileInfo(second).isDir();
+    app_->newLibrary(d, QStringLiteral("Gone"));
+    app_->waitIdle(300000);
+    app_->openLibrary(trip);
+    app_->waitIdle(300000);
+    QDir().rename(QDir(d).filePath(QStringLiteral("Gone.fklibrary")),
+                  QDir(d).filePath(QStringLiteral("moved")));
+    settle();
+    const QVariantMap gone = card(QStringLiteral("Gone"));
+    check(QStringLiteral("U019 Remove from List keeps the folder; a library whose folder is gone shows as "
+                         "missing"),
+          forgotten && !gone.isEmpty() && !gone.value("exists").toBool(),
+          QStringLiteral("forgotten %1, gone card %2, exists %3")
+              .arg(forgotten)
+              .arg(!gone.isEmpty())
+              .arg(gone.value("exists").toBool()));
+
+    // G and D switch the workspaces; editing keys do nothing in the Library workspace
+    QQuickItem* canvas = qobject_cast<QQuickItem*>(findCanvas());
+    if (canvas) canvas->forceActiveFocus();
+    settle();
+    key(Qt::Key_G, Qt::NoModifier, true, QStringLiteral("g"));
+    key(Qt::Key_G, Qt::NoModifier, false, QStringLiteral("g"));
+    settle();
+    const bool toLibrary = app_->settings().value("workspace").toString() == QLatin1String("library") &&
+                           visible(QStringLiteral("homePage"));
+    const QString modeBefore = canvas ? canvas->property("mode").toString() : QString();
+    key(Qt::Key_3, Qt::NoModifier, true, QStringLiteral("3"));
+    key(Qt::Key_3, Qt::NoModifier, false, QStringLiteral("3"));
+    settle();
+    const bool keysIdle = canvas && canvas->property("mode").toString() == modeBefore;
+    key(Qt::Key_D, Qt::NoModifier, true, QStringLiteral("d"));
+    key(Qt::Key_D, Qt::NoModifier, false, QStringLiteral("d"));
+    settle();
+    const bool toEdit = app_->settings().value("workspace").toString() == QLatin1String("edit") &&
+                        visible(QStringLiteral("editWorkspace"));
+    check(
+        QStringLiteral("U019 G and D switch between Library and Edit Photos; editing keys do nothing in the "
+                       "Library workspace"),
+        toLibrary && keysIdle && toEdit,
+        QStringLiteral("G %1, keys idle %2 (mode %3), D %4")
+            .arg(toLibrary)
+            .arg(keysIdle)
+            .arg(modeBefore)
+            .arg(toEdit));
+
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("edit"));
+    app_->newProject();
+}
+
 void SelfTest::runFormats() {
     QMetaObject::invokeMethod(window_, "closeDialogs");
     waitFor([] { return false; }, 600);
@@ -5040,6 +5201,13 @@ int SelfTest::runTextLayout() {
             QMetaObject::invokeMethod(window_, "closeDialogs");
         }
         QObject* commands = window_->property("commands").value<QObject*>();
+        { // U019: the home page
+            app_->setSetting(QStringLiteral("workspace"), QStringLiteral("library"));
+            settle();
+            inspect(QStringLiteral("%1 1100×700 home page").arg(theme));
+            app_->setSetting(QStringLiteral("workspace"), QStringLiteral("edit"));
+            settle();
+        }
         if (commands) { // UX-05: New Library dialog
             QMetaObject::invokeMethod(commands, "newLibrary");
             settle();
@@ -5137,6 +5305,8 @@ void SelfTest::observe(const QString& name, const QJsonObject& data) {
 
 int SelfTest::runScenario(const QString& name) {
     QDir().mkpath(dir_);
+    defaultWorkspace_ = app_->settings().value("workspace").toString();
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("edit"));
     window_->resize(1440, 900);
     app_->setSetting(QStringLiteral("exportFolder"), QDir(dir_).filePath(QStringLiteral("export")));
     int rc = 2;
@@ -5156,8 +5326,9 @@ int SelfTest::runScenario(const QString& name) {
     else if (name == QLatin1String("freeze")) { // U029: the FEATURE-FREEZE regression section alone
         runFreezeRegression();
         rc = allOk_ ? 0 : 1;
-    } else if (name == QLatin1String("library")) { // U018: the library section alone
+    } else if (name == QLatin1String("library")) { // U018–U019: the library sections alone
         runLibrary();
+        runHome();
         rc = allOk_ ? 0 : 1;
     }
     QJsonObject report{
@@ -5426,6 +5597,9 @@ int SelfTest::scenarioUpright() {
 
 int SelfTest::run() {
     QDir().mkpath(dir_);
+    // U019: a fresh start opens the Library workspace; the checks below work in Edit Photos
+    defaultWorkspace_ = app_->settings().value("workspace").toString();
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("edit"));
     const QString exportDir = QDir(dir_).filePath(QStringLiteral("export"));
     QDir(exportDir).removeRecursively();
     app_->setSetting(QStringLiteral("exportFolder"), exportDir);
@@ -5604,6 +5778,7 @@ int SelfTest::run() {
     runDisplayProfile();
     runFormats();
     runLibrary();
+    runHome();
     runFreezeRegression();
     runLayout();
     runToolbar();

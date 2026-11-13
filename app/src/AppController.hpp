@@ -34,6 +34,7 @@ class AppController : public QObject {
     Q_PROPERTY(bool readOnly READ readOnly NOTIFY projectChanged)
     Q_PROPERTY(bool isLibrary READ isLibrary NOTIFY projectChanged)
     Q_PROPERTY(QString libraryFolder READ libraryFolder NOTIFY projectChanged)
+    Q_PROPERTY(QVariantList libraryCards READ libraryCards NOTIFY librariesChanged)
     Q_PROPERTY(QObject* scans READ scansObj CONSTANT)
     Q_PROPERTY(QObject* items READ itemsObj CONSTANT)
     Q_PROPERTY(QObject* jobs READ jobsObj CONSTANT)
@@ -121,6 +122,17 @@ class AppController : public QObject {
     Q_INVOKABLE QVariantMap libraryMeta(const QString& id) const;
     /// The library's lock as this instance sees it: {present, ours, host, user, heartbeatAt}.
     Q_INVOKABLE QVariantMap libraryLockInfo() const;
+    /// U019 (home page): the libraries this app knows (opened before, newest first): {folder, name, exists,
+    /// readable, cover (image URL or ""), scans, prints (−1 unknown), opened, modified (local text), current,
+    /// inUse (another instance writes it), readOnly}.
+    QVariantList libraryCards() const;
+    /// Writes the open library's cover thumbnail into its cache (when this instance writes the library) and
+    /// refreshes libraryCards.
+    Q_INVOKABLE void refreshHome();
+    /// Renames a library (its name; the folder is kept). Refused while another instance writes it.
+    Q_INVOKABLE bool renameLibrary(const QVariant& folderUrl, const QString& name);
+    /// Removes a library from the home page list; the folder and everything in it stay on disk.
+    Q_INVOKABLE void forgetLibrary(const QVariant& folderUrl);
     /// A folder holding a library (or a file inside one).
     Q_INVOKABLE bool isLibraryPath(const QVariant& url) const;
     /// The local path of a file: URL (dialogs give URLs).
@@ -308,6 +320,8 @@ class AppController : public QObject {
     /// UX-05: the library was opened read-only because its lock looks abandoned; QML asks whether to take it
     /// over (takeOverLibrary). Never taken silently.
     void libraryLockStale(const QString& host, const QString& user, const QString& lastSeen);
+    /// The known libraries or what their cards show changed (U019).
+    void librariesChanged();
 
   private:
     struct ScanRuntime {
@@ -442,6 +456,9 @@ class AppController : public QObject {
     /// Opens `folder`; `content` (a recovery snapshot) replaces the saved catalog, unsaved.
     bool openLibraryAt(const QString& folder, std::optional<fk::Project> content = std::nullopt);
     void refreshLibraryLock();
+    /// U019: `cache/cover.jpg` from the cover print's thumbnail (rebuildable; only by the instance that
+    /// writes).
+    void writeLibraryCover();
     /// Recovery snapshots are keyed by the library id for a library (an imported library keeps the
     /// project's id, so the project and the library would share a key) and by the project id otherwise.
     std::string recoveryKey() const;
