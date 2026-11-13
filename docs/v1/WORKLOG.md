@@ -1024,3 +1024,15 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   the filter row would have been 30 px too wide with the "shown" count and the scan / folder chips → chips on a row
   of their own, the search field fills what is left, the count only on wide views; English and Chinese 9 passed,
   0 problems. Core suite 250 passed.
+
+### 01:40–02:20 — U021 part 2 (UX-06): the two workspaces divide the work
+- PR #34 (U020) opened; #32 and #33 green on all platforms after U018's Windows fix.
+- Shared selection and "back to the same print" were done in U020. Here: Edit Photos' rail loses "Open…" (now
+  "Libraries…" back to the Library workspace); the Library rail's Manage section gains "Open Project…" and
+  "New Project"; a project opened or created from the Library workspace opens in Edit Photos; the freeze list's
+  A02/A03 entry points updated; every command remains in the File menu.
+- Self-test: three "U021 …" checks. First run 31/1: the state-kept check used "detect again" as its running job,
+  and detecting again replaces the edited print by design (new prints, new selection) [my check's design] → an
+  export is the running job; 32/32.
+- With this all 26 items are built and verified automatically; the next step is the owner's real-machine test
+  with the packages of PR #35's release workflow.

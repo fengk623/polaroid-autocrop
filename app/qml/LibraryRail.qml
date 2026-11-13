@@ -133,6 +133,9 @@ Rectangle {
                     FkButton { Layout.fillWidth: true; text: qsTr("New Library…"); onClicked: rail.cmd.newLibrary() }
                     FkButton { Layout.fillWidth: true; text: qsTr("Open Library…"); onClicked: rail.cmd.openLibrary() }
                     FkButton { Layout.fillWidth: true; text: qsTr("Import Project…"); onClicked: rail.cmd.importProjectAsLibrary() }
+                    // UX-06 part 2 (U021): project files (Q3: they keep opening directly) are managed here too
+                    FkButton { objectName: "libraryOpenProject"; Layout.fillWidth: true; text: qsTr("Open Project…"); onClicked: rail.cmd.openProject() }
+                    FkButton { objectName: "libraryNewProject"; Layout.fillWidth: true; text: qsTr("New Project"); onClicked: rail.cmd.newProjectToEdit() }
                 }
             }
         }

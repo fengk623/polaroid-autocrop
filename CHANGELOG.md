@@ -3,6 +3,16 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.8.0-alpha.4 — U021 part 2: the two workspaces divide the work (UX-06)
+- Edit Photos edits: its left rail keeps the name of what is open, Save and importing scans, and "Libraries…" goes
+  back; opening projects moved to the Library workspace ("Open Project…", "New Project" in its Manage section).
+  A project opened or created there opens in Edit Photos. Every command is still in the File menu.
+- Switching workspaces is a change of view: zoom, position, selection, unsaved changes and running jobs stay.
+- With U018–U020 all 26 items of the v1.0 requirements are built and verified automatically
+  (`docs/v1/COMPLETION.md`); real-machine acceptance (HV-01…HV-10) is next.
+- Tests: three "U021 …" self-test checks (the A1 flow from a new library to an edited print and back; state kept
+  across workspaces; management in the Library workspace). Notes: docs/release-notes/v0.8.0-alpha.4.md.
+
 ## 0.8.0-alpha.3 — U020: inside a library — grid and single view, sorting, filters, ratings and labels (UX-05)
 - Entering a library shows its prints; "All Libraries" goes back to the home page. A grid (only the cells on screen
   exist and ask for thumbnails) or one print at a time (E, ← / →); lists of prints and of scans with their counts;

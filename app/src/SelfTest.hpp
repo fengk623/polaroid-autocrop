@@ -105,6 +105,10 @@ class SelfTest : public QObject {
     /// information panel (unknown stays unknown), manual order and everything kept after reopening, scan →
     /// prints, folders, one at a time, edit and back to the same print, edits recorded.
     void runLibraryGrid();
+    /// UX-06 part 2 (U021): the A1 flow from a new library to an edited print and back to it; switching
+    /// workspaces keeps zoom, position, selection, unsaved changes and running jobs; opening and creating
+    /// projects live in the Library workspace and a project opens in Edit Photos.
+    void runWorkspaces();
     QString defaultWorkspace_; ///< the workspace of a fresh start, before the self-test chose Edit Photos
     /// U029 (UX-12): the full regression of docs/v1/FEATURE-FREEZE.md for the features no other section
     /// exercises — folder import, relocation, removing a scan, templates, reset and snap, review and exclude,

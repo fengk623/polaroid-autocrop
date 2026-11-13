@@ -64,6 +64,7 @@ ApplicationWindow {
         function save() { if (App.projectPath.length === 0) projectSaveDialog.open(); else App.saveProject() }
         function saveAs() { projectSaveDialog.open() }
         function newProject() { win.replaceProject("new", "") }
+        function newProjectToEdit() { win.replaceProject("newEdit", "") }
         function relocate() { folderDialog.purpose = "relocate"; folderDialog.open() }
         function chooseExportFolder() { folderDialog.purpose = "export"; folderDialog.open() }
         function exportImageAreas(ids) { exportDialog.openFor(ids === undefined ? App.selectedItemIds : ids, false) }
@@ -507,7 +508,14 @@ ApplicationWindow {
     }
     function doReplace(action, url) {
         if (action === "new") App.newProject()
-        else if (action === "openUrl") App.openProject(url)
+        // U021: a new or opened project file is edited in Edit Photos (the Library workspace shows libraries)
+        else if (action === "newEdit") { App.newProject(); App.setSetting("workspace", "edit") }
+        else if (action === "openUrl") {
+            if (App.openProject(url)) {
+                if (App.isLibrary) win.homeShown = false
+                else App.setSetting("workspace", "edit")
+            }
+        }
         else if (action === "restore") App.restoreBackup(url)
         else if (action === "openLibrary") { if (App.openLibrary(url)) win.homeShown = false }
         // U020: entering a library from the home page shows its prints in the Library workspace

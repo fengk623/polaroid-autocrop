@@ -86,8 +86,10 @@ Composite preview runs `compositeItem` on a proxy-backed `ImageSource` adaptor.
 `docs/project-format.md` (built: `fk.project/1`, atomic save, backups, recovery snapshots). Libraries
 (`<Name>.fklibrary/`, RFC-0018; built in U018): `fk/library.hpp` — manifest, catalog (an `fk.project/1`), hourly
 history, restore, lock for two app instances, migration copy of old projects; the app opens, saves, locks and
-recovers them (`AppController` library section). The home page (U019) and the library workspace (U020) are
-planned.
+recovers them (`AppController` library section). Two workspaces (`Main.qml`): Library (home page `HomePage.qml`,
+inside a library `LibraryView.qml` / `LibraryCell.qml` / `LibraryInfo.qml` over `LibraryGridModel`, sorted and
+filtered by `fk/library_view.hpp`; thumbnails cached in the library's `cache/thumbs`) and Edit Photos (the
+canvas); they share one selection (U019–U021).
 
 ## 9. Platform adaptation
 In `app/src/` (no separate `platform/` folder): `Display.cpp` (macOS: sRGB display assumption; Windows: monitor

@@ -37,7 +37,9 @@ Rectangle {
                 spacing: 0
 
                 Section {
-                    title: qsTr("Project & Files")
+                    // UX-06 part 2 (U021): what is being edited and its files; opening and managing libraries and
+                    // projects lives in the Library workspace (and the File menu)
+                    title: App.isLibrary ? qsTr("Library") : qsTr("Project & Files")
                     note: App.dirty ? qsTr("unsaved") : ""
                     Text {
                         Layout.fillWidth: true
@@ -61,8 +63,12 @@ Rectangle {
                     }
                     RowLayout {
                         spacing: 6
-                        FkButton { text: qsTr("Open…"); onClicked: cmd.openProject() }
-                        FkButton { text: qsTr("Save"); iconName: "save"; enabled: !App.readOnly; onClicked: cmd.save() }
+                        FkButton { objectName: "editSave"; text: qsTr("Save"); iconName: "save"; enabled: !App.readOnly; onClicked: cmd.save() }
+                        FkButton {
+                            objectName: "editToLibrary"
+                            text: qsTr("Libraries…")
+                            onClicked: App.setSetting("workspace", "library")
+                        }
                     }
                 }
 

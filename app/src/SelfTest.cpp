@@ -4011,6 +4011,146 @@ void SelfTest::runLibraryGrid() {
     app_->newProject();
 }
 
+void SelfTest::runWorkspaces() {
+    const QString d = QDir(dir_).filePath(QStringLiteral("workspaces"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    auto settle = [] { waitFor([] { return false; }, 300); };
+    auto visible = [&](const QString& name) {
+        QQuickItem* i = findItem(name);
+        return i && i->isVisible();
+    };
+    auto press = [&](int k, const QString& text) {
+        key(k, Qt::NoModifier, true, text);
+        key(k, Qt::NoModifier, false, text);
+        settle();
+    };
+    auto ask = [&](const QString& action, const QVariant& url) {
+        QMetaObject::invokeMethod(window_, "replaceProject", Q_ARG(QVariant, action), Q_ARG(QVariant, url));
+        QCoreApplication::processEvents();
+        app_->waitIdle(300000);
+        settle();
+    };
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    app_->newProject();
+
+    // A1 (UX-05): a new library → import → grid / single → filter and sort → edit → back to the same print
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("library"));
+    ask(QStringLiteral("newLibrary"), QVariantMap{{"parent", d}, {"name", QStringLiteral("Flow")}});
+    const bool created = app_->isLibrary() && visible(QStringLiteral("libraryView"));
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    settle();
+    QAbstractItemModel* grid = qobject_cast<QAbstractItemModel*>(app_->libraryGridObj());
+    auto idAt = [&](int row) {
+        return grid ? grid->data(grid->index(row, 0), Qt::UserRole + 1).toString() : QString();
+    };
+    const int prints = grid ? grid->rowCount() : 0;
+    QQuickItem* gridItem = findItem(QStringLiteral("libraryGrid"));
+    if (gridItem) gridItem->forceActiveFocus();
+    press(Qt::Key_E, QStringLiteral("e"));
+    const bool single = visible(QStringLiteral("librarySingle"));
+    press(Qt::Key_G, QStringLiteral("g"));
+    app_->setLibraryView(QStringLiteral("sort"), QStringLiteral("file_name"));
+    app_->setLibraryView(QStringLiteral("descending"), true);
+    const QString pick = idAt(1);
+    QQuickItem* cell = findItemIf([&](QQuickItem* i) {
+        return i->objectName() == QLatin1String("libraryCell") && i->property("entryId").toString() == pick &&
+               i->isVisible();
+    });
+    if (cell) doubleClick(cell);
+    settle();
+    const bool inEdit = app_->settings().value("workspace").toString() == QLatin1String("edit") &&
+                        visible(QStringLiteral("editWorkspace")) && app_->currentItemId() == pick;
+    press(Qt::Key_G, QStringLiteral("g"));
+    const bool backSame = visible(QStringLiteral("libraryGrid")) && app_->currentItemId() == pick &&
+                          gridItem && gridItem->property("currentIndex").toInt() == 1;
+    check(QStringLiteral(
+              "U021 a new library: import, grid and single view, sort, edit a print, back to the same "
+              "print (A1)"),
+          created && prints >= 1 && single && inEdit && backSame,
+          QStringLiteral("created %1, prints %2, single %3, edit %4, back %5")
+              .arg(created)
+              .arg(prints)
+              .arg(single)
+              .arg(inEdit)
+              .arg(backSame));
+
+    // switching workspaces is a change of view: zoom, position, boundaries, unsaved changes and jobs stay
+    press(Qt::Key_D, QStringLiteral("d"));
+    QObject* canvas = findCanvas();
+    if (canvas) QMetaObject::invokeMethod(canvas, "zoomTo", Q_ARG(double, 100.0));
+    if (canvas) QMetaObject::invokeMethod(canvas, "centerOnRelative", Q_ARG(double, 0.3), Q_ARG(double, 0.6));
+    settle();
+    const double zoom = canvas ? canvas->property("zoomPercent").toDouble() : -1;
+    const QRectF view = canvas ? canvas->property("navigatorView").toRectF() : QRectF();
+    const QString itemId = app_->currentItemId();
+    auto corner0 = [&] {
+        for (const auto& s : app_->project().scans)
+            for (const auto& it : s.items)
+                if (toQ(it.itemId) == itemId) return QPointF(it.outer.quad.p[0].x, it.outer.quad.p[0].y);
+        return QPointF();
+    };
+    const QPointF before = corner0();
+    app_->setOuterNumeric(itemId, 0, before.x() + 3, before.y() + 2);
+    const QPointF edited = corner0();
+    const bool dirtyBefore = app_->dirty();
+    app_->exportImageAreas({itemId}); // a job running while the workspace changes (detecting again would
+                                      // replace the edited print, by design)
+    const int jobsBefore = app_->replaceInfo().value("jobs").toInt();
+    press(Qt::Key_G, QStringLiteral("g"));
+    const int jobsInLibrary = app_->replaceInfo().value("jobs").toInt();
+    press(Qt::Key_D, QStringLiteral("d"));
+    settle();
+    const bool same =
+        canvas && qAbs(canvas->property("zoomPercent").toDouble() - zoom) < 0.01 &&
+        (canvas->property("navigatorView").toRectF().center() - view.center()).manhattanLength() < 0.01;
+    app_->waitIdle(300000);
+    check(QStringLiteral(
+              "U021 switching workspaces keeps the zoom, the position, the selection, unsaved changes and "
+              "running jobs"),
+          same && dirtyBefore && app_->dirty() && app_->currentItemId() == itemId && edited != before &&
+              corner0() == edited && (jobsBefore == 0 || jobsInLibrary >= 1),
+          QStringLiteral("zoom %1 → %2, view kept %3, dirty %4, selection kept %5, jobs %6 → %7, edited %8")
+              .arg(zoom)
+              .arg(canvas ? canvas->property("zoomPercent").toDouble() : -1)
+              .arg(same)
+              .arg(app_->dirty())
+              .arg(app_->currentItemId() == itemId)
+              .arg(jobsBefore)
+              .arg(jobsInLibrary)
+              .arg(corner0() == edited && edited != before));
+
+    // management lives in the Library workspace: opening and creating projects there; Edit Photos edits
+    const bool editHasOpen =
+        findItemIf([](QQuickItem* i) {
+            return i->isVisible() && i->property("text").toString() == QLatin1String("Open…");
+        }) != nullptr;
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("library"));
+    settle();
+    const bool libraryHasOpen =
+        visible(QStringLiteral("libraryOpenProject")) && visible(QStringLiteral("libraryNewProject"));
+    app_->saveProject();
+    const QString proj = QDir(d).filePath(QStringLiteral("plain.fkproj"));
+    app_->saveProjectAs(proj); // the library's content as a project file (U018)
+    app_->newProject();
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("library"));
+    ask(QStringLiteral("openUrl"), QUrl::fromLocalFile(proj));
+    const bool projectToEdit = !app_->isLibrary() && app_->projectPath() == proj &&
+                               app_->settings().value("workspace").toString() == QLatin1String("edit");
+    check(QStringLiteral(
+              "U021 opening and creating projects live in the Library workspace; a project opens in Edit "
+              "Photos"),
+          !editHasOpen && libraryHasOpen && projectToEdit,
+          QStringLiteral("edit rail has Open %1, library rail has Open/New %2, project to Edit %3")
+              .arg(editHasOpen)
+              .arg(libraryHasOpen)
+              .arg(projectToEdit));
+
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("edit"));
+    app_->newProject();
+}
+
 void SelfTest::runFormats() {
     QMetaObject::invokeMethod(window_, "closeDialogs");
     waitFor([] { return false; }, 600);
@@ -5664,6 +5804,7 @@ int SelfTest::runScenario(const QString& name) {
         runLibrary();
         runHome();
         runLibraryGrid();
+        runWorkspaces();
         rc = allOk_ ? 0 : 1;
     }
     QJsonObject report{
@@ -6115,6 +6256,7 @@ int SelfTest::run() {
     runLibrary();
     runHome();
     runLibraryGrid();
+    runWorkspaces();
     runFreezeRegression();
     runLayout();
     runToolbar();
