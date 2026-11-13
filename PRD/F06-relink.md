@@ -29,7 +29,7 @@ changes). A failing check is shown; the user decides.
 | Lower bit depth | warn; continue only after confirmation |
 | No ICC | ask: interpret as exported ICC, choose another, or cancel — never silent |
 | Different ICC | convert once into the scan's space at composite time (F12) |
-| Linear DNG (ours or any LinearRaw) | not read back: refused with "export a 16-bit TIFF from the editor and use that" (relink and drag and drop; never imported as a scan). Proposal for v1.0, owner to confirm (FK-012, U026) |
+| Linear DNG (ours or any LinearRaw) | not read back: refused with "export a 16-bit TIFF, or a JPEG or PNG, from the editor and use that" (relink and drag and drop; never imported as a scan). Decided by the owner on 2026-11-12 (FK-012, U026) |
 
 ## Acceptance
 - A1 Each matching path selects the right item on fixtures (XMP kept, XMP stripped + sidecar, only file name, renamed). (`test_relink`)

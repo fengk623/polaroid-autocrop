@@ -22,7 +22,7 @@
 | TIFF 8/16-bit，灰度/RGB，可带 alpha，LZW/ZIP/无/PackBits/JPEG 压缩，条带/瓦片/BigTIFF | `readImageFile` → TiffSource | 支持 MinIsBlack、MinIsWhite、RGB、YCbCr（JPEG 压缩）；浮点、有符号、CMYK、Lab、调色板、LinearRaw 不支持（明确报错） | 已实现 |
 | PNG 8/16-bit | libpng | — | 已实现 |
 | JPEG 8-bit | libjpeg-turbo | 低于扫描位深，需确认“接受较低位深” | 已实现 |
-| DNG（LinearRaw，包括本软件导出的） | **不读**：TiffSource 拒绝 PhotometricInterpretation 34892，并说明改用 16 位 TIFF（U026） | 回导文件过滤不列 .dng；拖入的 .dng 进入回导并显示同样说明，不会被当作扫描件导入 | **不支持**（U026 建议 v1.0 保持不支持，待所有者确认）；不改扩展名伪装 |
+| DNG（LinearRaw，包括本软件导出的） | **不读**：TiffSource 拒绝 PhotometricInterpretation 34892，并说明改用 16 位 TIFF、JPG 或 PNG（U026；措辞按所有者 2026-11-12 的要求） | 回导文件过滤不列 .dng；拖入的 .dng 进入回导并显示同样说明，不会被当作扫描件导入 | **不支持**（所有者 2026-11-12 确认）；不改扩展名伪装 |
 | 相机 RAW / Capture One 会话 / Lightroom 目录 | 不读 | 需求文档明确不在本轮范围 | 不支持（范围外） |
 | 拖入窗口的 TIFF | 名称不含 `_edit_v` 的 TIFF 被当作**扫描件导入**，其余图像进入回导 | 改过名的调色 TIFF 拖入时会被导入为新扫描件（源码观察，Main.qml DropArea） | 已实现（行为待 U004 评审） |
 
@@ -30,7 +30,7 @@
 
 - 可靠母版：**16-bit TIFF**（与扫描件相同 ICC，或明确转换一次）。
 - JPEG 往返可用，但位深降低、压缩有损，合成会提示。
-- DNG：当前只作为导出给 RAW 工作流的选项；调色后请导出 TIFF 回导。
+- DNG：只作为导出给 RAW 工作流的选项；调色后请导出 16 位 TIFF（或 JPG / PNG）回导。原因：在 Lightroom / ACR 中调色时 DNG 的像素不变，调色只是一组只有 Adobe 引擎能渲染的参数；读回 DNG 会得到未调色的画面（所有者 2026-11-12 确认不支持）。
 
 ## 4. 待记录的外部软件验证（FK-012，U026；需要真实软件）
 

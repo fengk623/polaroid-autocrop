@@ -14,8 +14,10 @@ compatibility is not verified.
 | Disabled in `mobile_lite` | — | BigTIFF output, batch > 8, folder watch, DNG output, large caches | same |
 | Formats | project/sidecar/template schemas identical | identical | identical |
 
-Licensing: core MIT + permissive deps → App Store compatible. Qt LGPL static linking on iOS is the open
-risk (ADR-0011); native UI over the C ABI avoids it.
+Licensing: the project is GPL-3.0-only (ADR-0011, 2026-11-12); its dependencies are permissive. The App Store's
+terms add restrictions that the GPL-3.0 does not allow for software others distribute; an App Store build is
+possible only from code whose copyright holders grant other terms (with outside contributions, all of them). Qt LGPL
+static linking on iOS is a further risk; native UI over the C ABI avoids that part.
 
 CI guard (planned, not built): a job `core-mobile-lite` would run the core tests with `FK_CAPABILITIES=mobile_lite` and the accounted
 memory limit enforced (allocations beyond the limit fail with `memory_budget`).

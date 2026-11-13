@@ -65,7 +65,8 @@ It is not an editor. Grading happens in Photoshop / Lightroom / Capture One / Af
 - Working colour space = the scan's own ICC; the frame is never colour-converted by default (ADR-0003).
 - Default export geometry = pixel-exact crop; straightening is an explicit, labelled resampling (ADR-0014).
 - Projects store references and geometry only, never copies of scans (ADR-0005).
-- MIT licence; all core dependencies permissive; Qt used under LGPL-3.0 via dynamic linking (ADR-0011).
+- GPL-3.0-only licence (owner, 2026-11-12); all core dependencies permissive and GPL-compatible; Qt used under
+  LGPL-3.0 via dynamic linking (ADR-0011).
 
 ## 6. Measurable claims (must be backed by tests or measurements)
 

@@ -16,7 +16,7 @@ BEGIN
       VALUE "FileDescription", "FrameKeeper"
       VALUE "FileVersion", "@FK_VERSION@"
       VALUE "InternalName", "FrameKeeper"
-      VALUE "LegalCopyright", "MIT License"
+      VALUE "LegalCopyright", "Copyright (C) 2026 FrameKeeper contributors. GPL-3.0-only."
       VALUE "OriginalFilename", "FrameKeeper.exe"
       VALUE "ProductName", "FrameKeeper"
       VALUE "ProductVersion", "@FK_VERSION@"

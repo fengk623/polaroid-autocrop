@@ -42,9 +42,9 @@
 | FK-009 | 文字与真实窗口验收 | U024 · #26 待合并 | 自检 `runTextLayout`（中英文、1×/1.5×/2×、三个平台） | 已完成（自动验证） | 真实窗口 HV-07 |
 | FK-010 | 真实输出计划驱动无损提示 | U010 · #12 已合并 | `ExportPlan.*`；自检 FK-010 | 已完成（自动验证） | — |
 | FK-011 | 多显示器色彩与灰度预览一致 | U025 · #21 待合并 | 场景 `miniswhite`；自检 `runDisplayProfile` 8 项 | 已完成（自动验证） | 真实双屏、热插拔、色度计 HV-04 |
-| FK-012 | DNG 与外部软件互操作 | U026 · #23 待合并 | LibRaw 独立解码（CI）；`TiffRead.LinearDngIsRefusedWithGuidance` | 已完成（自动验证） | Adobe/Capture One 打开 HV-06；DNG 回导不支持（待所有者确认该决定） |
+| FK-012 | DNG 与外部软件互操作 | U026 · #23 待合并 | LibRaw 独立解码（CI）；`TiffRead.LinearDngIsRefusedWithGuidance` | 已完成（自动验证） | Adobe/Capture One 打开 HV-06；DNG 回导不支持（所有者 2026-11-12 确认） |
 | FK-013 | 实现、文档与测试契约一致 | U027 · #27 待合并 | `tools/check-claims.py`；`ApiContract.*`；结果分开计数 | 已完成（自动验证） | — |
-| FK-014 | 版本冻结与可追溯发行包 | U028 · #28 待合并 | `tools/release/check-package.py`；安装/升级/回退/卸载（CI 运行器）；DMG 检查；`Compat.*` | 已完成（自动验证） | 干净真机安装 HV-08/09；签名与公证（证书，所有者决定） |
+| FK-014 | 版本冻结与可追溯发行包 | U028 · #28 待合并 | `tools/release/check-package.py`；安装/升级/回退/卸载（CI 运行器）；DMG 检查；`Compat.*` | 已完成（自动验证） | 干净真机安装 HV-08/09；签名与公证在最终发布时做（所有者 2026-11-12） |
 
 ## 发布
 

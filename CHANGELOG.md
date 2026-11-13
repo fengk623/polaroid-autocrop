@@ -3,6 +3,15 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## Owner decisions of 2026-11-12 (no version change; released with the next version)
+- Licence: GPL-3.0-only (`LICENSE` is the FSF text; README, About, the Windows file properties and `licenses/`
+  say so; ADR-0011). Versions up to 0.7.0-alpha.16 were MIT; copies obtained under MIT keep it.
+- Graded Linear DNGs stay not read back (confirmed); the message now names every format that is:
+  "export a 16-bit TIFF, or a JPEG or PNG, from the editor and use that" (`TiffRead.LinearDngIsRefusedWithGuidance`
+  red first, then green).
+- Code signing and notarisation: at the final release.
+- RFC-0018 (libraries) questions Q1–Q4 answered as proposed; the library is built from U018 on.
+
 ## 0.7.0-alpha.16 — U029: user guide completed, 26-item summary, full regression of the existing features (UX-12)
 - Full regression of the feature freeze list: every one of its 81 entries is mapped to its evidence
   (`tests/freeze-regression.json`) and `tools/freeze-regression.py` checks, in CI, that the mapping is complete and

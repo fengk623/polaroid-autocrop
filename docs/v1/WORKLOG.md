@@ -932,3 +932,21 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
 - Final results: fixture English and Chinese 247 passed, 0 failed, 0 skipped each, regression 75 passed / 3 CI / 3
   manual / 0 failed; polaroid_92 240 passed, 0 failed, 4 skipped, 1 not applicable, regression 0 failed;
   img20260702_0005 238 passed, 1 failed (C06, above), 5 skipped, 1 not applicable.
+
+## 2026-11-12
+
+### 21:50–22:30 — owner merged PRs #20–#29; PR #30; owner decisions
+- The owner merged PRs #20–#29. #20–#22 targeted `main`; #23–#29 were stacked, each targeting the unit branch below
+  it, so each was merged into that branch and their work did not reach `main` (checked with
+  `git merge-base --is-ancestor`: U026, U022, U021, U024, U027, U028, U029 not in `main`) [my process: stacked PRs
+  need retargeting after each merge]. PR #30 (`unit/U029-land`) merges `main` into the top of the stack (no
+  conflicts, no content change; docs checks pass) and brings all of it to `main`. From now on every PR targets
+  `main` directly.
+- Owner decisions: RFC-0018 Q1–Q4 as proposed (U018 starts); the project licence is GPL-3.0 — taken literally as
+  GPL-3.0-only, said so to the owner; graded Linear DNGs stay not read back and the message names a 16-bit TIFF,
+  JPEG or PNG; signing and notarisation at the final release.
+- This change: `TiffRead.LinearDngIsRefusedWithGuidance` now requires JPEG and PNG in the message, TIFF first —
+  red on the old text (2 failures), green after (test_tiff_io 47 passed); the self-test check asks the same in
+  English and Chinese. Licence: `LICENSE` is the FSF GPL-3.0 text (SHA-256 3972dc97…); README (both), About,
+  Windows file properties, `licenses/README.md` (where the source of each version is), THIRD-PARTY-LICENSES, PRD,
+  ADR-0011, acceptance matrix, mobile notes, reference audit, user guide.
