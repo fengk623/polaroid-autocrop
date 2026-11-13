@@ -988,3 +988,11 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   lower right corner.
 - Results (Linux): `--scenario library` 19 passed; full self-test (fixture, English) 267 passed, 0 failed, 0
   skipped; docs, i18n (736), guide (53 shortcuts), format checks pass.
+
+### 00:20–00:35 — PR #32 (U018) CI round 1: one Windows failure
+- PR #32 CI: Windows app and release jobs failed one check, "U018 unsaved work of a library is recovered into the
+  same library" (snapshot not found). Cause: the library's project path was built from `std::filesystem`
+  (`…\Imported.fklibrary\catalog.fkproj` on Windows) while every other path in the app is Qt's form with `/`; the
+  recovery list compared the two [my error, Windows only]. Fix: the path is `QDir(folder).filePath(...)`; the check
+  compares cleaned paths. The failing check is the regression test (red on Windows CI, green after; Linux green
+  before and after).

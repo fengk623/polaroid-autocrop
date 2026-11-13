@@ -970,7 +970,8 @@ bool AppController::openLibraryAt(const QString& folderIn, std::optional<fk::Pro
     const bool recovered = content.has_value();
     fk::Project p = recovered ? std::move(*content) : std::move(lib->catalog);
     p.name = lib->manifest.name; // the window shows the library's name
-    adoptProject(std::move(p), toQ(fk::pathToUtf8(fk::libraryCatalogPath(toPath(folder)))), false, recovered);
+    // Qt's form of the path ('/' on every system), like every other path the app shows or compares
+    adoptProject(std::move(p), QDir(folder).filePath(QStringLiteral("catalog.fkproj")), false, recovered);
     // adoptProject released the previous library (newProject); from here on this one is open
     libraryFolder_ = folder;
     library_ = lib->manifest;
@@ -1199,7 +1200,7 @@ void AppController::writeLibraryCover() {
     auto t = r->second.itemThumbs.find(itemId);
     if (t == r->second.itemThumbs.end() || t->second.isNull())
         return; // not shown yet: the next save writes it
-    const QString dir = toQ(fk::pathToUtf8(fk::libraryCacheDir(toPath(libraryFolder_))));
+    const QString dir = QDir(libraryFolder_).filePath(QStringLiteral("cache"));
     QDir().mkpath(dir);
     const QString tmp = QDir(dir).filePath(QStringLiteral("cover.jpg.tmp"));
     if (t->second.save(tmp, "JPG", 88)) {
@@ -1226,7 +1227,7 @@ QVariantList AppController::libraryCards() const {
         const bool exists = QFileInfo(folder).isDir();
         auto m = exists ? fk::readLibraryManifest(path) : fk::Result<fk::LibraryManifest>(fk::Error{});
         QString name = m ? toQ(m->name) : QFileInfo(folder).completeBaseName();
-        const QString coverFile = toQ(fk::pathToUtf8(fk::libraryCacheDir(path) / "cover.jpg"));
+        const QString coverFile = QDir(folder).filePath(QStringLiteral("cache/cover.jpg"));
         const QFileInfo cover(coverFile);
         const bool current = folder == libraryFolder_;
         if (current) name = toQ(library_.name); // renamed or not saved yet
