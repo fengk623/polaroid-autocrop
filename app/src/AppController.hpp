@@ -35,6 +35,8 @@ class AppController : public QObject {
     Q_PROPERTY(bool isLibrary READ isLibrary NOTIFY projectChanged)
     Q_PROPERTY(QString libraryFolder READ libraryFolder NOTIFY projectChanged)
     Q_PROPERTY(QVariantList libraryCards READ libraryCards NOTIFY librariesChanged)
+    Q_PROPERTY(QObject* libraryGrid READ libraryGridObj CONSTANT)
+    Q_PROPERTY(QVariantMap libraryView READ libraryView NOTIFY libraryViewChanged)
     Q_PROPERTY(QObject* scans READ scansObj CONSTANT)
     Q_PROPERTY(QObject* items READ itemsObj CONSTANT)
     Q_PROPERTY(QObject* jobs READ jobsObj CONSTANT)
@@ -69,6 +71,11 @@ class AppController : public QObject {
     QString libraryFolder() const { return libraryFolder_; }
     QObject* scansObj() { return scans_; }
     QObject* itemsObj() { return items_; }
+    QObject* libraryGridObj() { return libraryGrid_; }
+    /// U020: how the library lists its prints or scans: {show ("prints"/"scans"), sort (LibrarySortKey name),
+    /// descending, minRating, pick, color, text, scanId (one scan's prints), folder, mode ("grid"/"single"),
+    /// scans, prints, shown}.
+    QVariantMap libraryView() const;
     QObject* jobsObj() { return jobs_->model(); }
     QString currentScanId() const { return QString::fromStdString(curScan_); }
     QString currentItemId() const { return QString::fromStdString(curItem_); }
@@ -133,6 +140,31 @@ class AppController : public QObject {
     Q_INVOKABLE bool renameLibrary(const QVariant& folderUrl, const QString& name);
     /// Removes a library from the home page list; the folder and everything in it stay on disk.
     Q_INVOKABLE void forgetLibrary(const QVariant& folderUrl);
+    // ---- the library workspace (U020) ----
+    /// Changes one of libraryView's keys; the sort is kept per list in the library (`library.json` sort).
+    Q_INVOKABLE void setLibraryView(const QString& key, const QVariant& value);
+    /// The sort keys in the order offered: {key, text}.
+    Q_INVOKABLE QVariantList librarySortOptions() const;
+    /// The folders the library's scans come from: {path, name, scans, exists}.
+    Q_INVOKABLE QVariantList libraryFolders() const;
+    /// What the information panel shows for a print or a scan (unknown values are empty; the capture time is
+    /// never the scan date).
+    Q_INVOKABLE QVariantMap libraryInfo(const QString& id);
+    /// Selects a print (also in Edit Photos) or, in the scans list, a scan.
+    Q_INVOKABLE void librarySelect(const QString& id, bool extend = false, bool toggle = false);
+    /// Library data for the selection: the selected prints, or the current scan in the scans list
+    /// (setLibraryMeta's keys).
+    Q_INVOKABLE bool libraryApply(const QVariantMap& values);
+    /// Manual order: moves `id` "first", "earlier", "later" or "last" in the shown list (switches the sort to
+    /// manual, numbering every entry in the order shown).
+    Q_INVOKABLE void libraryMove(const QString& id, const QString& where);
+    /// A grid cell is on screen: its scan's thumbnails are decoded when neither memory nor the library's
+    /// cache has them (FK-005: never every scan at once).
+    Q_INVOKABLE void libraryRequestThumb(const QString& scanId);
+    /// The single view shows this scan's print: its preview is read when not in memory.
+    Q_INVOKABLE void libraryRequestPreview(const QString& scanId);
+    /// Diagnostics (self-test): scans decoded for a preview since the start.
+    Q_INVOKABLE int previewDecodes() const { return previewDecodes_; }
     /// A folder holding a library (or a file inside one).
     Q_INVOKABLE bool isLibraryPath(const QVariant& url) const;
     /// The local path of a file: URL (dialogs give URLs).
@@ -322,6 +354,7 @@ class AppController : public QObject {
     void libraryLockStale(const QString& host, const QString& user, const QString& lastSeen);
     /// The known libraries or what their cards show changed (U019).
     void librariesChanged();
+    void libraryViewChanged();
 
   private:
     struct ScanRuntime {
@@ -459,13 +492,25 @@ class AppController : public QObject {
     /// U019: `cache/cover.jpg` from the cover print's thumbnail (rebuildable; only by the instance that
     /// writes).
     void writeLibraryCover();
+    // ---- U020 ----
+    LibraryGridModel* libraryGrid_ = nullptr;
+    QVariantMap libraryView_;
+    int previewDecodes_ = 0;
+    void rebuildLibraryGrid();
+    void loadLibraryView(); ///< the sort kept in library.json, the rest reset
+    /// Thumbnails kept in the library's cache (`cache/thumbs`), named by what they show (the scan's content,
+    /// the print's Outer and upright): stale ones are never used.
+    QString thumbFile(const fk::ScanRecord& s, const fk::ItemRecord* it) const;
+    void saveDiskThumbs(const std::string& scanId);
+    void loadDiskThumbs(const std::string& scanId);
     /// Recovery snapshots are keyed by the library id for a library (an imported library keeps the
     /// project's id, so the project and the library would share a key) and by the project id otherwise.
     std::string recoveryKey() const;
     QString recoveryDir() const;
     QString recoveryFileFor(const std::string& projectId) const;
     /// Takes over a loaded project (open, restore, recover): runtime state, settings, previews.
-    void adoptProject(fk::Project p, const QString& path, bool readOnly, bool dirty);
+    /// `lazy` (a library): previews are decoded when needed, thumbnails come from the library's cache.
+    void adoptProject(fk::Project p, const QString& path, bool readOnly, bool dirty, bool lazy = false);
     void syncOutputSettings();
     JobRunner* jobs_;
     ScanListModel* scans_;

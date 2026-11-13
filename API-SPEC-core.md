@@ -195,7 +195,19 @@ int64_t isoUtcToEpoch(const std::string&); std::string epochToIsoUtc(int64_t);
 Result<LibraryManifest> readLibraryManifest(const path& folder);
 Status touchLibraryOpened(const path& folder, const std::string& nowUtc = {});
 Status renameLibrary(const path& folder, const std::string& name, const LockOwner& me); // conflict: held elsewhere
+Status writeLibrarySort(const path& folder, const std::string& sortJson);              // U020: the lists' sort
 ```
+Library lists (`fk/library_view.hpp`, U020): `enum class LibrarySortKey : int { capture_time = 0, added, edit_time,
+edit_count, rating, pick, text_label, color_label, file_name, pixel_size, extension, file_type, aspect_ratio,
+manual = 13 }`, `librarySortKeyName` / `librarySortKeyFrom` (stable names, unknown → `added`), `librarySortKeys()`;
+`struct LibraryEntry { bool print; std::string id, scanId; int index; std::string fileName, extension, fileType,
+folder; int64_t width, height; std::string capturedAt; LibraryMeta meta; int order; }`;
+`std::vector<LibraryEntry> libraryEntries(const Project&, bool prints, const std::string& scanId = {},
+const std::string& folder = {})`; `struct LibraryFilter { int minRating; std::string pick, colorLabel, text; }`,
+`bool matchesLibraryFilter(const LibraryEntry&, const LibraryFilter&)`;
+`std::vector<size_t> sortLibraryEntries(const std::vector<LibraryEntry>&, LibrarySortKey, bool descending)` —
+stable, entries without a value last in both directions; `reorderManually(ids, id, position)`.
+`LibraryMeta::capturedAt` (a scan's EXIF capture time; never the scan date).
 Constants: `kLibrarySchemaVersion = 1`, `kLibraryBackupsKept = 10`, `kLibraryBackupIntervalSeconds = 3600`,
 `kLibraryLockHeartbeatSeconds = 60`, `kLibraryLockStaleSeconds = 180`. JSON schemas `fk.library/1`, `fk.lock/1`.
 
@@ -241,6 +253,7 @@ void fk_free(void*);
 | 0.7.0-alpha.4 | `quarterTurnMatrix`, `quarterTurnSize`, `ScanRecord::rotation`, `rotateScanView`, `exportTurns` (UX-04). |
 | 0.7.0-alpha.5 | `MaskChoice`, `naturalBlend`, `resolveMask`, `edgeChange`, `CompositeSettings::mask`/`maskSet`, `deltaE2000` (UX-08). |
 | 0.7.0-alpha.7 | `CacheLedger`, `defaultCacheBudget`, `systemMemory`, `TiffSource::cachedBytes` (FK-005). |
+| 0.8.0-alpha.3 | `fk/library_view.hpp` (sort keys, entries, filter, stable sort, manual order), `writeLibrarySort`, `LibraryMeta::capturedAt` (U020). Additive. |
 | 0.8.0-alpha.2 | `readLibraryManifest`, `touchLibraryOpened`, `renameLibrary`, `LibraryManifest::scanCount`/`printCount` (U019). Additive. |
 | 0.8.0-alpha.1 | `fk/library.hpp` (§7a): libraries — create/open/save, history, restore, lock, migration copy; `LibraryMeta` on `ItemRecord`/`ScanRecord` (UX-05, U018). Additive. |
 | 0.7.0-alpha.15 | `compareVersions`, `Project::savedBy`, `unknownJson` on `ProjectSettings`, `ScanRecord`, `ItemRecord`, `Sidecar` (FK-014). Additive. |

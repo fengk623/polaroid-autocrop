@@ -11,6 +11,7 @@
 #include "fk/image.hpp"
 #include "fk/image_io.hpp"
 #include "fk/library.hpp"
+#include "fk/library_view.hpp"
 #include "fk/memory.hpp"
 #include "fk/metadata.hpp"
 #include "fk/project.hpp"
@@ -188,6 +189,20 @@ static_assert(std::is_same_v<decltype(&fk::renameLibrary),
                              fk::Status (*)(const path&, const std::string&, const fk::LockOwner&)>);
 static_assert(std::is_same_v<decltype(fk::LibraryManifest::scanCount), int> &&
               std::is_same_v<decltype(fk::LibraryManifest::printCount), int>);
+static_assert(
+    std::is_same_v<decltype(&fk::writeLibrarySort), fk::Status (*)(const path&, const std::string&)>);
+// U020: the library workspace's lists
+static_assert(v(fk::LibrarySortKey::capture_time) == 0 && v(fk::LibrarySortKey::added) == 1 &&
+              v(fk::LibrarySortKey::manual) == 13);
+static_assert(std::is_same_v<decltype(&fk::libraryEntries),
+                             std::vector<fk::LibraryEntry> (*)(const fk::Project&, bool, const std::string&,
+                                                               const std::string&)>);
+static_assert(
+    std::is_same_v<decltype(&fk::sortLibraryEntries),
+                   std::vector<size_t> (*)(const std::vector<fk::LibraryEntry>&, fk::LibrarySortKey, bool)>);
+static_assert(std::is_same_v<decltype(&fk::matchesLibraryFilter),
+                             bool (*)(const fk::LibraryEntry&, const fk::LibraryFilter&)>);
+static_assert(std::is_same_v<decltype(fk::LibraryMeta::capturedAt), std::string>);
 static_assert(v(fk::LockState::acquired) == 0 && v(fk::LockState::held) == 1 && v(fk::LockState::stale) == 2);
 static_assert(fk::kLibrarySchemaVersion == 1 && fk::kLibraryBackupsKept == 10 &&
               fk::kLibraryBackupIntervalSeconds == 3600 && fk::kLibraryLockHeartbeatSeconds == 60 &&
@@ -213,6 +228,8 @@ TEST(ApiContract, StableNames) {
     EXPECT_STREQ(fk::photometricName(fk::Photometric::min_is_white), "miniswhite");
     EXPECT_STREQ(fk::compressionName(fk::Compression::deflate), "deflate");
     EXPECT_STREQ(fk::lockStateName(fk::LockState::stale), "stale");
+    EXPECT_STREQ(fk::librarySortKeyName(fk::LibrarySortKey::aspect_ratio), "aspect_ratio");
+    EXPECT_STREQ(fk::librarySortKeyName(fk::LibrarySortKey::color_label), "color_label");
     EXPECT_EQ(fk::libraryCatalogPath("L.fklibrary").filename(), path("catalog.fkproj"));
     EXPECT_EQ(fk::libraryManifestPath("L.fklibrary").filename(), path("library.json"));
     EXPECT_EQ(fk::libraryLockPath("L.fklibrary").filename(), path("library.lock"));

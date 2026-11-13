@@ -91,6 +91,9 @@ Result<LibraryManifest> readLibraryManifest(const std::filesystem::path& folder)
 /// Records that the library was opened now (`openedAt`; only `library.json` is written). Called by the
 /// instance that holds the lock.
 Status touchLibraryOpened(const std::filesystem::path& folder, const std::string& nowUtc = {});
+/// U020: records the library's sort (`sort` in `library.json`, a JSON object; only `library.json` is
+/// written). A view setting, not an edit of the catalog.
+Status writeLibrarySort(const std::filesystem::path& folder, const std::string& sortJson);
 /// Renames the library (its `name`; the folder keeps its name, so references to it stay valid).
 /// Errc::conflict when another instance holds a fresh lock on it.
 Status renameLibrary(const std::filesystem::path& folder, const std::string& name, const LockOwner& me);

@@ -7,6 +7,7 @@
 #include "fk/export.hpp"
 #include "fk/hash.hpp"
 #include "fk/image_io.hpp"
+#include "fk/library_view.hpp"
 #include "fk/memory.hpp"
 #include "fk/metadata.hpp"
 #include "fk/product_info.hpp"
@@ -107,6 +108,17 @@ QString errText(const fk::Error& e) {
     else if (!e.detail.empty())
         qInfo().noquote() << "confirmation needed:" << QString::fromStdString(e.message) << "—"
                           << QString::fromStdString(e.detail);
+    return s;
+}
+
+/// EXIF "YYYY:MM:DD HH:MM:SS" → "YYYY-MM-DDTHH:MM:SS" (local time of the camera; no zone is known)
+std::string exifToIso(const std::string& exif) {
+    std::string s = exif.substr(0, 19);
+    if (s.size() >= 10) {
+        if (s[4] == ':') s[4] = '-';
+        if (s[7] == ':') s[7] = '-';
+    }
+    if (s.size() >= 11 && s[10] == ' ') s[10] = 'T';
     return s;
 }
 
@@ -260,6 +272,7 @@ AppController::AppController(QObject* parent)
     connect(recoveryTimer_, &QTimer::timeout, this, &AppController::writeRecovery);
     // UX-05 (RFC-0018 §5): the open library's lock is renewed while this instance writes it
     lockOwner_ = fk::thisLockOwner();
+    libraryGrid_ = new LibraryGridModel(this); // U020
     lockTimer_ = new QTimer(this);
     lockTimer_->setInterval(fk::kLibraryLockHeartbeatSeconds * 1000);
     connect(lockTimer_, &QTimer::timeout, this, &AppController::refreshLibraryLock);
@@ -647,7 +660,7 @@ bool AppController::openProject(const QVariant& url) {
     return true;
 }
 
-void AppController::adoptProject(fk::Project p, const QString& path, bool readOnly, bool dirty) {
+void AppController::adoptProject(fk::Project p, const QString& path, bool readOnly, bool dirty, bool lazy) {
     newProject();
     project_ = std::move(p);
     projectPath_ = path;
@@ -683,8 +696,11 @@ void AppController::adoptProject(fk::Project p, const QString& path, bool readOn
     rebuildModels();
     Q_EMIT projectChanged();
     Q_EMIT settingsChanged();
-    for (const auto& s : project_.scans)
-        if (!s.missing && !s.changed) loadPreview(s.scanId);
+    // U020 (FK-005): a library decodes a scan only when it is shown; its thumbnails come from the library's
+    // cache
+    if (!lazy)
+        for (const auto& s : project_.scans)
+            if (!s.missing && !s.changed) loadPreview(s.scanId);
     if (!project_.scans.empty()) selectScan(toQ(project_.scans.front().scanId));
     if (dirty_) recoveryTimer_->start();
 }
@@ -971,10 +987,14 @@ bool AppController::openLibraryAt(const QString& folderIn, std::optional<fk::Pro
     fk::Project p = recovered ? std::move(*content) : std::move(lib->catalog);
     p.name = lib->manifest.name; // the window shows the library's name
     // Qt's form of the path ('/' on every system), like every other path the app shows or compares
-    adoptProject(std::move(p), QDir(folder).filePath(QStringLiteral("catalog.fkproj")), false, recovered);
+    adoptProject(std::move(p), QDir(folder).filePath(QStringLiteral("catalog.fkproj")), false, recovered,
+                 true);
     // adoptProject released the previous library (newProject); from here on this one is open
     libraryFolder_ = folder;
     library_ = lib->manifest;
+    loadLibraryView();
+    for (const auto& s : project_.scans)
+        if (!s.missing) loadDiskThumbs(s.scanId);
     bool readOnly = info.mode == fk::OpenMode::read_only;
     if (readOnly) {
         notify(tr("This library was saved by a later version of FrameKeeper and is opened read-only."),
@@ -1281,6 +1301,392 @@ void AppController::forgetLibrary(const QVariant& folderUrl) {
     Q_EMIT librariesChanged();
 }
 
+// ---- the library workspace (U020) -------------------------------------------------------------------------
+
+namespace {
+const QVariantMap kLibraryViewDefaults{
+    {"show", "prints"}, {"sort", "added"}, {"descending", false}, {"minRating", 0}, {"pick", "any"},
+    {"color", "any"},   {"text", ""},      {"scanId", ""},        {"folder", ""},   {"mode", "grid"}};
+} // namespace
+
+QVariantMap AppController::libraryView() const {
+    QVariantMap v = libraryView_.isEmpty() ? kLibraryViewDefaults : libraryView_;
+    int prints = 0;
+    for (const auto& s : project_.scans)
+        prints += static_cast<int>(s.items.size());
+    v["scans"] = static_cast<int>(project_.scans.size());
+    v["prints"] = prints;
+    v["shown"] = libraryGrid_ ? libraryGrid_->count() : 0;
+    QString scanName;
+    if (const fk::ScanRecord* s = findScan(toStd(v.value("scanId").toString())))
+        scanName = QFileInfo(toQ(s->path)).fileName();
+    v["scanName"] = scanName;
+    return v;
+}
+
+void AppController::loadLibraryView() {
+    libraryView_ = kLibraryViewDefaults;
+    // the sort of each list is kept in library.json: {"prints": {"key", "descending"}, "scans": {…}}
+    const QJsonObject sort = QJsonDocument::fromJson(QByteArray::fromStdString(library_.sortJson)).object();
+    const QJsonObject prints = sort.value("prints").toObject();
+    if (!prints.isEmpty()) {
+        libraryView_["sort"] =
+            toQ(fk::librarySortKeyName(fk::librarySortKeyFrom(toStd(prints.value("key").toString()))));
+        libraryView_["descending"] = prints.value("descending").toBool();
+    }
+    Q_EMIT libraryViewChanged();
+}
+
+void AppController::setLibraryView(const QString& key, const QVariant& value) {
+    if (libraryView_.isEmpty()) libraryView_ = kLibraryViewDefaults;
+    if (!kLibraryViewDefaults.contains(key)) return;
+    libraryView_[key] = value;
+    const QString show = libraryView_.value("show").toString();
+    if (key == QLatin1String("show")) {
+        // each list has its own sort
+        const QJsonObject sort =
+            QJsonDocument::fromJson(QByteArray::fromStdString(library_.sortJson)).object();
+        const QJsonObject mine = sort.value(value.toString()).toObject();
+        libraryView_["sort"] =
+            mine.isEmpty()
+                ? QStringLiteral("added")
+                : toQ(fk::librarySortKeyName(fk::librarySortKeyFrom(toStd(mine.value("key").toString()))));
+        libraryView_["descending"] = mine.value("descending").toBool();
+        if (value.toString() == QLatin1String("scans")) libraryView_["scanId"] = QString();
+    }
+    if (key == QLatin1String("sort") || key == QLatin1String("descending")) {
+        QJsonObject sort = QJsonDocument::fromJson(QByteArray::fromStdString(library_.sortJson)).object();
+        sort[show] = QJsonObject{{"key", libraryView_.value("sort").toString()},
+                                 {"descending", libraryView_.value("descending").toBool()}};
+        library_.sortJson = QJsonDocument(sort).toJson(QJsonDocument::Compact).toStdString();
+        // a view setting, not an edit of the catalog: written at once when this instance writes the library
+        if (isLibrary() && lockHeld_ && !readOnly_)
+            fk::writeLibrarySort(toPath(libraryFolder_), library_.sortJson);
+    }
+    rebuildLibraryGrid();
+    Q_EMIT libraryViewChanged();
+}
+
+QVariantList AppController::librarySortOptions() const {
+    const QMap<QString, QString> text{{"capture_time", tr("Capture time")},
+                                      {"added", tr("Added order")},
+                                      {"edit_time", tr("Edit time")},
+                                      {"edit_count", tr("Edit count")},
+                                      {"rating", tr("Rating")},
+                                      {"pick", tr("Pick")},
+                                      {"text_label", tr("Text label")},
+                                      {"color_label", tr("Colour label")},
+                                      {"file_name", tr("File name")},
+                                      {"pixel_size", tr("Pixel size")},
+                                      {"extension", tr("Extension")},
+                                      {"file_type", tr("File type")},
+                                      {"aspect_ratio", tr("Aspect ratio")},
+                                      {"manual", tr("Manual order")}};
+    QVariantList out;
+    for (fk::LibrarySortKey k : fk::librarySortKeys()) {
+        const QString key = toQ(fk::librarySortKeyName(k));
+        out << QVariantMap{{"value", key}, {"text", text.value(key, key)}};
+    }
+    return out;
+}
+
+QVariantList AppController::libraryFolders() const {
+    QStringList dirs;
+    for (const auto& src : library_.sources)
+        if (!dirs.contains(toQ(src.path))) dirs << toQ(src.path);
+    for (const auto& s : project_.scans) {
+        const QString d = QFileInfo(toQ(s.path)).absolutePath();
+        if (!dirs.contains(d)) dirs << d;
+    }
+    QVariantList out;
+    for (const QString& d : dirs) {
+        int n = 0;
+        for (const auto& s : project_.scans)
+            if (QFileInfo(toQ(s.path)).absolutePath() == d) ++n;
+        out << QVariantMap{
+            {"path", d}, {"name", QFileInfo(d).fileName()}, {"scans", n}, {"exists", QFileInfo(d).isDir()}};
+    }
+    return out;
+}
+
+void AppController::rebuildLibraryGrid() {
+    if (!libraryGrid_) return;
+    if (!isLibrary()) {
+        libraryGrid_->setRows({});
+        return;
+    }
+    const QVariantMap v = libraryView_.isEmpty() ? kLibraryViewDefaults : libraryView_;
+    const bool prints = v.value("show").toString() != QLatin1String("scans");
+    const QString folder = v.value("folder").toString();
+    auto entries =
+        fk::libraryEntries(project_, prints, prints ? toStd(v.value("scanId").toString()) : std::string(),
+                           folder.isEmpty() ? std::string() : fk::pathToUtf8(toPath(folder)));
+    fk::LibraryFilter f;
+    f.minRating = v.value("minRating").toInt();
+    f.pick = toStd(v.value("pick").toString());
+    f.colorLabel = toStd(v.value("color").toString());
+    f.text = toStd(v.value("text").toString());
+    std::vector<fk::LibraryEntry> shown;
+    for (auto& e : entries)
+        if (fk::matchesLibraryFilter(e, f)) shown.push_back(std::move(e));
+    const auto order = fk::sortLibraryEntries(
+        shown, fk::librarySortKeyFrom(toStd(v.value("sort").toString())), v.value("descending").toBool());
+    std::vector<LibraryRow> rows;
+    rows.reserve(order.size());
+    for (size_t i : order) {
+        const fk::LibraryEntry& e = shown[i];
+        const fk::ScanRecord* s = findScan(e.scanId);
+        const ScanRuntime* r = nullptr;
+        if (auto f2 = rt_.find(e.scanId); f2 != rt_.end()) r = &f2->second;
+        LibraryRow row;
+        row.id = toQ(e.id);
+        row.scanId = toQ(e.scanId);
+        row.kind = e.print ? QStringLiteral("print") : QStringLiteral("scan");
+        if (e.print) {
+            const fk::ItemRecord* it = item(e.id);
+            row.title = it ? toQ(it->label) : QString();
+            row.subtitle = toQ(e.fileName);
+            row.thumb = QStringLiteral("image://fk/item/%1?%2").arg(row.id).arg(r ? r->rev : 0);
+            row.current = e.id == curItem_;
+            row.selected = std::find(selection_.begin(), selection_.end(), e.id) != selection_.end();
+            row.excluded = it && it->excluded;
+        } else {
+            row.title = toQ(e.fileName);
+            row.prints = s ? static_cast<int>(s->items.size()) : 0;
+            row.subtitle = tr("%n print(s)", "", row.prints);
+            row.thumb = QStringLiteral("image://fk/scan/%1?%2").arg(row.id).arg(r ? r->rev : 0);
+            row.current = e.id == curScan_;
+            row.selected = row.current;
+        }
+        row.missing = s && s->missing;
+        row.rating = e.meta.rating;
+        row.pick = toQ(e.meta.pick);
+        row.colorLabel = toQ(e.meta.colorLabel);
+        for (const auto& t : e.meta.textLabels)
+            row.textLabels << toQ(t);
+        rows.push_back(std::move(row));
+    }
+    libraryGrid_->setRows(std::move(rows));
+    Q_EMIT libraryViewChanged(); // counts and positions in the list (QML re-reads indexes from here)
+}
+
+void AppController::librarySelect(const QString& id, bool extend, bool toggle) {
+    const std::string sid = toStd(id);
+    if (findScan(sid)) {
+        selectScan(id);
+        return;
+    }
+    if (!item(sid)) return;
+    if (extend || toggle)
+        selectItem(id, extend, toggle);
+    else {
+        if (const fk::ScanRecord* s = scanOf(sid); s && s->scanId != curScan_) selectScan(toQ(s->scanId));
+        selectItem(id);
+    }
+}
+
+bool AppController::libraryApply(const QVariantMap& values) {
+    if (readOnly_) return false;
+    QStringList ids;
+    if (libraryView().value("show").toString() == QLatin1String("scans"))
+        ids << toQ(curScan_);
+    else
+        ids = selectedItemIds();
+    if (ids.isEmpty() && !curItem_.empty()) ids << toQ(curItem_);
+    bool ok = !ids.isEmpty();
+    for (const QString& id : ids)
+        ok = setLibraryMeta(id, values) && ok;
+    return ok;
+}
+
+void AppController::libraryMove(const QString& id, const QString& where) {
+    if (readOnly_ || !libraryGrid_) return;
+    const QStringList shown = libraryGrid_->ids();
+    const int at = static_cast<int>(shown.indexOf(id));
+    if (at < 0) return;
+    std::vector<std::string> ids;
+    for (const QString& s : shown)
+        ids.push_back(toStd(s));
+    size_t pos = static_cast<size_t>(at);
+    if (where == QLatin1String("first"))
+        pos = 0;
+    else if (where == QLatin1String("earlier"))
+        pos = at > 0 ? static_cast<size_t>(at - 1) : 0;
+    else if (where == QLatin1String("later"))
+        pos = static_cast<size_t>(at + 1);
+    else if (where == QLatin1String("last"))
+        pos = ids.size();
+    for (const auto& [eid, n] : fk::reorderManually(ids, toStd(id), pos)) {
+        fk::LibraryMeta* m = nullptr;
+        if (fk::ScanRecord* s = findScan(eid))
+            m = &s->library;
+        else if (fk::ItemRecord* it = findItemMut(eid))
+            m = &it->library;
+        if (m) m->manualOrder = n;
+    }
+    libraryView_["sort"] = QStringLiteral("manual");
+    libraryView_["descending"] = false;
+    touch(false); // a change of the catalog (saved with it); rebuilds the grid
+    setLibraryView(QStringLiteral("sort"), QStringLiteral("manual"));
+}
+
+void AppController::libraryRequestPreview(const QString& scanId) {
+    const std::string id = toStd(scanId);
+    const fk::ScanRecord* s = findScan(id);
+    if (!s || s->missing) return;
+    ScanRuntime& r = rt_[id];
+    if (r.display.isNull() && r.state != QLatin1String("loading") && r.state != QLatin1String("detecting") &&
+        r.state != QLatin1String("changed") && r.state != QLatin1String("error"))
+        loadPreview(id);
+}
+
+void AppController::libraryRequestThumb(const QString& scanId) {
+    const std::string id = toStd(scanId);
+    const fk::ScanRecord* s = findScan(id);
+    if (!s || s->missing) return;
+    ScanRuntime& r = rt_[id];
+    bool have = !r.thumb.isNull();
+    for (const auto& it : s->items)
+        have = have && r.itemThumbs.count(it.itemId);
+    if (have || !r.display.isNull()) return;
+    if (r.state == QLatin1String("loading") || r.state == QLatin1String("detecting") ||
+        r.state == QLatin1String("changed") || r.state == QLatin1String("error"))
+        return;
+    loadPreview(id);
+}
+
+QString AppController::thumbFile(const fk::ScanRecord& s, const fk::ItemRecord* it) const {
+    // named by what the picture shows: the scan's content and, for a print, its Outer and upright
+    QString what = toQ(s.fingerprint.quickSha256);
+    if (it) {
+        const fk::Shape& o = it->outer;
+        if (o.kind == fk::ShapeKind::quad)
+            for (const auto& p : o.quad.p)
+                what += QStringLiteral("|%1,%2").arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2);
+        else
+            what += QStringLiteral("|e%1,%2,%3,%4,%5")
+                        .arg(o.ellipse.c.x, 0, 'f', 2)
+                        .arg(o.ellipse.c.y, 0, 'f', 2)
+                        .arg(o.ellipse.rx, 0, 'f', 2)
+                        .arg(o.ellipse.ry, 0, 'f', 2)
+                        .arg(o.ellipse.angleRad, 0, 'f', 4);
+        what += QStringLiteral("|u%1").arg(it->upright);
+    }
+    const QByteArray b = what.toUtf8();
+    const QString key = toQ(fk::sha256Hex(b.constData(), static_cast<size_t>(b.size())).substr(0, 12));
+    return QDir(libraryFolder_)
+        .filePath(QStringLiteral("cache/thumbs/%1-%2.jpg").arg(toQ(it ? it->itemId : s.scanId), key));
+}
+
+void AppController::saveDiskThumbs(const std::string& scanId) {
+    if (!isLibrary() || !lockHeld_ || readOnly_) return; // the cache belongs to the instance that writes
+    const fk::ScanRecord* s = findScan(scanId);
+    auto r = rt_.find(scanId);
+    if (!s || r == rt_.end() || s->fingerprint.quickSha256.empty()) return;
+    const QString dir = QDir(libraryFolder_).filePath(QStringLiteral("cache/thumbs"));
+    QDir().mkpath(dir);
+    auto keep = [&](const QImage& img, const QString& file, const QString& id) {
+        if (img.isNull() || QFileInfo::exists(file)) return;
+        // older pictures of the same print or scan are dropped (their boundaries changed)
+        for (const QString& old : QDir(dir).entryList({id + QStringLiteral("-*.jpg")}, QDir::Files))
+            QFile::remove(QDir(dir).filePath(old));
+        const QString tmp = file + QStringLiteral(".tmp");
+        if (img.save(tmp, "JPG", 85)) QFile::rename(tmp, file);
+    };
+    keep(r->second.thumb, thumbFile(*s, nullptr), toQ(s->scanId));
+    for (const auto& it : s->items)
+        if (auto t = r->second.itemThumbs.find(it.itemId); t != r->second.itemThumbs.end())
+            keep(t->second, thumbFile(*s, &it), toQ(it.itemId));
+}
+
+void AppController::loadDiskThumbs(const std::string& scanId) {
+    const fk::ScanRecord* s = findScan(scanId);
+    if (!s || !isLibrary() || s->fingerprint.quickSha256.empty()) return;
+    ScanRuntime& r = rt_[scanId];
+    bool any = false;
+    if (r.thumb.isNull()) {
+        QImage img(thumbFile(*s, nullptr));
+        if (!img.isNull()) {
+            r.thumb = img;
+            any = true;
+        }
+    }
+    for (const auto& it : s->items)
+        if (!r.itemThumbs.count(it.itemId)) {
+            QImage img(thumbFile(*s, &it));
+            if (!img.isNull()) {
+                r.itemThumbs[it.itemId] = img;
+                any = true;
+            }
+        }
+    if (any) {
+        ++r.rev;
+        noteScanImages(scanId);
+    }
+}
+
+QVariantMap AppController::libraryInfo(const QString& id) {
+    const std::string sid = toStd(id);
+    fk::ScanRecord* s = findScan(sid);
+    const fk::ItemRecord* it = nullptr;
+    if (!s) {
+        fk::ScanRecord* owner = nullptr;
+        it = findItemMut(sid, &owner);
+        s = owner;
+    }
+    if (!s) return {};
+    ScanRuntime& r = rt_[s->scanId];
+    // the scan's tags are read from its header only (no pixels) when the scan has not been shown yet
+    if (!r.metaKnown && !s->missing) {
+        if (auto src = fk::openTiff(toPath(toQ(s->path)))) {
+            r.meta = (*src)->metadata();
+            r.metaKnown = true;
+            if (isLibrary() && s->library.capturedAt.empty() && !r.meta.dateTimeOriginal.empty())
+                s->library.capturedAt = exifToIso(r.meta.dateTimeOriginal);
+        }
+    }
+    const fk::LibraryMeta& m = it ? it->library : s->library;
+    QStringList labels;
+    for (const auto& t : m.textLabels)
+        labels << toQ(t);
+    const QFileInfo fi(toQ(s->path));
+    QString pixels;
+    if (it) {
+        const fk::RectI b = fk::boundingRect(it->outer);
+        pixels = QStringLiteral("%1 × %2").arg(b.w).arg(b.h);
+    } else if (s->info.width > 0) {
+        pixels = QStringLiteral("%1 × %2").arg(s->info.width).arg(s->info.height);
+    }
+    auto local = [](const std::string& exif) {
+        return exif.empty()
+                   ? QString()
+                   : QString::fromStdString(exifToIso(exif)).replace(QLatin1Char('T'), QLatin1Char(' '));
+    };
+    const bool identityHidden = settings_.value("privacy").toString() == QLatin1String("remove_identity");
+    return {{"kind", it ? QStringLiteral("print") : QStringLiteral("scan")},
+            {"title", it ? toQ(it->label) : fi.fileName()},
+            {"fileName", fi.fileName()},
+            {"folder", fi.absolutePath()},
+            {"library", toQ(library_.name)},
+            {"copyright", toQ(r.meta.copyright)},
+            {"artist", toQ(r.meta.artist)},
+            {"identityHidden", identityHidden}, // FK-004: the export preset leaves author fields out
+            {"captured", local(r.meta.dateTimeOriginal)},
+            {"scanned", local(r.meta.dateTime)},
+            {"rating", m.rating},
+            {"pick", toQ(m.pick)},
+            {"colorLabel", toQ(m.colorLabel)},
+            {"textLabels", labels},
+            {"pixels", pixels},
+            {"fileBytes", fi.exists() ? QLocale().formattedDataSize(fi.size()) : QString()},
+            {"dpi", s->info.dpiX > 0 ? QString::number(std::lround(s->info.dpiX)) : QString()},
+            {"prints", static_cast<int>(s->items.size())},
+            {"filmType", it ? toQ(it->filmType) : QString()},
+            {"missing", s->missing},
+            {"added", toQ(m.addedAt.empty() ? s->library.addedAt : m.addedAt)},
+            {"edits", m.editCount}};
+}
+
 bool AppController::isLibraryPath(const QVariant& url) const {
     const QFileInfo fi(localPath(url));
     return fk::isLibraryFolder(toPath(fi.isDir() ? fi.absoluteFilePath() : fi.absolutePath()));
@@ -1366,7 +1772,14 @@ void AppController::importScans(const QVariantList& urls) {
         s.expectedCount = settings_.value("expectedCount").toInt();
         s.autoCount = settings_.value("autoCount").toBool();
         // UX-05: when it entered the library (sorting by added order); never its capture date
-        if (isLibrary()) s.library.addedAt = fk::isoDateTimeNowUtc();
+        if (isLibrary()) {
+            s.library.addedAt = fk::isoDateTimeNowUtc();
+            // U020: the folder it came from joins the library's folder list (a reference)
+            const std::string dir = toStd(QFileInfo(path).absolutePath());
+            if (std::none_of(library_.sources.begin(), library_.sources.end(),
+                             [&](const fk::LibrarySource& src) { return src.path == dir; }))
+                library_.sources.push_back({dir, {}});
+        }
         project_.scans.push_back(s);
         rt_[s.scanId].state = QStringLiteral("detecting");
         if (first.empty()) first = s.scanId;
@@ -1634,6 +2047,7 @@ void AppController::loadPreview(const std::string& scanId) {
     ScanRuntime& r = rt_[scanId];
     if (r.state == QLatin1String("loading")) return;
     r.state = QStringLiteral("loading");
+    ++previewDecodes_; // U020 diagnostics (self-test: the grid never decodes every scan)
     const std::string path = s->path;
     const fk::Fingerprint known = s->fingerprint;
     auto res = std::make_shared<DetectResult>();
@@ -1707,6 +2121,10 @@ void AppController::loadPreview(const std::string& scanId) {
             r.display = res->display;
             r.meta = res->meta;
             r.metaKnown = true;
+            // U020: the photo's capture time when the scan file has one (never its scan date)
+            if (fk::ScanRecord* sr = findScan(scanId);
+                sr && isLibrary() && sr->library.capturedAt.empty() && !res->meta.dateTimeOriginal.empty())
+                sr->library.capturedAt = exifToIso(res->meta.dateTimeOriginal);
             r.proxyScale = res->proxyScale;
             r.thumb = boxDownscale(res->display, kThumbLong);
             r.state = QStringLiteral("ready");
@@ -1866,6 +2284,10 @@ void AppController::restore(fk::ItemRecord& it, const Snapshot& s) {
 }
 
 void AppController::pushUndo(fk::ItemRecord& it) {
+    if (isLibrary()) { // U020: the library sorts by edit time and count
+        it.library.editedAt = fk::isoDateTimeNowUtc();
+        ++it.library.editCount;
+    }
     auto& u = undo_[it.itemId];
     u.undo.push_back(snap(it));
     u.undo.back().seq = ++undoSeq_;
@@ -2275,6 +2697,7 @@ void AppController::rebuildModels() {
     }
     scans_->setRows(std::move(srows));
     items_->setRows(std::move(irows));
+    rebuildLibraryGrid(); // U020
 }
 
 void AppController::refreshItemThumbs(const std::string& scanId) {
@@ -2301,6 +2724,7 @@ void AppController::refreshItemThumbs(const std::string& scanId) {
     }
     ++r.rev;
     noteScanImages(scanId); // FK-005: proxy and thumbnails counted in the cache budget
+    saveDiskThumbs(scanId); // U020: a library keeps them for the next time it opens
 }
 
 QImage AppController::thumbnail(const QString& id) const {
@@ -2318,6 +2742,23 @@ QImage AppController::thumbnail(const QString& id) const {
     if (!s) return {};
     auto f = rt_.find(s->scanId);
     if (f == rt_.end()) return {};
+    if (kind == QLatin1String("print") && !f->second.display.isNull()) {
+        // U020 single view: the print at the scan proxy's resolution, upright (the thumbnail until it is
+        // read)
+        if (const fk::ItemRecord* it = item(key)) {
+            const double k = 1.0 / std::max(1, f->second.proxyScale);
+            const fk::RectI b = fk::boundingRect(it->outer);
+            const QRect rect =
+                QRect(static_cast<int>(b.x * k), static_cast<int>(b.y * k),
+                      std::max(1, static_cast<int>(b.w * k)), std::max(1, static_cast<int>(b.h * k)))
+                    .intersected(f->second.display.rect());
+            if (!rect.isEmpty()) {
+                QImage crop = f->second.display.copy(rect);
+                if (it->upright) crop = crop.transformed(QTransform().rotate(90.0 * it->upright));
+                return crop;
+            }
+        }
+    }
     auto t = f->second.itemThumbs.find(key);
     return t == f->second.itemThumbs.end() ? QImage() : t->second;
 }

@@ -333,7 +333,8 @@ json libraryMetaJson(const LibraryMeta& m) {
     return json{{"rating", m.rating},           {"pick", m.pick},
                 {"colorLabel", m.colorLabel},   {"textLabels", m.textLabels},
                 {"manualOrder", m.manualOrder}, {"addedAt", m.addedAt},
-                {"editedAt", m.editedAt},       {"editCount", m.editCount}};
+                {"editedAt", m.editedAt},       {"editCount", m.editCount},
+                {"capturedAt", m.capturedAt}};
 }
 LibraryMeta libraryMetaFrom(const json& j) {
     LibraryMeta m;
@@ -349,6 +350,7 @@ LibraryMeta libraryMetaFrom(const json& j) {
     m.editedAt = j.value("editedAt", "");
     const json n = j.value("editCount", json(0));
     m.editCount = n.is_number_integer() ? std::max(0, n.get<int>()) : 0;
+    m.capturedAt = j.value("capturedAt", "");
     return m;
 }
 

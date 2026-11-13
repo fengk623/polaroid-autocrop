@@ -23,6 +23,14 @@ and labels) · Tests: `test_library` (`Library.*`), self-test "U018 …"; U019/U
   workspace) → return to the same selection; reopening keeps ratings, labels and order. (self-test)
 - A2 Two libraries are isolated (no scan, rating or cache shared). (`Library.TwoLibrariesShareNothing`)
 - A3 100 scans in the grid never decode all originals at once (virtualised; memory measured as in FK-005).
+  U020: virtualised grid, thumbnails from the library's cache — self-test "U020 a library opens without decoding
+  every scan …" (12 scans: 1 decoded with the cache, 9 without, 25 of 36 cells exist); the 100-scan memory
+  measurement on a real device is HV-05.
+- A9 Library workspace (U020): prints and scans lists with counts; grid and single view; fourteen sort keys both
+  ways, missing values last, stable; filters by rating, pick, colour, text; keys 0–5, 6–9, P / X / U; information
+  with unknown shown as unknown and the capture time never the scan date; manual order; everything kept after
+  reopening; scan → its prints; folders; double-click edits and G returns to the same print.
+  (`LibraryView.*`; self-test "U020 …")
 - A4 Old `.fkproj`: migration copy, failure leaves nothing behind, original unchanged, backup kept.
   (`Library.OldProjectsAreImportedAsACopyAndTheProjectIsNeverTouched`, `Library.AFailedImportLeavesNothingBehind`,
   `Library.TheImportPreCheckRefusesWhatCannotBeCopiedSafely`; self-test "U018 an old project is imported …")

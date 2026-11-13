@@ -100,6 +100,11 @@ class SelfTest : public QObject {
     /// Remove from List keeps the folder, a missing folder is shown as missing, G / D switch workspaces,
     /// editing keys idle in the Library workspace.
     void runHome();
+    /// UX-05 (U020): inside a library — prints and scans lists, a library of twelve scans opened without
+    /// decoding them all (cache, on-screen cells only), rating / colour / pick keys, sort and filters, the
+    /// information panel (unknown stays unknown), manual order and everything kept after reopening, scan →
+    /// prints, folders, one at a time, edit and back to the same print, edits recorded.
+    void runLibraryGrid();
     QString defaultWorkspace_; ///< the workspace of a fresh start, before the self-test chose Edit Photos
     /// U029 (UX-12): the full regression of docs/v1/FEATURE-FREEZE.md for the features no other section
     /// exercises — folder import, relocation, removing a scan, templates, reset and snap, review and exclude,
