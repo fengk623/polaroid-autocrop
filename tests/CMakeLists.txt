@@ -27,6 +27,9 @@ target_include_directories(test_detection PRIVATE ${PROJECT_SOURCE_DIR}/core/src
 fk_add_gtest(test_composite composite core/test_composite.cpp)
 fk_add_gtest(test_relink relink core/test_relink.cpp)
 fk_add_gtest(test_project project core/test_project.cpp)
+# UX-05 (U018): libraries — RFC-0018
+fk_add_gtest(test_library project core/test_library.cpp)
+target_link_libraries(test_library PRIVATE nlohmann_json::nlohmann_json)
 # FK-014 (U028): files of earlier releases open here; what later versions add survives a save (tests/data/compat)
 fk_add_gtest(test_compat project core/test_compat.cpp)
 target_link_libraries(test_compat PRIVATE nlohmann_json::nlohmann_json)

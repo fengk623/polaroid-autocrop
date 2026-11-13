@@ -327,6 +327,31 @@ void mergeUnknown(json& j, const std::string& unknown) {
     }
 }
 
+// UX-05 (RFC-0018 §2): the whole object when anything is set, so a value cleared here is not revived from the
+// unknown part of the file
+json libraryMetaJson(const LibraryMeta& m) {
+    return json{{"rating", m.rating},           {"pick", m.pick},
+                {"colorLabel", m.colorLabel},   {"textLabels", m.textLabels},
+                {"manualOrder", m.manualOrder}, {"addedAt", m.addedAt},
+                {"editedAt", m.editedAt},       {"editCount", m.editCount}};
+}
+LibraryMeta libraryMetaFrom(const json& j) {
+    LibraryMeta m;
+    if (!j.is_object()) return m;
+    const json r = j.value("rating", json(0));
+    m.rating = r.is_number_integer() ? std::clamp(r.get<int>(), 0, 5) : 0;
+    m.pick = j.value("pick", "none");
+    m.colorLabel = j.value("colorLabel", "none");
+    m.textLabels = j.value("textLabels", std::vector<std::string>{});
+    const json o = j.value("manualOrder", json(0));
+    m.manualOrder = o.is_number_integer() ? o.get<int64_t>() : 0;
+    m.addedAt = j.value("addedAt", "");
+    m.editedAt = j.value("editedAt", "");
+    const json n = j.value("editCount", json(0));
+    m.editCount = n.is_number_integer() ? std::max(0, n.get<int>()) : 0;
+    return m;
+}
+
 json itemJson(const ItemRecord& it) {
     json edits = json::array();
     for (const auto& e : it.edits) {
@@ -387,6 +412,7 @@ json itemJson(const ItemRecord& it) {
           {"lastOutputAt", it.composite.lastOutputAt}}},
         {"finalExport", it.finalExport},
         {"history", {{"undo", it.undo}, {"redo", it.redo}}}};
+    if (!it.library.empty()) out["library"] = libraryMetaJson(it.library);
     mergeUnknown(out, it.unknownJson);
     return out;
 }
@@ -463,6 +489,7 @@ ItemRecord itemFrom(const json& j) {
         it.undo = j["history"].value("undo", std::vector<std::string>{});
         it.redo = j["history"].value("redo", std::vector<std::string>{});
     }
+    if (j.contains("library")) it.library = libraryMetaFrom(j["library"]);
     // retired keys are not carried along: the per-print placeholders of versions before 0.7.0-alpha.5
     json raw = j;
     if (raw.contains("composite") && raw["composite"].is_object())
@@ -499,6 +526,7 @@ json scanJson(const ScanRecord& s) {
                {"warnings", s.warnings}}},
              {"view", {{"rotation", s.rotation}}},
              {"items", items}};
+    if (!s.library.empty()) out["library"] = libraryMetaJson(s.library);
     mergeUnknown(out, s.unknownJson);
     return out;
 }
@@ -535,6 +563,7 @@ ScanRecord scanFrom(const json& j) {
     s.rotation = rot.is_number_integer() ? ((rot.get<int>() % 4) + 4) % 4 : 0;
     for (const auto& it : j.value("items", json::array()))
         s.items.push_back(itemFrom(it));
+    if (j.contains("library")) s.library = libraryMetaFrom(j["library"]);
     s.unknownJson = unknownOf(j, scanJson(s));
     return s;
 }
@@ -758,11 +787,15 @@ Result<std::filesystem::path> setAsideDamaged(const std::filesystem::path& proje
 Status saveProject(const Project& p, const std::filesystem::path& path) {
     Project copy = p;
     copy.modifiedAt = isoDateTimeNowUtc();
-    // keep relative paths current for portability
+    // keep relative paths current for portability, always with '/' (RFC-0018 §7: a folder moved between macOS
+    // and Windows with its scans still resolves; Windows reads '/' as well)
     for (auto& s : copy.scans) {
         std::error_code ec;
         auto rel = std::filesystem::relative(pathFromUtf8(s.path), path.parent_path(), ec);
-        if (!ec && !rel.empty()) s.relPath = pathToUtf8(rel.generic_u8string().empty() ? rel : rel);
+        if (!ec && !rel.empty()) {
+            const auto g = rel.generic_u8string();
+            s.relPath = std::string(reinterpret_cast<const char*>(g.data()), g.size());
+        }
     }
     // FK-008: the previous file becomes the backup only when it is a readable project — a damaged file never
     // replaces a good backup
@@ -790,12 +823,20 @@ void resolveScanPaths(Project& p, const std::filesystem::path& projectDir) {
             continue;
         }
         if (!s.relPath.empty()) {
-            const auto cand = projectDir / pathFromUtf8(s.relPath);
-            if (std::filesystem::exists(cand, ec)) {
-                s.path = pathToUtf8(std::filesystem::weakly_canonical(cand, ec));
-                s.missing = false;
-                continue;
+            // versions before 0.8 wrote Windows separators on Windows; on macOS a '\' is part of a name
+            std::string slashed = s.relPath;
+            std::replace(slashed.begin(), slashed.end(), '\\', '/');
+            bool found = false;
+            for (const std::string& rel : {s.relPath, slashed}) {
+                const auto cand = projectDir / pathFromUtf8(rel);
+                if (std::filesystem::exists(cand, ec)) {
+                    s.path = pathToUtf8(std::filesystem::weakly_canonical(cand, ec));
+                    s.missing = false;
+                    found = true;
+                    break;
+                }
             }
+            if (found) continue;
         }
         s.missing = true;
     }

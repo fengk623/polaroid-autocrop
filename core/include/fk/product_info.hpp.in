@@ -9,6 +9,7 @@ inline constexpr const char* kGitSha = "@FK_GIT_SHA@"; ///< full commit SHA, "-d
 inline constexpr const char* kBuildId = "@FK_BUILD_ID@"; ///< CI run number.attempt, or "local"
 inline constexpr const char* kBundleId = "@FK_BUNDLE_ID@";
 inline constexpr const char* kProjectExt = "@FK_PROJECT_EXT@";
+inline constexpr const char* kLibraryExt = "@FK_LIBRARY_EXT@"; ///< library folders: `<Name>.fklibrary/` (RFC-0018)
 inline constexpr const char* kSidecarSuffix = "@FK_SIDECAR_SUFFIX@";
 inline constexpr const char* kTemplateSuffix = "@FK_TEMPLATE_SUFFIX@";
 inline constexpr const char* kXmpNamespace = "@FK_XMP_NAMESPACE@";

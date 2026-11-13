@@ -4,7 +4,10 @@ Read this first after any interruption. Newest entry on top.
 
 ## Current state
 - v1.0 work runs unit by unit (docs/v1/PLAN.md, docs/v1/UNITS.md); the per-step log is docs/v1/WORKLOG.md.
-- Baseline: v0.5.0 = merge of PR #2 (`ce93e05`). Current unit: U001 (`unit/U001-foundation`, v0.6.0-alpha.1).
+- 2026-11-12: U001–U017 and U021 part 1–U029 merged (PR #30 brings the stacked part to `main`); RFC-0018 accepted;
+  current unit U018 (library storage, v0.8.0-alpha.1), then U019, U020, U021 part 2; the owner tests packages
+  after the last unit.
+- Baseline: v0.5.0 = merge of PR #2 (`ce93e05`).
 - Last full test run: 2026-10-30, Linux local (core 135 + 3 known-issue WILL_FAIL, app self-test with 7 known issues
   reproduced); CI three platforms green on PR #2.
 - Blockers: owner's 679 MB scan not transferable; owner's installed package version unconfirmed (docs/v1/BASELINE.md).

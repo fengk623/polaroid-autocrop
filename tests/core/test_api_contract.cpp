@@ -10,6 +10,7 @@
 #include "fk/geometry.hpp"
 #include "fk/image.hpp"
 #include "fk/image_io.hpp"
+#include "fk/library.hpp"
 #include "fk/memory.hpp"
 #include "fk/metadata.hpp"
 #include "fk/project.hpp"
@@ -153,6 +154,37 @@ static_assert(std::is_same_v<decltype(fk::Project::savedBy), std::string> &&
 static_assert(
     std::is_same_v<decltype(&fk::compareVersions), int (*)(const std::string&, const std::string&)>);
 
+// ---- §7a libraries (UX-05, 0.8.0-alpha.1)
+static_assert(std::is_same_v<decltype(fk::ItemRecord::library), fk::LibraryMeta> &&
+              std::is_same_v<decltype(fk::ScanRecord::library), fk::LibraryMeta>);
+static_assert(std::is_same_v<decltype(&fk::createLibrary),
+                             fk::Result<fk::Library> (*)(const path&, const std::string&)>);
+static_assert(std::is_same_v<decltype(&fk::openLibrary),
+                             fk::Result<fk::Library> (*)(const path&, fk::LibraryOpenInfo*)>);
+static_assert(std::is_same_v<decltype(&fk::saveLibrary), fk::Status (*)(fk::Library&, const std::string&)>);
+static_assert(std::is_same_v<decltype(&fk::libraryRestoreCandidates), std::vector<path> (*)(const path&)>);
+static_assert(
+    std::is_same_v<decltype(&fk::restoreLibraryCatalog), fk::Result<path> (*)(const path&, const path&)>);
+static_assert(
+    std::is_same_v<decltype(&fk::acquireLibraryLock),
+                   fk::Result<fk::LockAttempt> (*)(const path&, const fk::LockOwner&, const std::string&)>);
+static_assert(std::is_same_v<decltype(&fk::refreshLibraryLock),
+                             fk::Status (*)(const path&, const fk::LockOwner&, const std::string&)>);
+static_assert(std::is_same_v<decltype(&fk::takeOverLibraryLock),
+                             fk::Result<fk::LockAttempt> (*)(const path&, const fk::LockOwner&,
+                                                             const fk::LibraryLock&, const std::string&)>);
+static_assert(std::is_same_v<decltype(&fk::releaseLibraryLock), void (*)(const path&, const fk::LockOwner&)>);
+static_assert(
+    std::is_same_v<decltype(&fk::checkProjectMigration),
+                   fk::Result<fk::MigrationCheck> (*)(const path&, const path&, const std::string&)>);
+static_assert(std::is_same_v<decltype(&fk::migrateProjectToLibrary),
+                             fk::Result<fk::Library> (*)(const path&, const path&, const std::string&,
+                                                         const fk::MigrateOptions&)>);
+static_assert(v(fk::LockState::acquired) == 0 && v(fk::LockState::held) == 1 && v(fk::LockState::stale) == 2);
+static_assert(fk::kLibrarySchemaVersion == 1 && fk::kLibraryBackupsKept == 10 &&
+              fk::kLibraryBackupIntervalSeconds == 3600 && fk::kLibraryLockHeartbeatSeconds == 60 &&
+              fk::kLibraryLockStaleSeconds == 180);
+
 // ---- §8 metadata, memory
 static_assert(v(fk::PrivacyPreset::keep_all_safe) == 0 && v(fk::PrivacyPreset::remove_location) == 1 &&
               v(fk::PrivacyPreset::remove_identity) == 2);
@@ -172,6 +204,10 @@ TEST(ApiContract, StableNames) {
     EXPECT_STREQ(fk::fileFormatName(fk::FileFormat::dng), "dng");
     EXPECT_STREQ(fk::photometricName(fk::Photometric::min_is_white), "miniswhite");
     EXPECT_STREQ(fk::compressionName(fk::Compression::deflate), "deflate");
+    EXPECT_STREQ(fk::lockStateName(fk::LockState::stale), "stale");
+    EXPECT_EQ(fk::libraryCatalogPath("L.fklibrary").filename(), path("catalog.fkproj"));
+    EXPECT_EQ(fk::libraryManifestPath("L.fklibrary").filename(), path("library.json"));
+    EXPECT_EQ(fk::libraryLockPath("L.fklibrary").filename(), path("library.lock"));
 }
 
 // API-SPEC header: API version 1.0, FK_API_VERSION_MAJOR / MINOR, apiVersion() = major*1000 + minor.

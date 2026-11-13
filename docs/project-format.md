@@ -82,6 +82,13 @@ clockwise 0–3 (other integers are taken modulo 4, anything else = 0). Display 
 file's coordinates and the scan file is never rewritten; exports use it only when uprights are off
 (`exportTurns`). Absent in older projects = 0. Earlier versions ignore it (and drop it on save): the scan shows
 unturned, nothing else changes.
+`library` on scans and prints (since 0.8.0-alpha.1, UX-05, RFC-0018 §2): `rating` (0–5), `pick` (`none` /
+`picked` / `rejected`), `colorLabel` (`none` / `red` / `yellow` / `green` / `blue` / `purple`), `textLabels`
+(strings), `manualOrder` (0 = not placed), `addedAt` (when it entered a library — never a capture date),
+`editedAt`, `editCount`. Written only when something is set, as the whole object; absent = nothing set. Values
+out of range are read safely (rating clamped, counts ≥ 0); unknown pick or colour values are kept as read.
+Earlier versions keep the object verbatim (unknown keys). `relPath` is written with `/` since 0.8.0-alpha.1;
+a `\` path written by earlier Windows versions still resolves everywhere.
 Save: write `name.fkproj.tmp-<rand>` → flush+fsync → rename over `name.fkproj`; previous file copied to
 `name.fkproj.bak` first. Load failure → offer `.bak`.
 
@@ -112,6 +119,33 @@ and opens in earlier versions read-only, `Project.NewerSchemaOpensReadOnly`).
   `settings.autoCount`, `settings.output`, `detection.autoCount`, `view.rotation`, `composite.mask`,
   `edits[].relinked.transform`. Upgrading again then shows: scans counted manually, no rotation, prints using the
   project's mask, relink turns decided again from the picture, output settings as currently set in the app.
+
+## 2a. Library `<Name>.fklibrary/` — schema `fk.library/1` (since 0.8.0-alpha.1, RFC-0018, UX-05)
+A normal folder (not a macOS package):
+```
+Summer 2026.fklibrary/
+  library.json            fk.library/1: libraryId, name, cover, sources[{path, relPath}], sort{}, createdAt,
+                          openedAt, modifiedAt, app{name, version}; unknown keys kept
+  library.json.bak        the previous library.json
+  catalog.fkproj          fk.project/1 — the library's content, read and written like any project
+  catalog.fkproj.bak      the previous good catalog (a damaged one never replaces it)
+  backups/catalog-YYYYMMDD-HHMMSS.fkproj   history: a copy of the catalog as saved, at most one per hour, ten kept
+  library.lock            fk.lock/1 {pid, host, user, app, token, startedAt, heartbeatAt} while an app writes it
+  cache/                  rebuildable data only; deleting it costs time, nothing else
+```
+- Scans and graded files are referenced (absolute path, `relPath` from the library folder, fingerprint), never
+  copied, moved or deleted. A library moved together with its scans still finds them.
+- Save order: catalog (atomic, `.bak`), then the history entry, then `library.json` (atomic, `.bak`), which never
+  names a print or scan the catalog does not contain (`cover`).
+- A later `fk.library/N` or `fk.project/N` opens read-only. Unknown keys of `library.json` are kept.
+- Damaged catalog: the readable copies (`.bak`, `backups/`) are offered, the most recently saved first; restoring
+  moves the damaged file aside as `catalog.fkproj.damaged-<UTC>`. Damaged `library.json`: its `.bak`, else
+  rebuilt from the catalog.
+- Lock: a second app instance opens the library read-only and names the holder; a lock not renewed for 3 minutes
+  (or left by an ended process on the same computer) is taken over only after asking.
+- Old projects are imported as a copy ("Import Project into New Library"): the `.fkproj` and its `.bak` are only
+  read; the catalog keeps the project id, the library gets its own id; a failed import leaves nothing behind.
+- Recovery snapshots of a library are keyed by its library id and reopen the same library.
 
 ## 3. Template `*.fktemplate.json` — schema `fk.template/1`
 ```json

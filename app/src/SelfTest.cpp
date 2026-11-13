@@ -7,6 +7,7 @@
 
 #include "fk/hash.hpp"
 #include "fk/image_io.hpp"
+#include "fk/library.hpp"
 #include "fk/util.hpp"
 #include "fk/version.hpp"
 
@@ -3287,6 +3288,263 @@ void SelfTest::runDisplayProfile() {
     restore();
 }
 
+void SelfTest::runLibrary() {
+    const QString d = QDir(dir_).filePath(QStringLiteral("library"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d);
+    QStringList notes;
+    auto nc = connect(app_, &AppController::notification, this,
+                      [&](const QString& text, const QString&) { notes << text; });
+    auto ask = [&](const QString& action, const QVariant& url) {
+        QMetaObject::invokeMethod(window_, "replaceProject", Q_ARG(QVariant, action), Q_ARG(QVariant, url));
+        QCoreApplication::processEvents();
+        app_->waitIdle(300000);
+    };
+    auto sha = [](const QString& f) {
+        auto h = fk::sha256File(fk::pathFromUtf8(toStd(f)));
+        return h ? toQ(*h) : QString();
+    };
+    auto exists = [](const QString& f) { return QFileInfo::exists(f); };
+    app_->newProject();
+
+    // New Library through the menus' path (the replace guard): `<name>.fklibrary` in the chosen folder
+    const QString folder = QDir(d).filePath(QStringLiteral("Self-test library.fklibrary"));
+    const QVariantMap target = app_->libraryTarget(d, QStringLiteral("Self-test library"));
+    ask(QStringLiteral("newLibrary"),
+        QVariantMap{{"parent", d}, {"name", QStringLiteral("Self-test library")}});
+    const QString catalog = QDir(folder).filePath(QStringLiteral("catalog.fkproj"));
+    QVariantMap lock = app_->libraryLockInfo();
+    check(
+        QStringLiteral("U018 New Library creates <name>.fklibrary in the chosen folder and opens it, locked "
+                       "for writing"),
+        target.value("folder").toString() == folder && app_->isLibrary() && app_->libraryFolder() == folder &&
+            exists(QDir(folder).filePath(QStringLiteral("library.json"))) && exists(catalog) &&
+            lock.value("ours").toBool() && !app_->readOnly() &&
+            app_->projectName() == QLatin1String("Self-test library"),
+        QStringLiteral("folder %1, library %2, ours %3, read-only %4, name %5")
+            .arg(app_->libraryFolder())
+            .arg(app_->isLibrary())
+            .arg(lock.value("ours").toBool())
+            .arg(app_->readOnly())
+            .arg(app_->projectName()));
+
+    // scans imported into it are references; ratings, labels and order are saved with the catalog
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    const fk::ScanRecord* sc = app_->project().scans.empty() ? nullptr : &app_->project().scans.front();
+    const QString scanId = sc ? toQ(sc->scanId) : QString();
+    const QString itemId = sc && !sc->items.empty() ? toQ(sc->items.front().itemId) : QString();
+    const bool refused = !app_->setLibraryMeta(itemId, {{"rating", 9}}) &&
+                         !app_->setLibraryMeta(itemId, {{"colorLabel", QStringLiteral("magenta")}});
+    const bool set = app_->setLibraryMeta(itemId, {{"rating", 4},
+                                                   {"pick", QStringLiteral("picked")},
+                                                   {"colorLabel", QStringLiteral("green")},
+                                                   {"textLabels", QStringList{QStringLiteral("beach")}},
+                                                   {"manualOrder", 2}}) &&
+                     app_->setLibraryMeta(scanId, {{"rating", 1}});
+    const bool saved = app_->saveProject() && app_->saveProject(); // the second save keeps a .bak
+    const QStringList backups = QDir(QDir(folder).filePath(QStringLiteral("backups")))
+                                    .entryList({QStringLiteral("catalog-*.fkproj")});
+    const QString addedAt = app_->libraryMeta(scanId).value("addedAt").toString();
+    check(
+        QStringLiteral("U018 a library saves its catalog, a backups/ entry and library.json; the scan stays "
+                       "where it is"),
+        sc && set && refused && saved && !app_->dirty() && backups.size() == 1 &&
+            exists(catalog + QStringLiteral(".bak")) && !addedAt.isEmpty() &&
+            QFileInfo(toQ(sc->path)) == QFileInfo(scan_),
+        QStringLiteral("set %1, refused %2, saved %3, backups %4, added %5")
+            .arg(set)
+            .arg(refused)
+            .arg(saved)
+            .arg(backups.size())
+            .arg(addedAt));
+
+    // closing releases the lock; reopening keeps everything
+    const int prints = app_->counts().value("prints").toInt();
+    app_->newProject();
+    const bool released = !exists(QDir(folder).filePath(QStringLiteral("library.lock")));
+    const bool reopened = app_->openLibrary(folder);
+    app_->waitIdle(300000);
+    const QVariantMap m = app_->libraryMeta(itemId);
+    check(
+        QStringLiteral("U018 closing releases the lock; reopening keeps ratings, pick, labels, order and the "
+                       "added date"),
+        released && reopened && app_->counts().value("prints").toInt() == prints && m.value("rating") == 4 &&
+            m.value("pick") == QLatin1String("picked") && m.value("colorLabel") == QLatin1String("green") &&
+            m.value("textLabels").toStringList() == QStringList{QStringLiteral("beach")} &&
+            m.value("manualOrder").toLongLong() == 2 && app_->libraryMeta(scanId).value("rating") == 1 &&
+            app_->libraryMeta(scanId).value("addedAt").toString() == addedAt,
+        QStringLiteral("released %1, reopened %2, prints %3/%4, rating %5")
+            .arg(released)
+            .arg(reopened)
+            .arg(app_->counts().value("prints").toInt())
+            .arg(prints)
+            .arg(m.value("rating").toInt()));
+
+    // a library folder dropped on the window opens it (through the same replace guard)
+    app_->newProject();
+    app_->dropFiles({QUrl::fromLocalFile(folder)});
+    QCoreApplication::processEvents();
+    app_->waitIdle(300000);
+    check(
+        QStringLiteral("U018 a library folder dropped on the window opens the library, nothing is imported"),
+        app_->isLibrary() && app_->libraryFolder() == folder && app_->counts().value("scans").toInt() == 1,
+        QStringLiteral("library %1, scans %2")
+            .arg(app_->isLibrary())
+            .arg(app_->counts().value("scans").toInt()));
+
+    // a second instance: someone else's fresh lock → read-only here, named, saving refused, lock untouched
+    app_->newProject();
+    fk::LockOwner other = fk::thisLockOwner();
+    other.host = "other-computer";
+    other.user = "someone";
+    fk::acquireLibraryLock(fk::pathFromUtf8(toStd(folder)), other);
+    notes.clear();
+    app_->openLibrary(folder);
+    app_->waitIdle(300000);
+    const bool namedHolder = notes.join(QLatin1Char('\n')).contains(QLatin1String("other-computer"));
+    const bool saveRefused = !app_->saveProject();
+    lock = app_->libraryLockInfo();
+    check(QStringLiteral(
+              "U018 a library open in another FrameKeeper opens read-only here, says who has it, and "
+              "refuses to save"),
+          app_->isLibrary() && app_->readOnly() && namedHolder && saveRefused &&
+              lock.value("host").toString() == QLatin1String("other-computer") &&
+              !lock.value("ours").toBool(),
+          notes.join(QLatin1String(" | ")));
+
+    // an abandoned lock (no heartbeat for 10 minutes): asked first, taken over only on "Take over"
+    app_->newProject();
+    fk::releaseLibraryLock(fk::pathFromUtf8(toStd(folder)), other);
+    fk::acquireLibraryLock(fk::pathFromUtf8(toStd(folder)), other,
+                           fk::epochToIsoUtc(fk::isoUtcToEpoch(fk::isoDateTimeNowUtc()) - 600));
+    QString staleHost;
+    auto sc2 = connect(app_, &AppController::libraryLockStale, this,
+                       [&](const QString& host, const QString&, const QString&) { staleHost = host; });
+    app_->openLibrary(folder);
+    app_->waitIdle(300000);
+    disconnect(sc2);
+    QObject* staleDialog =
+        window_ ? window_->findChild<QObject*>(QStringLiteral("staleLockDialog")) : nullptr;
+    const bool asked = staleDialog && staleDialog->property("visible").toBool();
+    const bool readOnlyBefore = app_->readOnly();
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    const bool tookOver = app_->takeOverLibrary();
+    lock = app_->libraryLockInfo();
+    check(QStringLiteral("U018 an abandoned lock is taken over only after asking"),
+          staleHost == QLatin1String("other-computer") && asked && readOnlyBefore && tookOver &&
+              !app_->readOnly() && lock.value("ours").toBool(),
+          QStringLiteral("stale host %1, asked %2, read-only before %3, took over %4")
+              .arg(staleHost)
+              .arg(asked)
+              .arg(readOnlyBefore)
+              .arg(tookOver));
+
+    // a damaged catalog: offered a readable copy; restoring keeps the damaged file aside
+    app_->newProject();
+    {
+        QFile f(catalog);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write("{ damaged");
+    }
+    QString offered;
+    auto bc = connect(app_, &AppController::backupAvailable, this,
+                      [&](const QString& path, const QString&, const QString&) { offered = path; });
+    const bool openedDamaged = app_->openLibrary(folder);
+    disconnect(bc);
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    const bool restored = !offered.isEmpty() && app_->restoreBackup(offered);
+    app_->waitIdle(300000);
+    const QStringList aside = QDir(folder).entryList({QStringLiteral("catalog.fkproj.damaged-*")});
+    QFile asideFile(QDir(folder).filePath(aside.value(0)));
+    const bool keptBytes = asideFile.open(QIODevice::ReadOnly) && asideFile.readAll() == "{ damaged";
+    check(QStringLiteral(
+              "U018 a damaged catalog is restored from a readable copy, the damaged file kept aside"),
+          !openedDamaged && offered == folder && restored && app_->isLibrary() &&
+              app_->counts().value("scans").toInt() == 1 && aside.size() == 1 && keptBytes &&
+              app_->libraryMeta(itemId).value("rating") == 4,
+          QStringLiteral("offered %1, restored %2, scans %3, aside %4")
+              .arg(offered)
+              .arg(restored)
+              .arg(app_->counts().value("scans").toInt())
+              .arg(aside.join(QLatin1Char(','))));
+
+    // an old project imported into a new library: a copy; the project file is only read and still opens
+    app_->newProject();
+    app_->importScans({scan_});
+    app_->waitIdle(300000);
+    const QString old = QDir(d).filePath(QStringLiteral("old.fkproj"));
+    app_->saveProjectAs(old);
+    const int oldPrints = app_->counts().value("prints").toInt();
+    const QString oldHash = sha(old);
+    app_->newProject();
+    const QVariantMap pre = app_->checkProjectImport(old, d, QStringLiteral("Imported"));
+    ask(QStringLiteral("importLibrary"),
+        QVariantMap{{"parent", d}, {"name", QStringLiteral("Imported")}, {"project", old}});
+    const QString imported = QDir(d).filePath(QStringLiteral("Imported.fklibrary"));
+    const bool importedOk = app_->isLibrary() && app_->libraryFolder() == imported &&
+                            app_->counts().value("prints").toInt() == oldPrints;
+    const bool unchanged = sha(old) == oldHash && !oldHash.isEmpty();
+    app_->newProject();
+    const bool oldOpens = app_->openProject(old) && !app_->isLibrary();
+    app_->waitIdle(300000);
+    check(QStringLiteral("U018 an old project is imported into a new library as a copy; the project file is "
+                         "unchanged and still opens"),
+          pre.value("ok").toBool() && pre.value("prints").toInt() == oldPrints && importedOk && unchanged &&
+              oldOpens,
+          QStringLiteral("pre-check %1 (%2), imported %3, unchanged %4, old opens %5")
+              .arg(pre.value("ok").toBool())
+              .arg(pre.value("error").toString())
+              .arg(importedOk)
+              .arg(unchanged)
+              .arg(oldOpens));
+
+    // unsaved work of a library is recovered into that library, unsaved
+    app_->newProject();
+    app_->openLibrary(imported);
+    app_->waitIdle(300000);
+    const QString impCatalog = QDir(imported).filePath(QStringLiteral("catalog.fkproj"));
+    const QString impItem = app_->project().scans.empty() || app_->project().scans.front().items.empty()
+                                ? QString()
+                                : toQ(app_->project().scans.front().items.front().itemId);
+    app_->setLibraryMeta(impItem, {{"rating", 3}});
+    app_->writeRecovery();
+    app_->newProject(); // what a crash looks like to the next session: the snapshot is still there
+    QString snapFile;
+    for (const QVariant& v : app_->recoverySnapshots())
+        if (QDir::cleanPath(v.toMap().value("projectPath").toString()) == QDir::cleanPath(impCatalog))
+            snapFile = v.toMap().value("file").toString();
+    const bool recovered = !snapFile.isEmpty() && app_->recoverSnapshot(snapFile);
+    app_->waitIdle(300000);
+    check(QStringLiteral("U018 unsaved work of a library is recovered into the same library, unsaved"),
+          recovered && app_->isLibrary() && app_->libraryFolder() == imported && app_->dirty() &&
+              app_->libraryMeta(impItem).value("rating") == 3 &&
+              app_->libraryLockInfo().value("ours").toBool(),
+          QStringLiteral("snapshot %1, recovered %2, folder %3, dirty %4")
+              .arg(snapFile)
+              .arg(recovered)
+              .arg(app_->libraryFolder())
+              .arg(app_->dirty()));
+
+    // Save As from a library writes a project file and leaves the library as saved
+    const QString catalogBefore = sha(impCatalog);
+    const QString copy = QDir(d).filePath(QStringLiteral("copy.fkproj"));
+    const bool savedAs = app_->saveProjectAs(copy);
+    check(
+        QStringLiteral("U018 Save As from a library writes a project file; the library keeps its saved state "
+                       "and is released"),
+        savedAs && !app_->isLibrary() && app_->projectPath() == copy && !app_->dirty() &&
+            sha(impCatalog) == catalogBefore &&
+            !exists(QDir(imported).filePath(QStringLiteral("library.lock"))),
+        QStringLiteral("saved %1, library %2, path %3")
+            .arg(savedAs)
+            .arg(app_->isLibrary())
+            .arg(app_->projectPath()));
+
+    disconnect(nc);
+    app_->discardCurrentRecovery();
+    app_->newProject();
+}
+
 void SelfTest::runFormats() {
     QMetaObject::invokeMethod(window_, "closeDialogs");
     waitFor([] { return false; }, 600);
@@ -4782,6 +5040,13 @@ int SelfTest::runTextLayout() {
             QMetaObject::invokeMethod(window_, "closeDialogs");
         }
         QObject* commands = window_->property("commands").value<QObject*>();
+        if (commands) { // UX-05: New Library dialog
+            QMetaObject::invokeMethod(commands, "newLibrary");
+            settle();
+            inspect(QStringLiteral("%1 1100×700 dialog new library").arg(theme));
+            if (theme == QLatin1String("dark")) snapshot(QStringLiteral("U018-new-library-dialog"));
+            QMetaObject::invokeMethod(window_, "closeDialogs");
+        }
         if (commands && !id.isEmpty()) {
             QMetaObject::invokeMethod(commands, "exportImageAreas",
                                       Q_ARG(QVariant, QVariant(QStringList{id})));
@@ -4890,6 +5155,9 @@ int SelfTest::runScenario(const QString& name) {
         rc = runTextLayout() == 0 && allOk_ ? 0 : 1;
     else if (name == QLatin1String("freeze")) { // U029: the FEATURE-FREEZE regression section alone
         runFreezeRegression();
+        rc = allOk_ ? 0 : 1;
+    } else if (name == QLatin1String("library")) { // U018: the library section alone
+        runLibrary();
         rc = allOk_ ? 0 : 1;
     }
     QJsonObject report{
@@ -5335,6 +5603,7 @@ int SelfTest::run() {
     runMemoryBudget();
     runDisplayProfile();
     runFormats();
+    runLibrary();
     runFreezeRegression();
     runLayout();
     runToolbar();

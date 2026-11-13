@@ -158,6 +158,43 @@ written back unchanged; `Project::unknownJson` does so for top-level keys. In `f
 `int compareVersions(const std::string& a, const std::string& b)` — SemVer 2.0 precedence, −1 / 0 / 1, and 0
 when either is not a version.
 
+### 7a. Libraries (`fk/library.hpp`) — RFC-0018, `docs/project-format.md` §2a
+```cpp
+struct LibraryMeta { int rating; std::string pick, colorLabel; std::vector<std::string> textLabels;
+  int64_t manualOrder; std::string addedAt, editedAt; int editCount; bool empty() const; }; // ItemRecord/ScanRecord::library
+struct LibrarySource { std::string path, relPath; };
+struct LibraryManifest { std::string libraryId, name, cover; std::vector<LibrarySource> sources; std::string sortJson,
+  createdAt, openedAt, modifiedAt, savedBy, unknownJson; };
+struct Library { path folder; LibraryManifest manifest; Project catalog; };
+path libraryManifestPath(const path&); path libraryCatalogPath(const path&); path libraryLockPath(const path&);
+path libraryBackupDir(const path&); path libraryCacheDir(const path&); bool isLibraryFolder(const path&);
+std::string libraryFolderName(const std::string& name);
+Result<Library> createLibrary(const path& parent, const std::string& name);
+struct LibraryOpenInfo { OpenMode mode; std::string manifestSource; };      // "file", "backup", "catalog"
+Result<Library> openLibrary(const path& folder, LibraryOpenInfo* = nullptr);
+Status saveLibrary(Library&, const std::string& nowUtc = {});
+std::vector<path> libraryBackups(const path&); std::vector<path> libraryRestoreCandidates(const path&);
+Result<path> restoreLibraryCatalog(const path& folder, const path& from);   // returns the damaged file kept aside
+struct LockOwner { int64_t pid; std::string host, user, app, token; }; LockOwner thisLockOwner();
+struct LibraryLock { bool present, readable; LockOwner owner; std::string startedAt, heartbeatAt; bool ours, stale; };
+enum class LockState : int { acquired = 0, held = 1, stale = 2 }; const char* lockStateName(LockState);
+struct LockAttempt { LockState state; LibraryLock lock; };
+LibraryLock readLibraryLock(const path&, const LockOwner&, const std::string& nowUtc = {});
+Result<LockAttempt> acquireLibraryLock(const path&, const LockOwner&, const std::string& nowUtc = {});
+Status refreshLibraryLock(const path&, const LockOwner&, const std::string& nowUtc = {});      // conflict: taken over
+Result<LockAttempt> takeOverLibraryLock(const path&, const LockOwner&, const LibraryLock& seen,
+                                        const std::string& nowUtc = {});
+void releaseLibraryLock(const path&, const LockOwner&);
+struct MigrationCheck { int scans, prints, missingScans, exportRecords; uint64_t projectBytes, freeBytes; path destination; };
+Result<MigrationCheck> checkProjectMigration(const path& project, const path& parent, const std::string& name);
+struct MigrateOptions { std::string failAt; };                             // tests: "write", "verify", "rename"
+Result<Library> migrateProjectToLibrary(const path& project, const path& parent, const std::string& name,
+                                        const MigrateOptions& = {});
+int64_t isoUtcToEpoch(const std::string&); std::string epochToIsoUtc(int64_t);
+```
+Constants: `kLibrarySchemaVersion = 1`, `kLibraryBackupsKept = 10`, `kLibraryBackupIntervalSeconds = 3600`,
+`kLibraryLockHeartbeatSeconds = 60`, `kLibraryLockStaleSeconds = 180`. JSON schemas `fk.library/1`, `fk.lock/1`.
+
 ## 8. Colour, metadata, cache, jobs, diagnostics, capabilities
 See RFC-0012/13/14/10/15 and ADR-0007. Key types: `Profile`, `Transform`, `MetadataSet`, `PrivacyPreset {keep_all_safe=0, remove_location=1, remove_identity=2}`,
 `MemoryStats`, `BufferAccounting`, `CacheLedger` (below).
@@ -200,5 +237,6 @@ void fk_free(void*);
 | 0.7.0-alpha.4 | `quarterTurnMatrix`, `quarterTurnSize`, `ScanRecord::rotation`, `rotateScanView`, `exportTurns` (UX-04). |
 | 0.7.0-alpha.5 | `MaskChoice`, `naturalBlend`, `resolveMask`, `edgeChange`, `CompositeSettings::mask`/`maskSet`, `deltaE2000` (UX-08). |
 | 0.7.0-alpha.7 | `CacheLedger`, `defaultCacheBudget`, `systemMemory`, `TiffSource::cachedBytes` (FK-005). |
+| 0.8.0-alpha.1 | `fk/library.hpp` (§7a): libraries — create/open/save, history, restore, lock, migration copy; `LibraryMeta` on `ItemRecord`/`ScanRecord` (UX-05, U018). Additive. |
 | 0.7.0-alpha.15 | `compareVersions`, `Project::savedBy`, `unknownJson` on `ProjectSettings`, `ScanRecord`, `ItemRecord`, `Sidecar` (FK-014). Additive. |
 | 0.7.0-alpha.14 | Spec corrected to the headers (FK-013): `openTiff` returns `TiffSource`, `findMatch` / `checkEdited` signatures, `makeTemplate`, `fingerprintFile`, `boundingRect` clamp, `nextFreeVersionPath` version out; disk cache, job queue, capabilities and the C ABI marked planned. No code change. |
