@@ -118,6 +118,16 @@ jobs:
         run: |
           python3 tools/ci-annotate.py build/ci/test-report.xml || python tools/ci-annotate.py build/ci/test-report.xml
           python3 tools/ci-annotate.py build/ci/test.log || python tools/ci-annotate.py build/ci/test.log
+      # FK-012 (U026): the exported Linear DNG decoded by an independent decoder (LibRaw via rawpy, test-only,
+      # installed in a venv) and compared with the 16-bit TIFF export of the same image area
+      - name: Linear DNG decoded independently (FK-012)
+        id: dng
+        if: matrix.name == 'linux-x64'
+        run: |
+          python3 -m venv build/dng-venv
+          build/dng-venv/bin/pip install --quiet "rawpy>=0.21" numpy tifffile imagecodecs
+          build/dng-venv/bin/python tools/dng-interop.py --fkcli build/ci/bin/fkcli --fkfixture build/ci/bin/fkfixture \
+            --out build/dng-interop --json build/dng-interop/report.json
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4

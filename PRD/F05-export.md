@@ -30,6 +30,14 @@ whether frame pixels stay bit-identical (and why not), free space at target.
 - A2 16-bit source never silently becomes 8-bit; JPEG export of a 16-bit source requires `allow_depth_reduction`. (`test_export_depth`)
 - A3 Output carries the source ICC (byte-identical) unless a conversion was requested. (`test_export_icc`)
 - A4 DPI preserved (scaled for standard size). (`test_export_dpi`)
-- A5 Exported DNG passes the structural validator and decodes with LibRaw to values matching the TIFF within 1 LSB (linear). (`test_dng`)
+- A5 Exported DNG passes our structural verification (written tags re-read after every export) and an independent
+  decoder (LibRaw via rawpy, CI Core linux, `tools/dng-interop.py`, U026) reads it as written: its camera-space
+  output (no colour matrix, unit white balance, no maximum adjustment, gamma 1) equals the TIFF export of the same
+  image area linearised — per channel gain within 0.1 %, correlation ≥ 0.99995, mean absolute error ≤ 1 LSB
+  (measured: gain 1.0000–1.0001, MAE 4·10⁻⁶ ≈ 0.3 LSB, round and rectangular areas) — and its camera-to-sRGB matrix is
+  the one derived from our ColorMatrix1 (within 1·10⁻⁴; measured 2.5·10⁻⁶). LibRaw's own sRGB rendering is reported,
+  not gated: it treats a DNG matrix as D65 and ignores CalibrationIlluminant1 = D50, so reds mix (row 0.88 / 0.10 /
+  0.02) and saturated areas differ; DNG-conformant readers (Adobe) need the real software. The earlier
+  "`test_dng`" reference never existed.
 - A6 Export of a 1600 DPI print streams with peak memory < 600 MB (no rotation) / < 1.2 GB (lossless 90° rotation). (`PERFORMANCE-BUDGET.md`)
 - A7 Name clash never overwrites. (`test_export_safety`)

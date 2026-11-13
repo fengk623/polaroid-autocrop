@@ -249,6 +249,7 @@
   "Linear DNG": "Linear DNG",
   "Linear DNG export needs a scan with an ICC profile (assign one first)": "导出 Linear DNG 需要扫描件带有 ICC 配置文件（请先指定）",
   "Linear DNG export needs an RGB scan": "导出 Linear DNG 需要 RGB 扫描件",
+  "Linear DNG is not read back; export a 16-bit TIFF from the editor and use that": "不读取线性 DNG 文件；请在调色软件中导出 16 位 TIFF 后使用该文件",
   "Linear DNG needs 16-bit RGB": "Linear DNG 需要 16 位 RGB",
   "Linearisation needs an RGB profile": "线性化需要 RGB 配置文件",
   "Loading full resolution…": "正在载入原始分辨率…",
