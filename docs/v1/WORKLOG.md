@@ -595,3 +595,340 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     every large size, missing ICNS entries); on the new icons it passes. Added to the CI docs job.
   - Small sizes compared enlarged (×8) against the old ones; the comparison sheets stay local.
 - Not verified: the taskbar / Start menu / Dock icon after installing over an older version (system icon caches).
+
+### 07:10–07:30 — PR #22 opened (U023), U026
+- U023 committed (041dda3), PR #22 opened (stacked on #21).
+- U026 (FK-012), independent of the library; version 0.7.0-alpha.10 by completion order.
+  - Found: PRD F05 A5 cites `test_dng` ("decodes with LibRaw … within 1 LSB") — no such test exists; nothing
+    outside our own code ever decoded our DNG [false evidence in a requirement doc] → corrected to the new check.
+  - Independent decode: `tools/dng-interop.py` generates a 16-bit fixture, exports both image areas as DNG and as
+    16-bit TIFF with `fkcli`, decodes the DNG with LibRaw (rawpy: linear gamma, no auto-brightness, camera white
+    balance, sRGB output, no flip) and compares it with the sRGB-linearised TIFF per channel (gain within 5 %,
+    correlation ≥ 0.995, error after the gain ≤ 1 %). Installing rawpy here was not allowed, so the check runs only
+    in CI (Core linux, venv); results are CI notices and get copied into the release notes.
+  - CI round 1: the TIFF of a round print has alpha (887×887×4 vs 3) → compare opaque pixels, add seed 8 (two
+    Polaroid 600). Round 2: LibRaw's sRGB output off by gains 1.02–1.15, one channel correlation 0.90 [test
+    design]: LibRaw rescales to the data maximum (`adjust_maximum_thr`) and treats the DNG matrix as D65 (ignores
+    CalibrationIlluminant1 = D50). Round 3/4: gate camera-space data (unit WB, no maximum adjustment) and the
+    matrix LibRaw derives from our ColorMatrix1 (`rgb_xyz_matrix` is empty for DNG in rawpy): data gain
+    1.0000–1.0001, MAE 4e-6 (≈ 0.3 LSB), matrix error 2.5e-6 → gate tightened to 1 LSB. LibRaw's rendering is
+    reported only (red row 0.88 / 0.10 / 0.02).
+  - Mistake: `py_compile` left `tools/__pycache__/*.pyc` and `git add -A` committed it (54f5bda); removed from the
+    index in 69befc7, ignored, `check-repo.py` now fails on interpreter caches (red before, green after), trap T23.
+  - Relink of a DNG: TiffSource refused PhotometricInterpretation 34892 with a generic "unsupported" error; dropping
+    a DNG on the window therefore showed a technical message. Test first (`TiffRead.LinearDngIsRefusedWithGuidance`
+    red), then a specific message pointing to a 16-bit TIFF; the self-test checks relink and drag and drop, and that
+    no scan is imported. Keeping DNG relink unsupported for v1.0 is a proposal for the owner.
+- Not verified: opening our DNG in Lightroom / Photoshop / Capture One.
+
+
+### 07:30–08:30 — PR #23 opened and green (U026), U022
+- U026: PR #23 (stacked on #22). CI green after four rounds (see U026 above). Self-test with the U026 build: fixture
+  188 pass; polaroid_92 184 pass + 2 skips (UX-08, one print); img20260702_0005 181 pass + 5 skips (untagged scan:
+  the four profile-choice checks and the FK-012 DNG check, which needs a profile to export a DNG).
+- U022 (UX-10), independent of the library; version 0.7.0-alpha.11 by completion order. Reference: the owner's
+  Lightroom screenshot (thin strips with a small triangle on the window edges).
+  - Layout: an upper row (left strip · left rail · centre column · right rail · right strip) above a full-width
+    filmstrip and the bottom strip. `EdgeStrip.qml`: 8 px, chevron pointing where a click moves the panel, tooltip
+    Hide/Show with the shortcut, keyboard focus (Space/Enter), hit area 6 px over an empty neighbouring inset; no
+    reach where a scroll bar is next to the strip (right strip with the right rail open: the rail's scroll bar; bottom
+    strip with the filmstrip folded: the rails' scroll bars end above it). ◧/◨ left the top bar; View menu and
+    shortcuts unchanged; Reset Layout now also shows every panel.
+  - Self-test `runLayout` first run: 2 failures, both test flaws — (1) the grip drag moved relative to the grip, which
+    moves while the rail widens, so 4 × −10 px compounded to the 420 px maximum [test flaw] → fixed scene positions;
+    (2) the window-size check found the top bar wider than its column at 1100×700 (zoom + ends at x 1027, column at
+    791: compare, overlays and zoom run under the right rail) [existing defect, reproduced] → recorded as a
+    known-issue (UX-06), to be fixed when U021 reorganises the top bar; the regular check keeps the top bar at 1440
+    and 1920. The detail text printed the tip after unfolding (looked unchanged) [report flaw] → prints the folded
+    tip.
+  - `scenarioUpright` compared fixed pixel rectangles (260,60 …) for the canvas and the filmstrip; with the new
+    layout they come from the items.
+  - Results (U022 build): fixture 205 pass (1×), 205 (`QT_SCALE_FACTOR=2`); Chinese interface first 201 + 4 failures
+    — older checks only matched English text ("straightened", "8 bits", "replaced by a different picture", "changed
+    since it was imported") [tests written for English only] → accept the Chinese text too → 205 pass. polaroid_92
+    200 pass + 3 skips (UX-08 ×2, UX-10 click on another print: one print); img20260702_0005 198 pass + 5 skips (as
+    U026). One known issue each (UX-06 top bar).
+  - Seen in the Chinese run, not fixed here: the depth-reduction message ends with an untranslated developer note
+    "(set allowDepthReduction after the user confirms)" → U024 (text and layout checks).
+  - CI round 2 (U022, Windows app job): with the check lines in the log — the U022 size check had also required the
+    top bar to fit at 1440×900 and 1920×1080; on the Windows runner's fonts it does not fit at 1440 (868 px column)
+    [platform-dependent part of the UX-06 issue] → the top bar is observed at each size in U022 and stays a known
+    issue at 1100; U021 turns all of it into checks. `ci-annotate.py` keeps up to 1500 characters per line (the
+    first attempt cut the detail at 400).
+
+### 08:30–09:30 — PR #24 opened (U022), U021 part 1
+- U022: PR #24 (stacked on #23). CI round 1: Windows app self-test failed with no detail — the annotation only found
+  "self-test FAILED": check lines start with "FAIL " (not matched) and, on Windows, a GUI program's `qInfo()` goes to
+  the debugger rather than the piped stderr [CI reporting gap] → `ci-annotate.py` matches "FAIL " lines and the
+  self-test step sets `QT_FORCE_STDERR_LOGGING=1` (see round 2 above; PR #24 then green on all platforms).
+- U021 split (the library RFC still waits for the owner): part 1 = edit-workspace top bar and workflow steps (no
+  library needed), part 2 = the Library / Edit workspaces after U018–U020. Version 0.7.0-alpha.12 for part 1.
+  - Owner's screenshot (fig. 13): the view switch moves to between the eye and the zoom value.
+  - Top bar: clusters in Rows; the bar computes what fits and gives up, in this order, the file buttons (File menu
+    and left rail keep them), the segmented view switch for a menu button with the same views, and − / + (zoom
+    field menu and shortcuts keep them); eye → view → zoom never changes. Measured needs (Linux fonts): 746 / 621 /
+    476 / 412 px (English), 703 / 578 / 476 / 412 (Chinese). The rails narrow in proportion (not below their
+    minimums, stored widths kept) so the canvas keeps 520 px — first 480, raised for margin over the 476 px of the
+    compact bar. The last step (− / + dropped) cannot happen at the minimum window on Linux; the test reaches it at
+    1000×700, below the minimum, which the offscreen platform allows (skipped where a platform keeps the minimum).
+  - Workflow steps in the right rail (import, detect / review, export image area, relink, composite / final): done
+    = filled with a check, next = ring, connectors; summary line; a click goes to the step.
+  - Self-test `runToolbar` (7 checks incl. setup and the below-minimum step; 20 size × rail combinations); the U022
+    known issue is now a regular check in `runLayout`.
+  - Mutations (each caught): E1 view switch back left of the eye (order + matrix); E2 file buttons never hidden
+    (overflow); E3 rails not narrowed (overflow at widest rails); E4 relink step never done (trail); E5 step 3
+    opens the Boundaries tab (click check); E6 compact switch not following the keys; E7 − / + never dropped
+    (below-minimum check). Working tree compared with the pre-mutation snapshot afterwards: identical.
+  - Seen in the offscreen snapshots: icons (Qt Quick Shapes) of rail content scrolled out of view are drawn over
+    the filmstrip — text is clipped, the Shape icons are not (software scene graph). Real windows use the GPU
+    renderer; to be checked with FK-009 / U024 before calling it a test artefact.
+  - Results (U021 build): fixture 214 pass (1×, 2× and Chinese each); polaroid_92 209 + 3 skips; img20260702_0005
+    207 + 5 skips. `runToolbar` 7/7 everywhere.
+
+### 09:30–10:40 — PR #25 opened (U021 part 1), U024
+- U021 part 1: PR #25 (stacked on #24). CI: Linux and macOS green; Windows failed "a click on a workflow step leads
+  to it" without detail → detail added: step 3 clicked (tab 1), step 5 `click()` returned false; position of step 5
+  and the window size added to find out why (pending).
+- U024 (FK-009), after U021 part 1 so that it covers the new top bar, strips and steps; version 0.7.0-alpha.13.
+  - Self-test `runTextLayout` (and `--scenario text`): every visible text — glyphs (QTextLayout with the item's font
+    and Qt's fallbacks; glyph 0 = box), wider than its own box, outside the window, cut at the side by its panel,
+    labels / section titles / segment and button texts shortened; key controls covered by later opaque paint.
+    Matrix: dark/light × 1100×700 / 1440×900 / 1920×1080 × rails shown/folded × the three right-rail tabs, plus
+    Settings, About and Export dialogs (≈ 2400 texts per run).
+  - First run (English 1×): 130 "outside the window" + 20 "covered" [check flaw: texts and buttons scrolled out of
+    the left rail's list] → only what the clipping parents leave visible is checked; key controls are only the top
+    bar's buttons, strips, view switch, zoom and steps. Then 52 "cut at the side" + 46 "outside the window", all in
+    the Return tab [real defect]: two buttons in one row (≈ 358 px) made the tab wider than the 300 px rail, so its
+    right side (texts, combo, the second button, "Synthetic frame") was cut — also visible in the Chinese snapshot
+    → the buttons wrap (Flow), the frame choice sits under its label. Then 1 "label cut": Settings' "Mask for new
+    prints" (110 of 112 px) [real defect] → field labels widen instead of eliding.
+  - The 8-bit refusal showed "(set allowDepthReduction after the user confirms)" [real defect, seen in U022's
+    Chinese run] → details of confirmation errors go to the log; check added to the FK-010 section.
+  - Results after the fixes: English 1× and 1.5×, Chinese 1× and 2×: 4/4 FK-009 checks.
+  - Mutations: T2 buttons back in one row, T3 labels elided again, T4 top bar overflowing, T5 developer note back
+    in the message — all caught. T1 (missing glyph) survived twice [mutation flaws]: U+E8E8 is covered by the
+    Unifont CSUR font on this machine, and U+10FFFD in the top-bar status was never shown (the status shows the
+    last job summary) → T1c, U+10FFFD in the right rail's title: caught. A small Qt program confirmed that an
+    uncovered character comes back as glyph 0.
+  - CI: `--scenario text` in Chinese 1× / 2× and English 1.5× on all three platforms after the self-test.
+  - PR #26 CI round 1: macOS green (Chinese and 2× included). Linux: "位" and other Chinese characters without a
+    glyph (DejaVu Sans) — the Linux runner has no CJK font [CI environment] → install `fonts-noto-cjk` for the
+    app job. Windows: left-rail note "1 scans · 3 prints" 270 px wide (100–370, rail ends at 262), right-rail
+    content past the window, UX-01 clicks missing their controls, and PR #25's step 5 at 1434–1454 — while the
+    glyph check passed. Reproduced exactly on Linux with an empty fontconfig: Qt's offscreen platform on Windows
+    reads fonts with FreeType from `QT_QPA_FONTDIR` or Qt's own lib/fonts (absent from a Qt install), finds none and
+    uses the box engine — every character a box as wide as the font size, with the character code as glyph, so
+    "glyph 0" never shows it. This is the root cause of FK-009's historical "boxes in Windows offscreen snapshots"
+    → the self-test's offscreen start on Windows sets `QT_QPA_FONTDIR` to the system font folder (also applied to
+    PR #25, whose Windows failure had the same cause), and the glyph check treats a run without font tables as
+    boxes (`QRawFont::familyName()` crashes on the box engine — first attempt segfaulted).
+  - My first fix for the cut Settings label ("field labels widen to fit") was wrong for wide fonts: a label's
+    minimum width then pushes the whole rail column past the rail (seen in the same Windows run) → long labels wrap
+    within the label column instead. New diagnostic: when a rail's content is wider than the rail, the widest
+    controls past its edge are named (the CI annotations were too short to find them otherwise).
+  - With DejaVu Sans (the CI Linux font, much wider than Inter) all four FK-009 checks pass; without any font the
+    glyph check fails with 2274 boxes.
+  - Mistake: I rebuilt `build/app` while the U024 runner script was between scans, so the owner-scan runs would
+    have mixed two builds [process error] → stopped it (by PID) and reran everything on the final build. Trap T25.
+  - PR #26 CI round 2 (after the font folder fix): Windows fonts load (Arial), English passes; Chinese draws boxes
+    — the offscreen platform's FreeType font database has no fallback for characters missing from the default
+    font [CI environment; a real window falls back to Microsoft YaHei] → the Windows offscreen self-test sets the
+    UI font families Segoe UI, Microsoft YaHei UI, Microsoft YaHei, SimSun (Windows' own order). PR #25 green on
+    all platforms with the font folder fix.
+
+
+### 10:40–11:00 — PR #26 opened (U024), U021 fixed on Windows, U027 (committed locally)
+- U021 (PR #25): the Windows failure had the same cause as U024's — no fonts in the offscreen platform — so the
+  `QT_QPA_FONTDIR` fix went into U021 as its own commit (e809c5d, formatted in 7a60392) and U024 was rebased onto
+  it (force-with-lease on the PR branch, which only this session pushes to).
+- U027 (FK-013), independent of the library; version 0.7.0-alpha.14. Worked in a separate worktree while the U024
+  runs used the build directory.
+  - `tools/check-claims.py`: first run 89 claims without code [real defects in the specifications] — see UNITS.
+    Every one corrected to the real test, or marked "not built (planned)" on its line. ARCHITECTURE's status line
+    still said the Qt app was not built. API-SPEC: 7 signatures differed from the headers; the C ABI, disk cache,
+    job queue and capability profiles were described as if they existed; ADR-0007 and mobile-portability named a
+    `core-mobile-lite` CI job that never existed.
+  - Checker of the checker: 7 invented references added to a PRD (test, suite, program, file, self-test section,
+    scenario, CI job) — all 7 reported; first version missed `Suite.*` with an unknown suite and CI job names [gap]
+    → added.
+  - `tests/core/test_api_contract.cpp`: compile-time signature and enum checks; compiled against the headers
+    (standalone compile from the build's compile command) before the build directory was free.
+  - `tools/test_report.py`: passed / failed / skipped / not started / blocked; a sample JUnit file with one of each
+    gives the right counts and exit 1. Self-test: `SelfTest::summary()` printed before "self-test passed/FAILED"
+    and stored in `report.json`.
+
+### 11:00–11:50 — PR #26 CI round 3; owner merged PRs #17–#19; U028 preparation
+- Owner merged PR #17 (U015), #18 (U016) and #19 (U017) into `main` (15:39 UTC). PRs #21 and #22 now target `main`
+  directly and are mergeable without conflicts; the unit list and traceability are updated.
+- PR #26 CI round 3 (Chinese font families for the Windows offscreen self-test): Linux (with `fonts-noto-cjk`) and
+  macOS green; Windows: Chinese text still without glyphs ("帮助(H)" in Segoe UI, 1168 texts), English passes.
+  Root cause, read in Qt 6.8.3's source (`qfreetypefontdatabase.cpp`): the FreeType font database of the offscreen
+  platform loads only `*.ttf`, `*.pfa`, `*.pfb` and `*.otf` from the font folder, and Windows' Chinese UI fonts are
+  collections (`msyh.ttc`, `simsun.ttc`), so the fallback families named in round 3 did not exist there
+  [CI environment, not a product defect: a real window uses DirectWrite and its own fallback] → the Windows
+  offscreen self-test adds `msyh.ttc`, `msyhbd.ttc` and `simsun.ttc` from the font folder as application fonts
+  (Qt reads every face of a collection) and prints which ones it added, or that none was found.
+- Full self-test of the U024 build (Linux, before this change; Linux does not run the Windows-only code): fixture
+  English 1×, 2× and Chinese: 222 passed, 0 skipped, 0 failed each; the owner's scans still running.
+- PR #26 CI round 4 (font collections): Windows Chinese down from 1168 texts without glyphs to 4 — one sentence,
+  "从不写入：GPS 位置… ⚠ = 可识别个人或计算机。", whose "⚠" is in none of Segoe UI, Microsoft YaHei and SimSun
+  [CI environment: a real window falls back to Segoe UI Symbol] → Segoe UI Symbol added to the offscreen fallback
+  families. Linux and macOS green.
+- U024 full self-test results (build before the rail fix below): fixture English 1×, 2×, Chinese: 222 passed each;
+  owner's scan img20260702_0005: 214 passed, 5 skipped (one print on the scan; untagged scan), 0 failed; owner's
+  scan polaroid_92: 215 passed, 3 skipped, **1 failed** — "no panel content wider than its rail": at 1100×700 the
+  right rail's content was 307 px in a 300 px rail [real defect, only with this scan's data]. The report only named
+  the stretched children, not the cause → the report now names the innermost item reaching past the rail and its
+  widest part with the texts in it. Re-run with the old QML once: "rightRail asks 307 px, widest part 279 px: Film
+  type 'Polaroid 600 / i-Type / SX-70' 165 px, Confidence 'Check recommended  80 %' 159 px" — value texts in field
+  rows kept their own width, and these two long values widened the Boundaries tab → value texts fill the row and
+  wrap. After the fix `--scenario text` passes on polaroid_92 and the fixture.
+
+### 11:50–12:25 — U027 rebased onto U024, built and tested
+- U027 rebased onto U024's last commit (33411d1); one conflict, in this worklog (both appended) → both kept in time
+  order. `app/src/main.cpp` merged cleanly (U024's font code and U027's results line).
+- First build and run of U027's tests (its own build directory, `build/u027`): `ApiContract.StableNames` failed —
+  I had written MinIsWhite's stable name as `min_is_white`, the code and every file written so far use
+  `miniswhite` [my test error, not a code defect] → expectation corrected. `tools/run-tests.sh`: passed=216
+  failed=0 skipped=0 not_started=0 blocked=0 (Linux, all labels including `eval`).
+- Gap in `tools/check-claims.py` found while working on U028: references written as `test_program.Name` were checked
+  only for the program; PRDs F06, F07, F11, F12 and F13 named 14 tests that never existed (`test_project.RoundTrip`,
+  `test_color.KnownValues`, `test_metadata.Orientation`, …) [real defect in the specifications] → the check now
+  requires a suite or test of that name in that program; the 14 references point to the real tests or say "not
+  tested yet, planned" (ProPhoto/scanner-profile conversions, a composite with a graded file in another colour
+  space, the orientation tag after an upright export, the project size, earlier releases' files — U028).
+- U024 after its last commit (33411d1): PR #26 CI green on all platforms (Linux, macOS, Windows; Chinese 1×/2× and
+  English 1.5× text scenarios included) — the Windows Chinese texts have glyphs after the font collections and
+  Segoe UI Symbol. Full self-test on that build (Linux): fixture English 222 passed, Chinese 222 passed; owner's
+  scan polaroid_92 216 passed, 3 skipped (one print on the scan), 0 failed (the rail failure is gone).
+- U027 app built (main checkout detached at the U027 commit) and its self-test run on the fixture: "self-test
+  results: 222 passed, 0 failed, 0 skipped, 0 known issues (0 no longer reproduce), 0 not applicable", the same
+  summary in `report.json`.
+
+### 12:25–13:10 — PR #27 opened and green (U027); U028 (FK-014): packages as the user gets them, upgrade/rollback/uninstall, licence texts
+- U028 (FK-014), after U027; version 0.7.0-alpha.15 (planned as 0.9.0-beta.3). Branch `unit/U028-release`. The
+  library (U018–U020) is not built, so "the user's library" is read as the user data that exists: settings,
+  templates, recovery files, projects; the library's storage joins the same checks once it exists.
+- Findings before any change:
+  - `THIRD-PARTY-LICENSES.md` said the full licence texts were installed into the packages (`licenses/`); the
+    packaging scripts copied only `LICENSE` and that file [real defect: no licence texts of libtiff, LittleCMS,
+    libpng, libjpeg-turbo, zlib, nlohmann/json, no LGPL text for Qt, no notices of the components inside Qt].
+  - `RELEASE-CHECKLIST.md` described a draft release the owner publishes; the workflow publishes a pre-release
+    itself [stale document].
+  - The user guide promised that a new project format "asks to migrate to a new copy" (since U003) — no such code
+    exists [false claim].
+  - The release workflow ran only for pull requests into `main`, so the stacked unit PRs #23–#27 had no test
+    packages [process gap against PLAN §2] → it now also runs for pull requests into `unit/**`.
+  - Projects: unknown keys were kept only at the top level, so a project saved by a later version and opened and
+    saved here would lose the later version's fields inside scans and prints (as 0.6.0-alpha.1 does to ours).
+- Licences: `licenses/` with the six libraries' licence files copied unchanged from their sources at the pinned
+  tags (checked with `git describe` in the local dependency build), Qt's LGPL-3.0 and GPL-3.0 texts, and
+  `licenses/Qt-third-party.md` generated by `tools/release/qt-attributions.py` from Qt 6.8.3's
+  `qt_attribution.json` files (qtbase, qtdeclarative; Linux-only parts, tests and Qt SQL left out): 46 components,
+  each with its copyright lines and licence text. `licenses/README.md` indexes them, links the Qt 6.8.3 source and
+  explains replacing the Qt libraries (LGPL). I did not add a written source offer: that would be a promise on the
+  owner's behalf. `tools/check-licenses.py` checks that every listed text exists and that the versions named match
+  `cmake/deps` and the workflows' Qt; mutations (a text removed, Qt version wrong) caught.
+- Package checks: `tools/release/check-package.py` (Windows folder, macOS app, DMG volume): the app, Qt and the VC++
+  runtime, `LICENSE`, `THIRD-PARTY-LICENSES.md` and every licence text identical to the repository's, BUILDINFO
+  version and commit, Info.plist versions, nothing that must not ship (debug symbols, import libraries, test
+  programs, scans, projects, settings, reports). Tried locally on synthetic folders: clean = 0 problems; a .pdb, a
+  missing text, a changed LICENSE, wrong version and commit = 5 problems reported.
+- `tools/release/test-windows-install.sh` (clean runner, Git Bash): fresh install → every packaged file installed
+  unchanged → package check → `.fkproj` association and Start menu shortcut → the installed app's self-test →
+  uninstall (registration, association, shortcut gone); then for every published release (v0.6.0-alpha.1, v0.5.0):
+  install it (download verified against its SHA256SUMS), seed the user's data, upgrade, compare with this package,
+  and for the newest one rollback (files = that release's ZIP), upgrade again, self-test, uninstall; user data
+  byte-identical after every step. The installer replaces Qt's plugin and QML folders whole on upgrade
+  (`[InstallDelete]`), so no plugin of another version is left where Qt loads plugins.
+- `tools/release/test-macos-dmg.sh`: mount read-only, check, `codesign --verify --deep --strict`, Gatekeeper status
+  printed (not notarised), copy to an Applications folder, self-test arm64 and x86_64 (Rosetta), upgrade from the
+  newest published release by replacing the app, rollback (`--version` of the old app), upgrade again, delete the
+  app; user data checked after each step.
+- Projects (core): unknown keys kept at every level (settings, scans, prints, export records and their nested
+  objects; not inside list entries) and written back; retired per-print placeholders of 0.5/0.6 dropped;
+  `app.version` read as `Project::savedBy`; `fk::compareVersions` (SemVer 2.0); the app says when a later version
+  last saved the project (self-test check FK-014). Fixtures: `tools/compat/make-fixtures.sh` built the cores of
+  v0.5.0 and v0.6.0-alpha.1 from their tags and wrote a project, an export record and a template with each; the
+  rollback pair is this version's project opened and saved by 0.6.0-alpha.1. Measured: 0.6.0-alpha.1 keeps scans,
+  prints, boundaries, uprights, review states, edits and relinks, export records and ICC profiles, and drops
+  `settings.autoCount`, `settings.output`, `detection.autoCount`, `view.rotation`, `composite.mask`,
+  `relinked.transform` (diff of the two files). Script error on the first run: the "current" generator still set
+  the retired placeholders and reused a variable name [my error] → fixed.
+- Tests: `Compat.*` 6/6 after one test flaw (the reloaded project's relative path and the label edited in the same
+  test were compared with the fixture's) → fixed; `Version.ComparesBySemVerPrecedence`. Mutations 5/5 caught (no
+  merge of unknown keys; retired keys kept; `savedBy` not read; pre-release numbers compared as text; nested
+  objects not recursed).
+- `tools/check-claims.py` gap found while correcting PRD F11: for `test_program.Name` it checked only the program,
+  and PRDs F06/F07/F11/F12/F13 named 14 tests that never existed (`test_project.RoundTrip`, …) → fixed in U027
+  (before its PR) together with the 14 references; tests not built are marked planned (ProPhoto conversion, a
+  foreign-space composite, the orientation tag, project size).
+- PR #27 (U027, stacked on #26) opened; CI green on all platforms.
+- U028 results (Linux): `tools/run-tests.sh build/u028`: passed=223 failed=0 skipped=0 not_started=0 blocked=0.
+  Self-test (fixture) English and Chinese: "self-test results: 223 passed, 0 failed, 0 skipped, 0 known issues (0
+  no longer reproduce), 0 not applicable" each; the FK-014 check shows the notice in the language of the run.
+  The package checks and the install/upgrade/rollback/uninstall scripts need Windows and macOS runners: they run in
+  PR #28's release workflow (next entry).
+- PR #28 (U028, stacked on #27) CI round 1: core and app jobs green on all platforms; the release workflow ran on a
+  unit-branch PR for the first time. macOS universal: green — DMG checks, signature, copied app's self-test,
+  upgrade from v0.6.0-alpha.1, rollback, upgrade again and data checks passed. Windows x64: the unpacked ZIP passed
+  (package check 0 problems, self-test 223 passed); the installer test's only FAIL lines were "rollback → v0.6.0-alpha.1:
+  release v0.6.0-alpha.1 starts and reports 0.6.0-alpha.1" — no report from the earlier release [my script error]:
+  `PATH=<system folders> timeout 1200 FrameKeeper.exe …` makes bash look `timeout` up in that restricted PATH,
+  where Windows' own `timeout.exe` (a pause command) is found, so the app never started (reproduced on Linux:
+  `PATH=/nonexistent timeout 1 true` → command not found) → the script uses the full path of Git Bash's
+  `timeout`, prints the earlier release's output when it writes no report, and first runs that release from its
+  own ZIP as a baseline. Both scripts now end with a notice annotation counting passed / failed / skipped checks,
+  so a green run's result can be read back.
+
+### 13:10–13:35 — U029 (UX-12): user guide completed, 26-item summary, full regression
+- U029 after U028; version 0.7.0-alpha.16, not 1.0.0-rc.1 as first planned: the library (UX-05) waits for the
+  owner, and a release that lacks a planned feature is not a release candidate. Branch `unit/U029-guide`.
+- Full regression of `docs/v1/FEATURE-FREEZE.md`: mapping each of the 81 entries to the existing checks showed 28
+  entries with no automated check at all [gap] → self-test section `runFreezeRegression` (also
+  `--scenario freeze`), 22 checks named "FREEZE <ID> …", through the user's entry points (real key events for the
+  shortcuts; the controller's commands behind menu items and rail buttons). First run: 21 passed, 1 failed —
+  Ctrl+A selected 6 prints where my check expected 3: "Select All Prints" selects the whole project's prints
+  [my check's error] → expected the project's prints. Snap: a corner pulled 11.3 px inside snapped back to 0.04 px
+  from the detected edge; templates: the same 3 prints, source "template"; relocation: missing → found in the
+  chosen folder with its 3 prints.
+- `tests/freeze-regression.json` maps every entry to self-test checks, core tests, CI steps or a manual reason (3
+  entries: A07 window close, A12 reveal in the file manager, E12 needs a low-confidence print);
+  `tools/freeze-regression.py` checks the mapping in the docs job and the results after the app self-test on every
+  platform (macOS menu-bar shortcuts are skipped by design and counted apart). Three mapped names were built at run
+  time ("UX-10 the %1 folds …") and could not be found in the source → mapped to literal names instead.
+- `tools/check-guide.py` (docs job): the guide's shortcut table lacked Ctrl+W, Ctrl+Q and wrote "Ctrl+Alt+1 / 2 /
+  3 / 0" → completed, plus arrow-key nudges, number fields and edge strips; mutation (Ctrl+Shift+H removed from the
+  guide) caught. FEATURE-FREEZE A02 claimed projects open "as a migration copy (U003)" — never built [false
+  claim] → corrected. New `docs/v1/COMPLETION.md` (26 items: 23 done with automated verification, 2 partly, 1
+  blocked) and `docs/v1/REGRESSION.md`; guide §13 lists what is not built or not verified.
+- Results (Linux, fixture): self-test 245 passed, 0 failed, 0 skipped; freeze regression 75 passed, 3 by CI steps,
+  3 manual, 0 failed.
+- PR #29 CI round 1: core and app jobs green on all platforms; the release workflow's packaged self-tests failed on
+  macOS (arm64 and x86_64) and Windows with one check each: "FREEZE C07 reset to detected restores the detected
+  boundary" — the corner was 0.049 px from the detected one after the reset. Cause: the step before (H05) focused
+  a corner coordinate field and left it; the number field committed its displayed text, rounded to 0.1 px, which
+  moved the corner and marked the boundary edited — a real defect, also reachable by a user who only clicks into
+  the field and away (on Linux the same rounding was 0.001 px, inside the check's tolerance) [real defect]. New
+  check "FREEZE C04 a corner field focused and left without typing changes nothing": red first (260.6013 →
+  260.6000, source auto → manual), then the number field commits only when its text changed: green, and C07 0.000
+  px. 23 FREEZE checks.
+- PR #29 CI round 2 (number field fix): green on all platforms; packaged tests: Windows installer 29 passed, 0
+  failed, 0 skipped; macOS DMG 17 passed, 0 failed, 0 skipped.
+- Final regression on the owner's scans (same build): polaroid_92 first failed "FREEZE C13" — one print on the
+  scan, so ←/→ cannot step within it [my check's precondition] → split into "← / → step through the prints"
+  (skipped with the reason on single-print scans) and "Shift+← / → step through the scans"; the 8-bit scan does not
+  run the FK-010 16→8-bit checks, so the regression for scans other than the CI fixture runs with `--partial`
+  (checks a scan does not apply to are listed as not run, not failed; CI keeps the strict mode on the fixture).
+- img20260702_0005 (white frames on a white lid, 826 dpi): "FREEZE C06" failed — a corner pulled 8 px inside the
+  detected corner (11.31 px away) snapped back to 5.38 px from it (check: < 4 px). The check takes the detected
+  Outer as the paper edge; on white-on-white scans the detected Outer lies 2–18 px outside the paper by design
+  (REAL-SCAN-GT §U012; here the first print's detected corner is ≈ 18 px left of the measured one), so the pulled
+  corner is still outside the paper [premise of my check, not a regression: snapping is unchanged]. I tried a
+  second design (reference = where snapping the detected Outer lands) — it failed on polaroid_92 instead (snapping
+  the detected Outer moved it 9.5 px; from 8 px inside, 9.92 px) — snapping depends on where it starts on real
+  scans, so neither reference is the truth without ground truth → the first design is kept, with its premise
+  written next to it; the result is recorded in REGRESSION.md and as a known limitation in the guide (§4).
+- Final results: fixture English and Chinese 247 passed, 0 failed, 0 skipped each, regression 75 passed / 3 CI / 3
+  manual / 0 failed; polaroid_92 240 passed, 0 failed, 4 skipped, 1 not applicable, regression 0 failed;
+  img20260702_0005 238 passed, 1 failed (C06, above), 5 skipped, 1 not applicable.

@@ -3,6 +3,105 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.16 — U029: user guide completed, 26-item summary, full regression of the existing features (UX-12)
+- Full regression of the feature freeze list: every one of its 81 entries is mapped to its evidence
+  (`tests/freeze-regression.json`) and `tools/freeze-regression.py` checks, in CI, that the mapping is complete and
+  that the mapped self-test checks passed on each platform. 28 entries had no automated check at all; a new self-test
+  section (`--scenario freeze`, checks named "FREEZE <ID> …") covers them through the user's own entry points:
+  folder import, relocating a moved scan, removing a scan, templates, reset and snap, reviewed-and-next, exclude,
+  select all, print/scan navigation, view keys, zoom, overlays, compare, full screen, Settings, About, the info
+  chips, batch counts, recent projects, no single-key shortcuts while typing.
+- Fixed (found by the regression): clicking into a corner coordinate field and leaving it without typing
+  committed the field's rounded text — the corner moved by up to 0.05 px and the boundary was marked edited.
+  Number fields now commit only when their text was changed.
+- User guide completed: every shortcut the app defines is in it (`tools/check-guide.py`, CI) — close project, quit,
+  arrow-key nudges, number fields and edge strips were missing; a closing section lists what is not built or not
+  verified yet. `docs/v1/COMPLETION.md`: the 26 items with status and evidence (23 done with automated
+  verification, 2 partly, the library blocked on the owner's decision). The freeze list no longer claims a
+  "migration copy" that never existed. Version 0.7.0-alpha.16, not 1.0.0-rc.1: the library is not built.
+  Notes: docs/release-notes/v0.7.0-alpha.16.md.
+
+## 0.7.0-alpha.15 — U028: packages checked as the user gets them; upgrade, rollback, uninstall; licence texts (FK-014)
+- Licences: the packages now carry the full licence texts (`licenses/`): libtiff, LittleCMS, libpng,
+  libjpeg-turbo, zlib, nlohmann/json, Qt's LGPL-3.0 (with the GPL-3.0 it builds on, the Qt source link and how to
+  replace the Qt libraries) and the notices of the components inside Qt (generated from Qt's attribution files).
+  Until now `THIRD-PARTY-LICENSES.md` said so while the packages held only that file and `LICENSE`.
+- Release workflow: the DMG is mounted, checked (contents, licences, BUILDINFO, Info.plist version, signature) and
+  its app copied out and run (arm64 and x86_64); the ZIP is unpacked, checked and run; the installer is installed,
+  run and uninstalled on the clean runner, upgraded from every published release, rolled back to the newest one and
+  upgraded again, with the user's settings, templates, recovery files and a project checked byte for byte after
+  every step and after uninstalling; checksums are verified. It now also runs on pull requests into unit branches.
+  Upgrades replace Qt's plugin and QML folders whole (no stale plugins).
+- Projects: what a later version adds is kept at every level when a project is opened and saved here (until now
+  only top-level keys were), so a rollback to this version loses nothing; the app says when a later version last
+  saved the project. Files written by 0.5.0 and 0.6.0-alpha.1 are kept as test fixtures and open with all their
+  content; what a rollback to 0.6.0-alpha.1 keeps and loses is measured and documented.
+- Corrected documents: the user guide promised a "migrate to a new copy" prompt that never existed; the release
+  checklist described a draft-release step the workflow no longer has. (Five PRDs naming 14 tests that do not
+  exist were found during this unit and corrected in U027.) Notes: docs/release-notes/v0.7.0-alpha.15.md.
+
+## 0.7.0-alpha.14 — U027: specifications name only what exists; outcomes counted apart (FK-013)
+- `tools/check-claims.py` (CI docs job): tests, test programs, self-test sections, scenarios, files and CI jobs
+  named in the PRDs, RFCs, test plan, acceptance matrix and traceability exist, and every name the API spec declares
+  exists in the core; what is not built says so on the same line. First run: 89 claims without code — tests that
+  never existed (`test_dng`, `test_roundtrip`, `test_export_*`, `test_templates`, `test_jobs`, `tests/app/*`, …), a
+  C ABI, disk cache, job queue, capability profiles and a `core-mobile-lite` CI job that were never built, an
+  architecture page saying the Qt app did not exist, seven API signatures that differed from the headers. All
+  corrected or marked planned; the acceptance matrix now names real tests with honest status. A second pass
+  (references written as `test_program.Name`) found 14 more in PRDs F06/F07/F11/F12/F13.
+- `tests/core/test_api_contract.cpp`: the spec's enum values, constants and function signatures are checked at
+  compile time, stable names at run time.
+- Test reports: CTest outcomes passed / failed / skipped / not started / blocked (not started and unlisted skips
+  fail the report); the app self-test prints passed / failed / skipped / known issues / not applicable and writes
+  it to `report.json`. Notes: docs/release-notes/v0.7.0-alpha.14.md.
+
+## 0.7.0-alpha.13 — U024: text and layout checks; right rail no longer wider than itself (FK-009)
+- Self-test `runTextLayout` (also `--scenario text`): every visible text has glyphs (no boxes), stays inside its box,
+  the window and its panel's sides; labels, titles and button texts are never shortened; key controls are not
+  covered. Dark and light, three window sizes, rails shown and folded, the three right-rail tabs, Settings, About
+  and Export dialogs; CI runs it in English (1×, 1.5×) and Chinese (1×, 2×) on all three platforms.
+- Found and fixed: the Return tab was wider than the right rail (two buttons in one row), cutting texts and buttons
+  at its right edge — the buttons now wrap and the final-output frame choice sits under its label; a field label
+  in Settings was shortened — long field labels wrap; the 8-bit refusal ended with a note for programmers
+  ("set allowDepthReduction …") — confirmation details go to the log, not to the message.
+- The historical boxes in Windows offscreen self-test snapshots: Qt's offscreen platform on Windows found no fonts
+  (it reads QT_QPA_FONTDIR or Qt's own lib/fonts) and drew every character as a box as wide as the font size; the
+  self-test now points it at the system fonts, and the glyph check recognises that box engine. CI Linux installs
+  a CJK font for the Chinese checks. Real windows (Direct3D, Metal, 150/200 %, Retina) stay human verification.
+  Notes: docs/release-notes/v0.7.0-alpha.13.md.
+- Found on the owner's scan polaroid_92: long values in the Boundaries tab (film type, confidence) kept their own
+  width and widened the right rail by 7 px at 1100×700 — value texts now fill the row and wrap; the overflow report
+  names the row that widens a rail. Windows offscreen self-test: Chinese font collections (.ttc) are loaded and the
+  fallback families set (the offscreen font database reads neither .ttc files nor falls back).
+
+## 0.7.0-alpha.12 — U021 part 1: view switch between the eye and the zoom; the top bar fits narrow windows; workflow steps (UX-06)
+- The Scan · Print · Image · Composite switch sits between the overlays button and the zoom field (keys 1–4 and the
+  View menu unchanged). In a narrow centre column the top bar gives up the file buttons, then shows the view switch
+  as a menu button, then drops − / +, always keeping eye → view → zoom and staying inside its column; the rails
+  narrow (not below their minimums, stored widths kept) so the canvas stays at least 480 px wide. Fixes the
+  overflow at 1100×700 found in U022 (known issue → regular check).
+- The right rail shows the current print's five workflow steps (import, detect / review, export image area, relink,
+  composite / final output): done, next, not done; a click goes to the step. Self-test `runToolbar`.
+- Part 2 (the Library / Edit workspaces) follows the library units. Notes: docs/release-notes/v0.7.0-alpha.12.md.
+
+## 0.7.0-alpha.11 — U022: edge strips fold the panels; the filmstrip spans the window (UX-10)
+- The left rail, the right rail and the filmstrip each fold and unfold with an 8 px strip on the window edge outside
+  them; the strip stays put when folded, its chevron shows where the panel goes, it takes keyboard focus and its hit
+  area reaches 6 px over an empty neighbouring inset (never over a scroll bar). The filmstrip now spans the whole
+  window under both rails. The ◧ / ◨ buttons left the top bar; View menu items and Ctrl+Alt+1/2/3/0 (⌥⌘ on macOS)
+  stay; Reset Layout also shows every panel. Self-test `runLayout` (14 checks). Notes:
+  docs/release-notes/v0.7.0-alpha.11.md.
+
+## 0.7.0-alpha.10 — U026: Linear DNG decoded independently; DNG given back refused with guidance (FK-012)
+- CI (Core, linux) decodes our Linear DNG export with LibRaw (rawpy, test-only, in a venv): its camera-space data
+  equals the linearised 16-bit TIFF export of the same image area within 1 LSB (measured ≈ 0.3 LSB, gain
+  1.0000–1.0001) and the camera-to-sRGB matrix it derives from our ColorMatrix1 is the expected one (2.5e-6);
+  LibRaw's own sRGB rendering is reported only (it treats the D50 matrix as D65). `tools/dng-interop.py`, results as
+  CI notices. PRD F05 A5 named a `test_dng` that never existed — now points at this check.
+- Relinking or dropping a Linear DNG (ours or any LinearRaw file) is refused with "export a 16-bit TIFF from the
+  editor and use that" instead of a generic unsupported-format error, and is never imported as a scan. Keeping DNG
+  relink unsupported for v1.0 is a proposal for the owner. Notes: docs/release-notes/v0.7.0-alpha.10.md.
+
 ## 0.7.0-alpha.9 — U023: simpler app icon (UX-11)
 - The sun is gone from the icon; the print, its frame and the corner brackets stay (same colours, no rebranding).
   Every ICO / ICNS size is drawn on its own with strokes kept visible at 16–32 px, and the ICNS now has the 1×

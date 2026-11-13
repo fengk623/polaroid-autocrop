@@ -35,6 +35,22 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "assocproj"; Description: "Open .fkproj project files with FrameKeeper"; GroupDescription: "File associations:"
 
+[InstallDelete]
+; FK-014: an upgrade (or a rollback) replaces Qt's plugin and QML folders and the licence texts whole, so no
+; file of the other version is left there (Qt loads every plugin it finds). The user's files never live in the
+; program folder (settings, templates and recovery files are under %APPDATA%\FrameKeeper; projects where the
+; user saves them).
+Type: filesandordirs; Name: "{app}\qml"
+Type: filesandordirs; Name: "{app}\platforms"
+Type: filesandordirs; Name: "{app}\imageformats"
+Type: filesandordirs; Name: "{app}\iconengines"
+Type: filesandordirs; Name: "{app}\styles"
+Type: filesandordirs; Name: "{app}\generic"
+Type: filesandordirs; Name: "{app}\networkinformation"
+Type: filesandordirs; Name: "{app}\tls"
+Type: filesandordirs; Name: "{app}\qmltooling"
+Type: filesandordirs; Name: "{app}\licenses"
+
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

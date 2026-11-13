@@ -10,11 +10,16 @@ RowLayout {
     Layout.fillWidth: true
     spacing: 8
     Text {
+        id: labelText
+        objectName: "fieldLabel" // FK-009: a label must not be cut (self-test)
         text: r.label
         font.pixelSize: Theme.fontBody
         color: Theme.textSecondary
+        // the section's label column; a longer label (a translation, a wider system font) wraps onto a second
+        // line instead of being cut or widening the row past its panel (FK-009)
         Layout.preferredWidth: r.labelWidth
-        elide: Text.ElideRight
+        Layout.maximumWidth: r.labelWidth
+        wrapMode: Text.Wrap
     }
     RowLayout {
         id: holder

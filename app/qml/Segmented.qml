@@ -39,6 +39,7 @@ Rectangle {
                 contentItem: Item {
                     Text {
                         id: label
+                        objectName: "segmentLabel"
                         anchors.centerIn: parent
                         text: seg.modelData.text
                         font.pixelSize: Theme.fontBody

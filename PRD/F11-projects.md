@@ -14,8 +14,15 @@ RFC: `rfc/0009-project.md`, ADR-0005, `docs/project-format.md` · Tests: `tests/
 - Project panel shows: project file size, cache size, size of referenced external files, estimated packaged size.
 
 ## Acceptance
-- A1 Save/load round trip is lossless for every field. (`test_project.RoundTrip`)
-- A2 Simulated write failure leaves the previous project intact. (`test_project.WriteFailure`)
-- A3 Migration tests for every schema version. (`test_project.Migration`)
-- A4 Future version opens read-only. (`test_project.FutureVersion`)
-- A5 Project file for a 4-print scan stays < 200 KB. (`test_project.Size`)
+- A1 Save/load round trip is lossless for every field. (`Project.SaveLoadRoundTripIsLossless`)
+- A2 Simulated write failure leaves the previous project intact. (`Project.WriteFailureLeavesNothingAndReportsError`, `DataProtection.AnInterruptedSaveLeavesTheProjectIntact`)
+- A3 Files of every earlier release open and keep their content (only schema `fk.project/1` exists, so there is no
+  migration step yet). (`Compat.OpensProjectsFromEarlierReleases`, `Compat.ExportRecordsFromEarlierReleasesStillRelink`,
+  `Compat.TemplatesFromEarlierReleasesOpen` — files written by 0.5.0 and 0.6.0-alpha.1, `tests/data/compat/`)
+- A4 A newer schema opens read-only. (`Project.NewerSchemaOpensReadOnly`)
+- A5 Project file for a 4-print scan stays < 200 KB. (Not tested yet — a size test is planned.)
+- A6 (FK-014, 0.7.0-alpha.15) Keys a later version wrote survive opening and saving here, at every level; the app
+  says when a later version last saved the project; a rollback to the earlier releases keeps what
+  `docs/project-format.md` §Compatibility lists. (`Compat.KeysOfLaterVersionsSurviveOpeningAndSaving`,
+  `Compat.WhatARollbackToTheLastReleaseKeeps`, `Compat.ProjectRecordsTheVersionThatSavedIt`; self-test
+  "FK-014 a project last saved by a later version …")

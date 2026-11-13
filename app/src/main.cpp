@@ -7,6 +7,10 @@
 #include "fk/version.hpp"
 
 #include <QCommandLineParser>
+#include <QDir>
+#include <QFile>
+#include <QFont>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QLocale>
@@ -35,6 +39,15 @@ int main(int argc, char* argv[]) {
     if (selfTest && !live) {
         if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+#ifdef Q_OS_WIN
+        // FK-009: on Windows the offscreen platform reads fonts with FreeType from QT_QPA_FONTDIR (else Qt's
+        // own lib/fonts, which a Qt install does not have): without this the self-test drew boxes and
+        // measured text with fallback metrics far wider than any real font. Point it at the system's fonts.
+        if (qEnvironmentVariableIsEmpty("QT_QPA_FONTDIR")) {
+            const QByteArray windir = qgetenv("WINDIR");
+            qputenv("QT_QPA_FONTDIR", (windir.isEmpty() ? QByteArray("C:\\Windows") : windir) + "\\Fonts");
+        }
+#endif
     }
     // The self-test changes settings (export folder, formats); keep them away from the user's own settings.
     if (selfTest && selfTestDir && qEnvironmentVariableIsEmpty("FK_SETTINGS_DIR"))
@@ -42,6 +55,30 @@ int main(int argc, char* argv[]) {
 
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("FrameKeeper"));
+#ifdef Q_OS_WIN
+    // FK-009: the offscreen platform's FreeType font database has no font fallback, so Chinese text in the
+    // default Latin font draws boxes there (a real window falls back to Microsoft YaHei). Give the self-test
+    // the same fallback order Windows uses for the UI font. That database reads only .ttf/.otf files from
+    // the font folder, and Windows' Chinese UI fonts are collections (.ttc), so they are added here.
+    if (selfTest && !live) {
+        const QString fontDir = QString::fromLocal8Bit(qgetenv("QT_QPA_FONTDIR"));
+        QStringList added;
+        for (const char* file : {"msyh.ttc", "msyhbd.ttc", "simsun.ttc"}) {
+            const QString path = QDir(fontDir).filePath(QLatin1String(file));
+            if (QFile::exists(path) && QFontDatabase::addApplicationFont(path) >= 0)
+                added << QLatin1String(file);
+        }
+        const QString report = added.isEmpty() ? QStringLiteral("no Chinese font collection in ") + fontDir
+                                               : QStringLiteral("added ") + added.join(QStringLiteral(", "));
+        std::fprintf(stderr, "self-test fonts: %s\n", qPrintable(report));
+        QFont f = QGuiApplication::font();
+        // symbols such as ⚠ inside Chinese text come from Segoe UI Symbol, as in a real window
+        f.setFamilies({QStringLiteral("Segoe UI"), QStringLiteral("Microsoft YaHei UI"),
+                       QStringLiteral("Microsoft YaHei"), QStringLiteral("SimSun"),
+                       QStringLiteral("Segoe UI Symbol")});
+        QGuiApplication::setFont(f);
+    }
+#endif
     QGuiApplication::setOrganizationName(QStringLiteral("FrameKeeper"));
     QGuiApplication::setApplicationVersion(
         QString::fromStdString(fk::productVersion()) + QStringLiteral(" (commit ") +
@@ -117,6 +154,7 @@ int main(int argc, char* argv[]) {
     if (parser.isSet(selfTestOpt)) {
         fkapp::SelfTest t(&controller, window, parser.value(selfTestOpt), parser.value(scanOpt));
         const int rc = parser.isSet(scenarioOpt) ? t.runScenario(parser.value(scenarioOpt)) : t.run();
+        std::fprintf(stderr, "self-test results: %s\n", qPrintable(t.summary()));
         std::fprintf(stderr, "self-test %s\n", rc == 0 ? "passed" : "FAILED");
         return rc;
     }

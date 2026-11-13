@@ -1,6 +1,6 @@
 # F10 — Batch processing and grid review
 
-RFC: `rfc/0010-jobs.md` · Tests: `tests/core/test_jobs.cpp`, `tests/core/test_batch.cpp`
+RFC: `rfc/0010-jobs.md` · Tests: app job runner: self-test `runTaskSafety`, `runMemoryBudget` (core job/batch tests are not built: jobs live in the app, RFC-0010)
 
 ## Scope
 - Grid view: every print rendered with its own settings and status badges; exclude/include; per-item override; double-click opens the item.
@@ -10,7 +10,7 @@ RFC: `rfc/0010-jobs.md` · Tests: `tests/core/test_jobs.cpp`, `tests/core/test_b
 - Error policy: continue with the next item, collect errors in a report (default); "stop on first error" option.
 
 ## Acceptance
-- A1 Cancelling a running export removes the temp file and returns memory to within 10 % of pre-job level. (`test_jobs.Cancel`)
+- A1 Cancelling a running export removes the temp file and returns memory to within 10 % of pre-job level. (self-test `runTaskSafety` TS3: a cancelled export leaves no temp file; memory after cancelling a detection: `runMemoryBudget`)
 - A2 Batch of 100 synthetic scans: peak memory independent of count (10/50/100 within 10 %). (`PERFORMANCE-BUDGET.md`)
-- A3 A damaged file in a batch is reported, others complete. (`test_batch.ContinueOnError`)
-- A4 Stale results (older generation) never overwrite newer state. (`test_jobs.Generation`)
+- A3 A damaged file in a batch is reported, others complete. (self-test `runTaskSafety` TS4: the failing job ends as failed and is reported; the rest of the batch completing is not tested separately — not built)
+- A4 Stale results (older generation) never overwrite newer state. (self-test `runTaskSafety`, `runDisplayProfile`: outdated results are dropped)

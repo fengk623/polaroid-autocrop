@@ -72,7 +72,7 @@ Paths below are relative to the SpektraLab repository at commit `fd891c6`.
 | A folded rail leaves the layout and the canvas grows into its space | `mUI-README:74-79`; `EditorWindow.swift:127-164` | Adopt | Same. | Maximises canvas area. |
 | Filmstrip folds with a hover-revealed pill on the canvas bottom edge (band 28, pill 14×41.5) | `CollapseTab.swift:1-30, 100-104`; `Theme.swift:706-707` | Adapt for our product | Folded from the View menu (⌥⌘3 / Ctrl+Alt+3) or by a tab on the canvas bottom edge: hover band 24, tab 44×14, also reachable by keyboard focus. | Keyboard reachability (F15). |
 | Rail widths are the user's and persist; 6 px grip with a 1 px accent line on hover; drag measured from the start width; double-click resets | `PanelResize.swift:40-57, 83-131, 141-185` | Adopt | 6 px grip, 1 px `accent` line on hover. Widths persist under `ui/v1/rail/<left or right>/width` in FK_SETTINGS_DIR. Double-click resets the default. | A familiar, measured behaviour. Our key namespace differs. |
-| Settings ▸ Reset All Layout | `PanelResize.swift:175-184`; `RightPanel.swift:17-18` | Adopt | View ▸ Reset Layout. | Recovery from odd layouts. |
+| Settings ▸ Reset All Layout | `PanelResize.swift:175-184`; `RightPanel.swift:17-18` | Adopt | View ▸ Reset Layout: default rail widths and every panel shown (U022). | Recovery from odd layouts. |
 
 ### 2.2 Rails, sections and controls
 
@@ -122,14 +122,14 @@ Paths below are relative to the SpektraLab repository at commit `fd891c6`.
 | CINE pill; Process/Original action capsules 82.86×18.52, accent-outlined | `Theme.swift:628-649`; `TopBar.swift:140-164` | Do not adopt | Buttons 28 tall, radius 4. The single primary action in a dialog or section is filled `accent` with `onAccent` text; others use `controlFill`. | Signature element; not our domain. |
 | Slider track 1.36, knob 6.13×5.07, checkbox 10 | `Theme.swift:653-677` | Adapt for our product | Track 2, knob 12, checkbox 14, each with a 28 px hit area. | Visibility on non-Retina Windows displays. |
 | Glyph sizes: tool 16, rail header 18, reset 9, sidebar toggle 15 | `Theme.swift:679-697` | Adapt for our product | Tool 18, rail header 16, reset 12, fold toggles 16, filmstrip status 14. Our own icon set. | Our icons, sized for 100 % displays. |
-| Top-bar paddings and gaps (32 / 33 / 23 / 40 / 46; v4 clusters 2 / 20 / 60) | `Theme.swift:356-379, 513-518` | Adapt for our product | Padding 12; 4 between items in a cluster; 16 between clusters; the centre status area takes the remaining space. | Simpler, and fits 1100 px windows. |
+| Top-bar paddings and gaps (32 / 33 / 23 / 40 / 46; v4 clusters 2 / 20 / 60) | `Theme.swift:356-379, 513-518` | Adapt for our product | Padding 6 (12 less the icon buttons' own inset); 4 between items in a cluster; 16 between clusters; the centre status area takes the remaining space. | Simpler; fits 1100 px windows with the narrow-column rules of §4.1 (U021 — before them the bar overflowed at 1100 px with both rails). |
 | Zoom pill: ground-coloured capsule, minimum 41.29×20.69, "N %" only | `Theme.swift:712-718`; `TopBar.swift:204-238` | Adapt for our product | A zoom field 56×24 (`controlFill`, radius 4) showing "N %" with tabular digits. Clicking opens a menu: Fit, 25, 50, 100, 200, 400, 800 %. | Same idea in our style. |
 
 ### 2.5 Interaction patterns
 
 | Element | Reference (file:line) | Decision | Our design | Reason |
 |---|---|---|---|---|
-| Rule: every surface that shows the frame shows the canvas's frame | `ARCHITECTURE.md:389-403` (SpektraLab); `AGENTS.md:978` | Adopt | Canvas overlays, navigator, filmstrip and grid thumbnails, export preview and exports all use core geometry (RFC-0002; AGENTS.md §4; `tests/core/test_geometry_consistency.cpp`). | The single most valuable rule for this product (F04 A4). |
+| Rule: every surface that shows the frame shows the canvas's frame | `ARCHITECTURE.md:389-403` (SpektraLab); `AGENTS.md:978` | Adopt | Canvas overlays, navigator, filmstrip and grid thumbnails, export preview and exports all use core geometry (RFC-0002; AGENTS.md §4; `Geometry.*` and the self-test clicks on prints; a dedicated consistency test is not built). | The single most valuable rule for this product (F04 A4). |
 | Crop-masked thumbnails: whole photo, outside the crop under black 82 %; the navigator shows the cropped frame only | `CropMaskedThumbnail.swift:1-20` | Adapt for our product | Scan cells show the whole scan with each print's Outer drawn in overlay colours. Print cells show the Full Print, with the area outside Outer under black 82 %. Image-area cells (F10 grid, Image Area mode) show the inner region only. | Users must see the real border (the product's promise) while browsing. |
 | Batch export locks the editor (look-only) | `EditorWindow.swift:66-69`; `ARCHITECTURE.md:414-417` | Adapt for our product | Only items in a running job are locked: their boundary handles are disabled with the reason "Exporting…". Other items stay editable. A job indicator sits in the top bar. | Batches over many scans are long. Jobs snapshot item state (RFC-0010; audit row for rule 90). |
 | Drop files anywhere; one handler | `EditorWindow.swift:81-91` | Adopt | A window-wide DropArea feeds the single import command: TIFFs import as scans; graded files offer Relink (F06). | One door (audit row for rule 155). |
@@ -297,28 +297,33 @@ These are the values for `app/qml/Theme.qml` (RFC-0011). Each token carries a co
 ### 4.1 Window and regions (px at 100 % scale)
 
 ```
-┌──────── left rail ────────┬──────────── centre column ─────────────┬──────── right rail ────────┐
-│ header 40 "Project"       │ top bar 40 (◧ tools · mode · status · zoom ◨) │ header 40 "Item"        │
-├───────────────────────────┤────────────────────────────────────────├────────────────────────────┤
-│ Project & Files           │                                        │ [Boundaries|Export|Return] │
-│ Scans (list, splitter)    │                canvas                  │ sections…                  │
-│ Templates                 │   badges ↗           navigator ↘       │                            │
-│ Detection                 │   chips ↙                              │                            │
-│ Batch                     ├────────────────────────────────────────┤                            │
-│ Jobs                      │ filmstrip 148                          │                            │
-└───────────────────────────┴────────────────────────────────────────┴────────────────────────────┘
-  254 (232–380)                         flexible                           300 (280–420)
+┌─┬──────── left rail ────────┬──────────── centre column ─────────────┬──────── right rail ────────┬─┐
+│‹│ header 40 "Project"       │ top bar 40 (tools · mode · status · zoom) │ header 40 "Item"        │›│
+│ ├───────────────────────────┤────────────────────────────────────────├────────────────────────────┤ │
+│ │ Project & Files           │                                        │ [Boundaries|Export|Return] │ │
+│ │ Scans (list, splitter)    │                canvas                  │ sections…                  │ │
+│ │ Templates                 │   badges ↗           navigator ↘       │                            │ │
+│ │ Detection                 │   chips ↙                              │                            │ │
+│ │ Batch                     │                                        │                            │ │
+│ │ Jobs                      │                                        │                            │ │
+├─┴───────────────────────────┴────────────────────────────────────────┴────────────────────────────┴─┤
+│ filmstrip 148 (the whole window width)                                                               │
+├──────────────────────────────────────────────────── ⌄ ───────────────────────────────────────────────┤
+└──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ 8   254 (232–380)                         flexible                           300 (280–420)          8
 ```
+`‹ › ⌄` are the edge strips (UX-10, U022): 8 px bars on the window edge outside each panel.
 
 | Item | Value |
 |---|---|
 | Window | Default 1440×900, or 90 % of the available screen, whichever is smaller. Minimum 1100×700. |
-| Left rail | Width 254, resizable 232–380, foldable (◧). Persisted at `ui/v1/rail/left/width`. |
-| Right rail | Width 300, resizable 280–420, foldable (◨). Persisted at `ui/v1/rail/right/width`. |
+| Left rail | Width 254, resizable 232–380, foldable (left edge strip). Width and folded state persisted (settings `leftRailWidth`, `showLeftRail`). Ends above the filmstrip. |
+| Right rail | Width 300, resizable 280–420, foldable (right edge strip). Width and folded state persisted (`rightRailWidth`, `showRightRail`). Ends above the filmstrip. Under its header: the workflow steps of the current print (UX-06): five 20 px numbered circles (done = filled with a check, next = ringed, connectors filled once done) and "Next: … (step n of 5)"; a click goes to the step (Import dialog, Boundaries / Export / Return tab, Return tab + Composite view). |
+| Edge strips (UX-10) | 8 px on the window edge outside the left rail, the right rail and the filmstrip, the full length of that edge; they stay in place when the panel is folded. A chevron points where a click moves the panel (‹ fold left / › unfold …); tooltip "Hide/Show Left Rail (shortcut)"; keyboard focusable, Space/Enter toggles; surface `surfacePanel` (open) or `controlFill` (folded), hover overlay and accent chevron. Hit area 8 + 6 px over the neighbour's empty inset (left rail side, the canvas's fit padding, the filmstrip's bottom margin); not where a scroll bar is next to the strip (right strip while the right rail is open, bottom strip while the filmstrip is folded). The View menu items and the shortcuts below stay. |
 | Rail header row | Height 40 (equal to the top bar); title 13 semibold; leading inset 12, trailing 10. |
-| Top bar | Height 40, centre column only. Left to right: ◧ · Import · Export · Relink │ tools V, H, O, I │ canvas mode segmented (Scan · Print · Image · Composite) │ status text + job progress (flex) │ Compare · Overlays │ zoom field 56×24 · − · + │ ◨. Padding 12; 4 between items; 16 between clusters. |
-| Canvas | Flexible; the minimum is whatever remains at 1100×700. Surround `surfaceCanvas`. |
-| Filmstrip | Height 148 (8 + 108 thumbnail + 4 + 20 label + 8). Cell width = thumbnail aspect × 108, capped at 162; gap 8. ‹ › page chevrons 24 wide. Foldable (⌥⌘3 / Ctrl+Alt+3). |
+| Top bar | Height 40, centre column only. Left to right: Import · Export · Relink │ tools V, H, O, I │ status text + job progress (flex) │ Compare · Overlays (eye) │ view switch segmented (Scan · Print · Image · Composite; UX-06: between the eye and the zoom field) │ zoom field 56×24 · − · +. Padding 6; 4 between items; 16 between clusters. Narrow column: the bar gives up, in this order, the file buttons (File menu, left rail), the segmented view switch for a menu button with the same four views (min 96 px), and − / + (zoom field menu, shortcuts); eye → view → zoom never changes, nothing leaves the bar. (The ◧ / ◨ fold buttons were replaced by the edge strips, U022.) |
+| Canvas | Flexible, at least 480 wide (`centreMin`): in a narrow window both rails narrow towards their minimums, in proportion to what they can give, without changing their stored widths (UX-06). Surround `surfaceCanvas`. |
+| Filmstrip | Height 148 (8 + 108 thumbnail + 4 + 20 label + 8), the whole window width under both rails (UX-10). Cell width = thumbnail aspect × 108, capped at 162; gap 8. ‹ › page chevrons 24 wide. Foldable (bottom edge strip, ⌥⌘3 / Ctrl+Alt+3). |
 | Hairlines | 1 px logical: `lineRegion` between regions (full-height overlay dividers; under the top bar; above the filmstrip), `lineSection` between rail sections. |
 | Resize grip | 6 px hit area on the rail│canvas divider; 1 px `accent` line on hover; double-click resets. |
 | Canvas badges | Top right; inset 10; spacing 4 (§4.7). |
@@ -448,7 +453,7 @@ Single-key shortcuts (marked †) are disabled while a text or number field has 
 | Show/Hide Overlays | ⇧⌘H | Ctrl+Shift+H |
 | Compare split (Composite mode) | Y † | Y † |
 | Toggle Original ↔ Composite | \ † | \ † |
-| Toggle left rail / right rail / filmstrip / all | ⌥⌘1 / ⌥⌘2 / ⌥⌘3 / ⌥⌘0 | Ctrl+Alt+1 / 2 / 3 / 0 |
+| Toggle left rail / right rail / filmstrip / all (also the edge strips, UX-10) | ⌥⌘1 / ⌥⌘2 / ⌥⌘3 / ⌥⌘0 | Ctrl+Alt+1 / 2 / 3 / 0 |
 | Full Screen | ⌃⌘F | F11 |
 | Previous / Next Print | ← / → † | ← / → † |
 | Previous / Next Scan | ⇧← / ⇧→ † | Shift+← / Shift+→ † |

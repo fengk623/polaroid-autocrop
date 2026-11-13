@@ -40,6 +40,12 @@ jobs:
         run: python3 tools/check-i18n.py
       - name: App icons complete, no sun (UX-11)
         run: python3 tools/check-icons.py
+      - name: Specifications name only tests, files, jobs and API that exist (FK-013)
+        run: python3 tools/check-claims.py
+      - name: The user guide lists every shortcut (UX-12)
+        run: python3 tools/check-guide.py
+      - name: Every feature of the freeze list has evidence (UX-12)
+        run: python3 tools/freeze-regression.py
 
   core:
     name: Core ${{ matrix.name }}
@@ -118,6 +124,16 @@ jobs:
         run: |
           python3 tools/ci-annotate.py build/ci/test-report.xml || python tools/ci-annotate.py build/ci/test-report.xml
           python3 tools/ci-annotate.py build/ci/test.log || python tools/ci-annotate.py build/ci/test.log
+      # FK-012 (U026): the exported Linear DNG decoded by an independent decoder (LibRaw via rawpy, test-only,
+      # installed in a venv) and compared with the 16-bit TIFF export of the same image area
+      - name: Linear DNG decoded independently (FK-012)
+        id: dng
+        if: matrix.name == 'linux-x64'
+        run: |
+          python3 -m venv build/dng-venv
+          build/dng-venv/bin/pip install --quiet "rawpy>=0.21" numpy tifffile imagecodecs
+          build/dng-venv/bin/python tools/dng-interop.py --fkcli build/ci/bin/fkcli --fkfixture build/ci/bin/fkfixture \
+            --out build/dng-interop --json build/dng-interop/report.json
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
@@ -161,7 +177,8 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@v5
       - name: System libraries for Qt (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+        # fonts-noto-cjk: the self-test checks Chinese text for missing glyphs (FK-009); the runner has no CJK font
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 fonts-noto-cjk
       - name: Qt ${{ env.QT_VERSION }}
         uses: jurplel/install-qt-action@v4
         with:
@@ -210,6 +227,9 @@ jobs:
           true
       - name: Self-test (offscreen, real controllers, snapshots)
         id: selftest
+        env:
+          # Windows: a GUI program's qInfo() goes to the debugger, not to the piped stderr; keep PASS/FAIL lines
+          QT_FORCE_STDERR_LOGGING: "1"
         run: |
           set -o pipefail
           build/app/bin/fkfixture --out build/selftest-scan.tif --dpi 300 --count 3 --seed 3 --bits 16
@@ -226,6 +246,17 @@ jobs:
             QT_QPA_PLATFORM=offscreen "$APP" --self-test "$PWD/build/selftest/miniswhite$b" --scan "$PWD/build/selftest-miw$b.tif" \
               --scenario miniswhite 2>&1 | tee -a build/selftest.log
           done
+          # FK-009 (U024): text and layout checks also in Chinese and at 1.5× / 2× (English 1× ran above)
+          for v in "zh_CN 1" "zh_CN 2" "en 1.5"; do
+            set -- $v
+            d="$PWD/build/text-$1-$2"; mkdir -p "$d/settings"
+            printf '[app]\nlanguage=%s\n' "$1" > "$d/settings/settings.ini"
+            FK_SETTINGS_DIR="$d/settings" QT_SCALE_FACTOR=$2 QT_QPA_PLATFORM=offscreen "$APP" --self-test "$d" \
+              --scan "$PWD/build/selftest-scan.tif" --scenario text 2>&1 | tee -a build/selftest.log
+          done
+          # UX-12 (U029): every entry of the feature freeze list passed in this run (or is covered elsewhere)
+          PY=$(command -v python3 || command -v python)
+          "$PY" tools/freeze-regression.py --report build/selftest/report.json 2>&1 | tee -a build/selftest.log
       - name: Self-test failures as annotations
         if: failure() && steps.selftest.outcome == 'failure'
         run: python3 tools/ci-annotate.py build/selftest.log || python tools/ci-annotate.py build/selftest.log

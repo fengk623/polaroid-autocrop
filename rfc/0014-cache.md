@@ -1,6 +1,6 @@
 # RFC-0014 — Cache
 
-Status: Accepted · Module: `core/cache` · ADR-0006 · Tests: `tests/core/test_memory.cpp` (`CacheLedger.*`),
+Status: Accepted · Module: `core/src/cache.cpp` · ADR-0006 · Tests: `tests/core/test_memory.cpp` (`CacheLedger.*`),
 self-test `runMemoryBudget` (FK-005)
 
 ## Disk cache (planned)

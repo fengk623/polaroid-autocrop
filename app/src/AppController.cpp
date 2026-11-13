@@ -99,7 +99,13 @@ fk::ColorPolicy colorPolicyOf(const QString& c) {
 
 QString errText(const fk::Error& e) {
     QString s = QCoreApplication::translate("Errors", e.message.c_str());
-    if (!e.detail.empty()) s += QStringLiteral(" (") + QString::fromStdString(e.detail) + QStringLiteral(")");
+    // a confirmation's detail tells programmers which flag to set ("set allowDepthReduction …"): not for the
+    // user (FK-009); other details (file, libtiff's reason) stay
+    if (!e.detail.empty() && e.code != fk::Errc::needs_confirmation)
+        s += QStringLiteral(" (") + QString::fromStdString(e.detail) + QStringLiteral(")");
+    else if (!e.detail.empty())
+        qInfo().noquote() << "confirmation needed:" << QString::fromStdString(e.message) << "—"
+                          << QString::fromStdString(e.detail);
     return s;
 }
 
@@ -318,6 +324,11 @@ void AppController::loadSettings() {
 
 QVariantMap AppController::settings() const {
     return settings_;
+}
+
+QVariant AppController::storedSetting(const QString& key) const {
+    qs_->sync();
+    return qs_->value(QStringLiteral("app/") + key);
 }
 
 namespace {
@@ -597,6 +608,14 @@ bool AppController::openProject(const QVariant& url) {
     if (readOnly_)
         notify(tr("This project was saved by a newer version and is opened read-only."),
                QStringLiteral("warning"));
+    else if (fk::compareVersions(project_.savedBy, fk::productVersion()) > 0)
+        // FK-014: a later version saved it (the user went back to this version): what this version does not
+        // know is kept in the file unchanged (docs/project-format.md §Compatibility)
+        notify(
+            tr("This project was last saved by FrameKeeper %1, a later version. What this version does not "
+               "know is kept unchanged when you save.")
+                .arg(toQ(project_.savedBy)),
+            QStringLiteral("info"));
     QStringList recent = settings_.value("recentProjects").toStringList();
     recent.removeAll(path);
     recent.prepend(path);

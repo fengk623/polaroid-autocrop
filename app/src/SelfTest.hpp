@@ -26,6 +26,9 @@ class SelfTest : public QObject {
              QObject* parent = nullptr);
     /// Runs synchronously (spinning the event loop); returns the process exit code.
     int run();
+    /// FK-013: outcomes counted apart — "N passed, N failed, N skipped, N known issues (N no longer
+    /// reproduce), N not applicable". A skip or a known issue is never counted as passed.
+    QString summary() const;
     /// `--scenario <name>`: reproduces reported user flows and records what actually happens (observations,
     /// not assertions) in <dir>/scenario-<name>.json plus snapshots. Names: "relink", "count", "upright",
     /// "miniswhite", "memory".
@@ -83,6 +86,28 @@ class SelfTest : public QObject {
     /// resolution and the thumbnails are converted again, Preview and Full agree, outputs unchanged, a proxy
     /// converted for the previous monitor never shown; and back.
     void runDisplayProfile();
+    /// FK-012 (U026): a Linear DNG export given back (relink, drag and drop) is refused with guidance and
+    /// never imported as a scan.
+    void runFormats();
+    /// U029 (UX-12): the full regression of docs/v1/FEATURE-FREEZE.md for the features no other section
+    /// exercises — folder import, relocation, removing a scan, templates, reset and snap, review and exclude,
+    /// navigation and view keys, zoom, overlays, compare, full screen, settings, About, typing guard. Checks
+    /// are named "FREEZE <id> …" (tools/freeze-regression.py maps every entry of the freeze list to its
+    /// evidence).
+    void runFreezeRegression();
+    /// UX-10 (U022): edge strips fold and unfold each panel (mouse, keyboard, shortcuts), the filmstrip spans
+    /// the window, the canvas refits the whole scan and clicks still land on the print under the pointer
+    /// after folding and resizing; widths and folded state are stored; Reset Layout.
+    void runLayout();
+    /// UX-06 (U021): the view switch between the overlays button and the zoom field; the top bar never
+    /// overflows or overlaps at any window size and rail width (it compacts in a fixed order); the centre
+    /// column keeps its minimum; the workflow steps follow the current print and lead to each step.
+    void runToolbar();
+    /// FK-009 (U024): every visible text has glyphs in its font (no boxes), stays inside its box and its
+    /// clipping parent (no cut words), key controls are not covered; dark and light, three window sizes,
+    /// rails shown and folded, the three right-rail tabs and the main dialogs. Language and scale come from
+    /// the process (CI runs English and Chinese, 1× and 2×). Returns the number of problems.
+    int runTextLayout();
     void doubleClick(QQuickItem* item, QPointF local = QPointF(-1, -1));
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.

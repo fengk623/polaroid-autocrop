@@ -1,6 +1,6 @@
 # RFC-0013 — Metadata
 
-Status: Accepted · Module: `core/metadata` · PRD F13 · Tests: `tests/core/test_metadata.cpp`
+Status: Accepted · Module: `core/src/metadata.cpp` · PRD F13 · Tests: `tests/core/test_metadata.cpp`
 
 - `MetadataSet { dpi, unit, icc, orientation, descriptive (Make, Model, DateTime, Artist, Copyright,
   ImageDescription, DocumentName), exifSubset, xmpPacket, privateTags[] }` read from TIFF/PNG/JPEG.

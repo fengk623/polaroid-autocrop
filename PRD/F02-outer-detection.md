@@ -1,6 +1,6 @@
 # F02 — Outer (paper) detection
 
-RFC: `rfc/0004-detection.md`, `rfc/0002-geometry.md` · Tests: `tests/core/test_detection_*.cpp`, `fkcli eval`
+RFC: `rfc/0004-detection.md`, `rfc/0002-geometry.md` · Tests: `tests/core/test_detection.cpp`, `fkcli eval`
 
 ## Problem
 Find every print in a scan and its outermost physical edge — frame, wide bottom border, texture,

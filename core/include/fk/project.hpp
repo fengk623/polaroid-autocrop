@@ -128,6 +128,9 @@ struct ItemRecord {
     std::string finalExport;       ///< last full-print export path
     std::vector<std::string> undo; ///< serialized prior boundary states (bounded)
     std::vector<std::string> redo;
+    /// FK-014: keys of this print that a later version wrote and this one does not read (a JSON object, or
+    /// empty), written back unchanged so that opening and saving after a rollback loses nothing.
+    std::string unknownJson;
 };
 
 struct ScanRecord {
@@ -151,6 +154,7 @@ struct ScanRecord {
     /// runtime only: a file is at the path but it is not the imported scan (FK-007); never read as the scan
     bool changed = false;
     std::string changeReason; ///< IdentityCheck::reason
+    std::string unknownJson;  ///< FK-014: keys of this scan this version does not read, kept verbatim
 };
 
 struct ProjectSettings {
@@ -166,6 +170,7 @@ struct ProjectSettings {
     /// FK-008: the remaining output parameters (geometry, final output, mask, frame…) as a JSON object, so a
     /// reopened project produces the same outputs; written by the app, kept verbatim by the core.
     std::string outputJson;
+    std::string unknownJson; ///< FK-014: settings this version does not read, kept verbatim
 };
 
 // ---- sidecar / export record
@@ -188,6 +193,7 @@ struct Sidecar {
     /// "export" for an export; "manual_alignment" for a graded file placed on a print that has no export of
     /// its own (RFC-0006 §New alignment) — not an export, so no export date or export-file hash is faked.
     std::string origin = "export";
+    std::string unknownJson; ///< FK-014: keys of the record this version does not read, kept verbatim
 };
 
 struct Project {
@@ -205,6 +211,9 @@ struct Project {
     /// project so the choice resolves after reopening, even when the profile file or the scan is gone.
     std::map<std::string, std::vector<uint8_t>> iccProfiles;
     std::string unknownJson; ///< unknown top-level keys preserved verbatim (forward compatibility)
+    /// FK-014: the version that last saved the file ("app.version"; empty when absent). Informational: a
+    /// version later than this one means the project went through a rollback (projects keep schema 1).
+    std::string savedBy;
 };
 
 enum class OpenMode : int { read_write = 0, read_only = 1 };

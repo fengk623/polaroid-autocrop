@@ -22,7 +22,7 @@ CLI (`fkcli`), tests and future mobile front ends call only this API.
 ## C ABI (subset, stable)
 `fk_api_version`, `fk_last_error`, `fk_scan_open/close/info_json`, `fk_detect_json`,
 `fk_export_item`, `fk_composite_item`, `fk_project_load/save`, `fk_free`. JSON strings carry metadata
-only; outputs are files. A C test (`tests/core/test_c_abi.c`) compiles as C11 against the header.
+only; outputs are files. A C test compiling as C11 against the header is planned with the C ABI (not built).
 
 ## Compatibility tests
-`tests/contract/` pins JSON field names of project, sidecar, template and the C ABI JSON.
+`tests/core/test_api_contract.cpp` pins enum values, signatures and stable names (U027); the JSON of projects, sidecars and templates is pinned by the `Project.*`, `ExportRecords.*` and `Template.*` round trips; the C ABI JSON is planned with the C ABI.

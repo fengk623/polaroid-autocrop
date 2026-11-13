@@ -18,9 +18,9 @@ RFC: `rfc/0014-cache.md`, `rfc/0015-diagnostics.md`, ADR-0006 · Tests: `tests/c
 - Fully offline: no network code in v1.
 
 ## Acceptance
-- A1 Cache never exceeds its cap; LRU eviction order verified. (`test_cache`)
-- A2 Interrupted cache writes leave no registered entry; orphans removed at start. (`test_cache.Crash`)
-- A3 Logs contain no pixel buffers and anonymised bundles contain no user paths. (`test_diagnostics`)
+- A1 Cache never exceeds its cap; LRU eviction order verified. (`CacheLedger.DropsLeastRecentlyUsedFirst` for the in-memory cache; a disk cache is not built, ADR-0006)
+- A2 Interrupted cache writes leave no registered entry; orphans removed at start. (not built: there is no disk cache yet)
+- A3 Logs contain no pixel buffers and anonymised bundles contain no user paths. (not built: diagnostic bundles are not implemented; `tools/check-no-network.py` covers "no upload")
 - A4 Binary contains no network symbols from Qt Network or sockets in core (CI check `check-no-network`).
 - A5 (FK-005) The caches never exceed the budget except by what is on screen or kept; dropped entries are
   rebuilt identically when needed; every image the app holds is counted. (`CacheLedger.*`, self-test

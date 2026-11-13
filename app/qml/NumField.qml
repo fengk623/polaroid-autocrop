@@ -49,6 +49,13 @@ TextField {
     }
     onEditingFinished: {
         if (scrubbable && !editing) return // read-only display: nothing typed
+        // U029 (freeze C04): the field shows the value rounded to `decimals`; leaving it without changing the
+        // text must not commit that rounded value (it moved a corner and marked the boundary edited)
+        if (text === Number(f.value).toFixed(f.decimals)) {
+            showValue()
+            if (scrubbable) editing = false
+            return
+        }
         const v = Number(text.replace(",", "."))
         if (text.length > 0 && !isNaN(v)) f.committed(clamp(v))
         showValue()
