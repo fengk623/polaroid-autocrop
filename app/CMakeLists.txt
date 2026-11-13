@@ -13,7 +13,7 @@ qt_add_qml_module(FrameKeeper
     qml/Section.qml qml/FieldRow.qml qml/NumField.qml qml/FkCombo.qml qml/FkCheck.qml qml/Badge.qml
     qml/TopBar.qml qml/LeftRail.qml qml/RightRail.qml qml/Filmstrip.qml qml/CanvasArea.qml qml/RailGrip.qml qml/EdgeStrip.qml qml/WorkflowSteps.qml
     qml/FkDialog.qml qml/ExportDialog.qml qml/RelinkDialog.qml qml/FinalDialog.qml qml/SettingsDialog.qml
-    qml/AboutDialog.qml qml/NameDialog.qml qml/LibraryDialog.qml qml/WorkspaceSwitch.qml qml/LibraryRail.qml qml/HomePage.qml qml/Toasts.qml qml/AppMenuBar.qml qml/MacMenuBar.qml qml/FkSpin.qml
+    qml/AboutDialog.qml qml/NameDialog.qml qml/LibraryDialog.qml qml/WorkspaceSwitch.qml qml/LibraryRail.qml qml/HomePage.qml qml/LibraryView.qml qml/LibraryCell.qml qml/LibraryInfo.qml qml/Toasts.qml qml/AppMenuBar.qml qml/MacMenuBar.qml qml/FkSpin.qml
   SOURCES
     src/AppController.hpp src/AppController.cpp src/Models.hpp src/Models.cpp src/Jobs.hpp src/Jobs.cpp
     src/Display.hpp src/Display.cpp src/ScanCanvas.hpp src/ScanCanvas.cpp src/ImageProvider.hpp

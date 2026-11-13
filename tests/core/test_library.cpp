@@ -672,3 +672,146 @@ TEST(Library, RenamingKeepsTheFolderAndWaitsForAnotherInstance) {
     ASSERT_TRUE(renameLibrary(lib->folder, "Third", other)) << "the instance that holds it may rename";
     EXPECT_EQ(readLibraryManifest(lib->folder)->name, "Third");
 }
+
+// ---- U020: what the library workspace lists, in which order
+// ------------------------------------------------
+#include "fk/library_view.hpp"
+
+namespace {
+Project viewProject(const TempDir& t) {
+    Project p = newProject("view");
+    fs::create_directories(t / "roll1");
+    fs::create_directories(t / "roll2");
+    p.scans.push_back(scanOf(t / "roll1" / "b.tif", 21));
+    p.scans.push_back(scanOf(t / "roll2" / "a.tif", 22));
+    p.scans[0].library.addedAt = "2026-11-01T10:00:00Z";
+    p.scans[1].library.addedAt = "2026-11-02T10:00:00Z";
+    p.scans[1].library.capturedAt = "1998-07-04T12:00:00Z";
+    return p;
+}
+std::vector<std::string> idsIn(const std::vector<LibraryEntry>& e, const std::vector<size_t>& order) {
+    std::vector<std::string> out;
+    for (size_t i : order)
+        out.push_back(e[i].id);
+    return out;
+}
+} // namespace
+
+TEST(LibraryView, SortKeysHaveStableNames) {
+    EXPECT_EQ(librarySortKeys().size(), 14u);
+    for (LibrarySortKey k : librarySortKeys())
+        EXPECT_EQ(librarySortKeyFrom(librarySortKeyName(k)), k);
+    EXPECT_STREQ(librarySortKeyName(LibrarySortKey::capture_time), "capture_time");
+    EXPECT_STREQ(librarySortKeyName(LibrarySortKey::manual), "manual");
+    EXPECT_EQ(librarySortKeyFrom("something new"), LibrarySortKey::added);
+}
+
+TEST(LibraryView, PrintsAndScansAreListedWithTheirValues) {
+    TempDir t;
+    const Project p = viewProject(t);
+    const auto prints = libraryEntries(p, true);
+    ASSERT_EQ(prints.size(), 4u);
+    EXPECT_TRUE(prints[0].print);
+    EXPECT_EQ(prints[0].fileName, "b.tif");
+    EXPECT_EQ(prints[0].extension, "tif");
+    EXPECT_EQ(prints[0].fileType, "TIFF");
+    EXPECT_EQ(prints[0].meta.addedAt, "2026-11-01T10:00:00Z") << "a print entered the library with its scan";
+    EXPECT_GT(prints[0].width, 0);
+    EXPECT_EQ(prints[2].capturedAt, "1998-07-04T12:00:00Z");
+    EXPECT_EQ(prints[0].capturedAt, "") << "unknown, never the scan date";
+    const auto scans = libraryEntries(p, false);
+    ASSERT_EQ(scans.size(), 2u);
+    EXPECT_FALSE(scans[0].print);
+    EXPECT_EQ(scans[0].width, 64);
+    EXPECT_EQ(libraryEntries(p, true, p.scans[1].scanId).size(), 2u) << "the prints of one scan";
+    EXPECT_EQ(libraryEntries(p, false, {}, pathToUtf8(t / "roll2")).size(), 1u) << "the scans of one folder";
+}
+
+TEST(LibraryView, SortingIsStableAndPutsMissingValuesLastBothWays) {
+    TempDir t;
+    Project p = viewProject(t);
+    auto& a = p.scans[0].items;
+    auto& b = p.scans[1].items;
+    a[0].library.rating = 3;
+    a[1].library.rating = 0;
+    b[0].library.rating = 5;
+    b[1].library.rating = 3;
+    const auto e = libraryEntries(p, true);
+    const std::string A0 = a[0].itemId, A1 = a[1].itemId, B0 = b[0].itemId, B1 = b[1].itemId;
+    EXPECT_EQ(idsIn(e, sortLibraryEntries(e, LibrarySortKey::rating, false)),
+              (std::vector<std::string>{A1, A0, B1, B0}));
+    EXPECT_EQ(idsIn(e, sortLibraryEntries(e, LibrarySortKey::rating, true)),
+              (std::vector<std::string>{B0, A0, B1, A1}))
+        << "equal ratings keep the catalog order in both directions";
+    // capture time: only scan b knows it — its prints first, the unknown ones last, both ways
+    EXPECT_EQ(idsIn(e, sortLibraryEntries(e, LibrarySortKey::capture_time, false)),
+              (std::vector<std::string>{B0, B1, A0, A1}));
+    EXPECT_EQ(idsIn(e, sortLibraryEntries(e, LibrarySortKey::capture_time, true)),
+              (std::vector<std::string>{B0, B1, A0, A1}));
+    // file name: a.tif before b.tif, then the place on the scan
+    EXPECT_EQ(idsIn(e, sortLibraryEntries(e, LibrarySortKey::file_name, false)),
+              (std::vector<std::string>{B0, B1, A0, A1}));
+    // colour labels in their offered order, none last
+    a[1].library.colorLabel = "blue";
+    b[1].library.colorLabel = "red";
+    a[0].library.pick = "rejected";
+    b[0].library.pick = "picked";
+    const auto e2 = libraryEntries(p, true);
+    EXPECT_EQ(idsIn(e2, sortLibraryEntries(e2, LibrarySortKey::color_label, false)),
+              (std::vector<std::string>{B1, A1, A0, B0}));
+    EXPECT_EQ(idsIn(e2, sortLibraryEntries(e2, LibrarySortKey::color_label, true)),
+              (std::vector<std::string>{A1, B1, A0, B0}));
+    EXPECT_EQ(idsIn(e2, sortLibraryEntries(e2, LibrarySortKey::pick, true)),
+              (std::vector<std::string>{B0, A1, B1, A0}))
+        << "picked, unflagged, rejected";
+    // added: by the time the scan entered, then the order of adding (a folder imported in one second keeps
+    // its scans together: not every first print, then every second one)
+    b[0].library.addedAt = a[0].library.addedAt = "";
+    p.scans[1].library.addedAt = p.scans[0].library.addedAt;
+    const auto same = libraryEntries(p, true);
+    EXPECT_EQ(idsIn(same, sortLibraryEntries(same, LibrarySortKey::added, false)),
+              (std::vector<std::string>{A0, A1, B0, B1}));
+    p.scans[1].library.addedAt = "2026-11-02T10:00:00Z";
+    EXPECT_EQ(idsIn(e2, sortLibraryEntries(e2, LibrarySortKey::added, true)),
+              (std::vector<std::string>{B1, B0, A1, A0}));
+    // manual: placed ones in their order, the others last in catalog order
+    b[1].library.manualOrder = 1;
+    a[1].library.manualOrder = 2;
+    const auto e3 = libraryEntries(p, true);
+    EXPECT_EQ(idsIn(e3, sortLibraryEntries(e3, LibrarySortKey::manual, false)),
+              (std::vector<std::string>{B1, A1, A0, B0}));
+}
+
+TEST(LibraryView, FiltersByRatingPickColourAndText) {
+    TempDir t;
+    Project p = viewProject(t);
+    p.scans[0].items[0].library.rating = 4;
+    p.scans[0].items[0].library.pick = "picked";
+    p.scans[0].items[1].library.colorLabel = "green";
+    p.scans[1].items[0].library.textLabels = {"Beach", "家人"};
+    p.scans[1].items[1].library.pick = "rejected";
+    const auto e = libraryEntries(p, true);
+    auto count = [&](const LibraryFilter& f) {
+        return std::count_if(e.begin(), e.end(),
+                             [&](const LibraryEntry& x) { return matchesLibraryFilter(x, f); });
+    };
+    EXPECT_EQ(count({}), 4);
+    EXPECT_EQ(count({3, "any", "any", ""}), 1);
+    EXPECT_EQ(count({0, "picked", "any", ""}), 1);
+    EXPECT_EQ(count({0, "rejected", "any", ""}), 1);
+    EXPECT_EQ(count({0, "unflagged", "any", ""}), 2);
+    EXPECT_EQ(count({0, "any", "green", ""}), 1);
+    EXPECT_EQ(count({0, "any", "none", ""}), 3);
+    EXPECT_EQ(count({0, "any", "any", "beach"}), 1) << "text labels, case-insensitive";
+    EXPECT_EQ(count({0, "any", "any", "家"}), 1);
+    EXPECT_EQ(count({0, "any", "any", "a.tif"}), 2) << "file names";
+}
+
+TEST(LibraryView, ManualOrderNumbersEveryEntryAfterAMove) {
+    const auto r = reorderManually({"a", "b", "c", "d"}, "d", 1);
+    ASSERT_EQ(r.size(), 4u);
+    EXPECT_EQ(r[0], (std::pair<std::string, int64_t>{"a", 1}));
+    EXPECT_EQ(r[1], (std::pair<std::string, int64_t>{"d", 2}));
+    EXPECT_EQ(r[3], (std::pair<std::string, int64_t>{"c", 4}));
+    EXPECT_EQ(reorderManually({"a", "b"}, "a", 99).back().first, "a") << "past the end = last";
+}

@@ -98,4 +98,51 @@ class ItemListModel : public QAbstractListModel {
     std::vector<ItemRow> rows_;
 };
 
+/// UX-05 (U020): one cell of the library grid — a print or a scan, in display order (sorted, filtered).
+struct LibraryRow {
+    QString id, scanId, kind; // kind: "print" or "scan"
+    QString title, subtitle, thumb, pick, colorLabel;
+    QStringList textLabels;
+    int rating = 0, prints = 0;
+    bool current = false, selected = false, missing = false, excluded = false;
+};
+
+class LibraryGridModel : public QAbstractListModel {
+    Q_OBJECT
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
+  public:
+    enum Roles {
+        IdRole = Qt::UserRole + 1,
+        ScanIdRole,
+        KindRole,
+        TitleRole,
+        SubtitleRole,
+        ThumbRole,
+        RatingRole,
+        PickRole,
+        ColorLabelRole,
+        TextLabelsRole,
+        PrintsRole,
+        CurrentRole,
+        SelectedRole,
+        MissingRole,
+        ExcludedRole
+    };
+    using QAbstractListModel::QAbstractListModel;
+    int rowCount(const QModelIndex& = {}) const override { return static_cast<int>(rows_.size()); }
+    QVariant data(const QModelIndex& index, int role) const override;
+    QHash<int, QByteArray> roleNames() const override;
+    int count() const { return static_cast<int>(rows_.size()); }
+    void setRows(std::vector<LibraryRow> rows);
+    Q_INVOKABLE int indexOf(const QString& id) const;
+    Q_INVOKABLE QString idAt(int row) const;
+    QStringList ids() const;
+
+  Q_SIGNALS:
+    void countChanged();
+
+  private:
+    std::vector<LibraryRow> rows_;
+};
+
 } // namespace fkapp

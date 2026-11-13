@@ -3,6 +3,24 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.8.0-alpha.3 — U020: inside a library — grid and single view, sorting, filters, ratings and labels (UX-05)
+- Entering a library shows its prints; "All Libraries" goes back to the home page. A grid (only the cells on screen
+  exist and ask for thumbnails) or one print at a time (E, ← / →); lists of prints and of scans with their counts;
+  double-click a scan for its prints; the library's folders on the left (references), Import / Export at the bottom.
+- Sort by capture time, added order, edit time and count, rating, pick, text and colour label, file name, pixel
+  size, extension, file type, aspect ratio or manual order, either way; values missing last in both directions,
+  equal values in their order; the sort of each list is kept in the library. Filter by rating, pick, colour, text.
+- Ratings (0–5), colour labels (6–9), pick / reject / unflag (P / X / U), text labels on the right; manual order from
+  the cell's menu; all kept in the catalog.
+- Information: file name, library, copyright, author, capture time (only the file's EXIF capture time — the scan
+  date is shown apart as "Scanned"), pixel size, file size, DPI; unknown values say "Unknown"; with the privacy
+  preset that removes identity, the author is marked as not written to exports.
+- A library opens without decoding its scans: thumbnails are kept in its cache, named by what they show; only the
+  selected scan is read. Edits in Edit Photos record the print's edit time and count. Double-click a print to edit
+  it; G returns to the grid with the same print selected.
+- Tests: `LibraryView.*` (5), ten "U020 …" self-test checks with real clicks and keys. Notes:
+  docs/release-notes/v0.8.0-alpha.3.md.
+
 ## 0.8.0-alpha.2 — U019: the Library workspace and its home page (UX-05)
 - Two workspaces at the top left, where "Project" was: **Library** and **Edit Photos** (keys G and D). A fresh start
   opens the Library; the last workspace is remembered. Editing keys (V, H, O, I, 1–4, Z, X, arrows, Shift tap) act

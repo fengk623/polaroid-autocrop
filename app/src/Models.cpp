@@ -153,4 +153,97 @@ int ItemListModel::indexOf(const QString& itemId) const {
     return -1;
 }
 
+// ---- library grid (U020) ----------------------------------------------------------------------------------
+
+QVariant LibraryGridModel::data(const QModelIndex& index, int role) const {
+    if (!index.isValid() || index.row() >= static_cast<int>(rows_.size())) return {};
+    const LibraryRow& r = rows_[static_cast<size_t>(index.row())];
+    switch (role) {
+    case IdRole:
+        return r.id;
+    case ScanIdRole:
+        return r.scanId;
+    case KindRole:
+        return r.kind;
+    case TitleRole:
+        return r.title;
+    case SubtitleRole:
+        return r.subtitle;
+    case ThumbRole:
+        return r.thumb;
+    case RatingRole:
+        return r.rating;
+    case PickRole:
+        return r.pick;
+    case ColorLabelRole:
+        return r.colorLabel;
+    case TextLabelsRole:
+        return r.textLabels;
+    case PrintsRole:
+        return r.prints;
+    case CurrentRole:
+        return r.current;
+    case SelectedRole:
+        return r.selected;
+    case MissingRole:
+        return r.missing;
+    case ExcludedRole:
+        return r.excluded;
+    default:
+        return {};
+    }
+}
+
+QHash<int, QByteArray> LibraryGridModel::roleNames() const {
+    return {{IdRole, "entryId"},
+            {ScanIdRole, "scanId"},
+            {KindRole, "kind"},
+            {TitleRole, "title"},
+            {SubtitleRole, "subtitle"},
+            {ThumbRole, "thumb"},
+            {RatingRole, "rating"},
+            {PickRole, "pick"},
+            {ColorLabelRole, "colorLabel"},
+            {TextLabelsRole, "textLabels"},
+            {PrintsRole, "prints"},
+            {CurrentRole, "current"},
+            {SelectedRole, "selected"},
+            {MissingRole, "missing"},
+            {ExcludedRole, "excluded"}};
+}
+
+void LibraryGridModel::setRows(std::vector<LibraryRow> rows) {
+    const bool sameShape = rows.size() == rows_.size() && [&] {
+        for (size_t i = 0; i < rows.size(); ++i)
+            if (rows[i].id != rows_[i].id) return false;
+        return true;
+    }();
+    if (sameShape) {
+        rows_ = std::move(rows);
+        if (!rows_.empty()) Q_EMIT dataChanged(index(0), index(static_cast<int>(rows_.size()) - 1));
+        return;
+    }
+    beginResetModel();
+    rows_ = std::move(rows);
+    endResetModel();
+    Q_EMIT countChanged();
+}
+
+int LibraryGridModel::indexOf(const QString& id) const {
+    for (size_t i = 0; i < rows_.size(); ++i)
+        if (rows_[i].id == id) return static_cast<int>(i);
+    return -1;
+}
+
+QString LibraryGridModel::idAt(int row) const {
+    return row >= 0 && row < static_cast<int>(rows_.size()) ? rows_[static_cast<size_t>(row)].id : QString();
+}
+
+QStringList LibraryGridModel::ids() const {
+    QStringList out;
+    for (const auto& r : rows_)
+        out << r.id;
+    return out;
+}
+
 } // namespace fkapp

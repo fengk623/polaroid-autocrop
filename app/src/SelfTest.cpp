@@ -11,6 +11,7 @@
 #include "fk/util.hpp"
 #include "fk/version.hpp"
 
+#include <QAbstractItemModel>
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
@@ -3628,6 +3629,10 @@ void SelfTest::runHome() {
     // a second library; then double-click the first one's card
     app_->newLibrary(d, QStringLiteral("Second"));
     app_->waitIdle(300000);
+    // U020: with a library open the workspace shows its prints; "All Libraries" shows the home page
+    QQuickItem* allLibraries = findItemIf(
+        [](QQuickItem* i) { return i->objectName() == QLatin1String("allLibraries") && i->isVisible(); });
+    if (allLibraries) click(allLibraries);
     settle();
     QQuickItem* tripCard = findItemIf([](QQuickItem* i) {
         return i->objectName() == QLatin1String("libraryCard") &&
@@ -3636,9 +3641,11 @@ void SelfTest::runHome() {
     if (tripCard) doubleClick(tripCard);
     app_->waitIdle(300000);
     settle();
-    check(QStringLiteral("U019 double-clicking a library's card opens it in Edit Photos"),
+    // U020: entering shows the library's prints in the Library workspace (U019 went to Edit Photos)
+    check(QStringLiteral("U019 double-clicking a library's card opens it and shows its prints"),
           tripCard && app_->isLibrary() && app_->libraryFolder() == trip &&
-              app_->settings().value("workspace").toString() == QLatin1String("edit") &&
+              app_->settings().value("workspace").toString() == QLatin1String("library") &&
+              visible(QStringLiteral("libraryView")) && !visible(QStringLiteral("homePage")) &&
               app_->counts().value("scans").toInt() == 1,
           QStringLiteral("card %1, library %2, workspace %3")
               .arg(tripCard != nullptr)
@@ -3681,7 +3688,7 @@ void SelfTest::runHome() {
     key(Qt::Key_G, Qt::NoModifier, false, QStringLiteral("g"));
     settle();
     const bool toLibrary = app_->settings().value("workspace").toString() == QLatin1String("library") &&
-                           visible(QStringLiteral("homePage"));
+                           (visible(QStringLiteral("homePage")) || visible(QStringLiteral("libraryView")));
     const QString modeBefore = canvas ? canvas->property("mode").toString() : QString();
     key(Qt::Key_3, Qt::NoModifier, true, QStringLiteral("3"));
     key(Qt::Key_3, Qt::NoModifier, false, QStringLiteral("3"));
@@ -3702,6 +3709,304 @@ void SelfTest::runHome() {
             .arg(modeBefore)
             .arg(toEdit));
 
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("edit"));
+    app_->newProject();
+}
+
+void SelfTest::runLibraryGrid() {
+    const QString d = QDir(dir_).filePath(QStringLiteral("grid"));
+    QDir(d).removeRecursively();
+    QDir().mkpath(d + QStringLiteral("/roll1"));
+    QDir().mkpath(d + QStringLiteral("/roll2"));
+    auto settle = [] { waitFor([] { return false; }, 300); };
+    auto visible = [&](const QString& name) {
+        QQuickItem* i = findItem(name);
+        return i && i->isVisible();
+    };
+    auto press = [&](int k, const QString& text) {
+        key(k, Qt::NoModifier, true, text);
+        key(k, Qt::NoModifier, false, text);
+        settle();
+    };
+    auto cellOf = [&](const QString& id) {
+        return findItemIf([&](QQuickItem* i) {
+            return i->objectName() == QLatin1String("libraryCell") &&
+                   i->property("entryId").toString() == id && i->isVisible();
+        });
+    };
+    auto cells = [&] {
+        int n = 0;
+        findItemIf([&](QQuickItem* i) {
+            if (i->objectName() == QLatin1String("libraryCell")) ++n;
+            return false;
+        });
+        return n;
+    };
+    auto grid = [&] { return qobject_cast<QAbstractItemModel*>(app_->libraryGridObj()); };
+    auto idAt = [&](int row) {
+        QAbstractItemModel* m = grid();
+        return m ? m->data(m->index(row, 0), Qt::UserRole + 1).toString() : QString();
+    };
+    auto shown = [&] { return grid() ? grid()->rowCount() : 0; };
+    auto meta = [&](const QString& id, const char* k) { return app_->libraryMeta(id).value(k); };
+
+    // twelve small scans (the fixture at a quarter of its size, 8-bit) in two folders
+    fk::ImageInfo info;
+    auto full = fk::readImageFile(fk::pathFromUtf8(toStd(scan_)), &info);
+    if (!full) {
+        skip(QStringLiteral("U020 library grid"), QStringLiteral("the scan cannot be read"));
+        return;
+    }
+    const int k = 4;
+    auto small = fk::ImageBuffer::create(full->width() / k, full->height() / k, full->channels(), 8);
+    if (!small) return;
+    for (int64_t y = 0; y < small->height(); ++y)
+        for (int64_t x = 0; x < small->width(); ++x)
+            for (int c = 0; c < full->channels(); ++c) {
+                uint32_t sum = 0;
+                for (int dy = 0; dy < k; ++dy)
+                    for (int dx = 0; dx < k; ++dx)
+                        sum += full->sample16(x * k + dx, y * k + dy, c);
+                small->row(y)[x * full->channels() + c] = static_cast<uint8_t>(sum / (k * k) / 257);
+            }
+    QStringList files;
+    for (int i = 1; i <= 12; ++i) {
+        const QString f = QDir(d).filePath(
+            QStringLiteral("roll%1/s%2.tif").arg(i <= 7 ? 1 : 2).arg(i, 2, 10, QLatin1Char('0')));
+        fk::WriteOptions o;
+        o.bits = 8;
+        o.dpiX = o.dpiY = info.dpiX > 0 ? info.dpiX / k : 75;
+        auto sink = fk::createSink(fk::pathFromUtf8(toStd(f)), o);
+        if (sink && (*sink)->begin({small->width(), small->height()}, small->channels(), 8).ok() &&
+            (*sink)->writeRows(small->row(0), small->height(), small->rowBytes()).ok() &&
+            (*sink)->finish().ok())
+            files << f;
+    }
+    QMetaObject::invokeMethod(window_, "closeDialogs");
+    app_->newProject();
+    app_->newLibrary(d, QStringLiteral("Grid"));
+    const QString folder = app_->libraryFolder();
+    app_->importFolder(QUrl::fromLocalFile(d + QStringLiteral("/roll1")));
+    app_->importFolder(QUrl::fromLocalFile(d + QStringLiteral("/roll2")));
+    app_->waitIdle(600000);
+    const int prints = app_->counts().value("prints").toInt();
+    app_->saveProject();
+    window_->setProperty("homeShown", false);
+    app_->setSetting(QStringLiteral("workspace"), QStringLiteral("library"));
+    app_->setLibraryView(QStringLiteral("show"), QStringLiteral("prints"));
+    settle();
+    const int printRows = shown();
+    app_->setLibraryView(QStringLiteral("show"), QStringLiteral("scans"));
+    settle();
+    const int scanRows = shown();
+    app_->setLibraryView(QStringLiteral("show"), QStringLiteral("prints"));
+    settle();
+    check(QStringLiteral(
+              "U020 inside a library: its prints in a grid, its scans as a second list, with counts"),
+          files.size() == 12 && visible(QStringLiteral("libraryView")) &&
+              visible(QStringLiteral("libraryInfo")) && printRows == prints && prints >= 12 && scanRows == 12,
+          QStringLiteral("files %1, prints %2 (rows %3), scan rows %4")
+              .arg(files.size())
+              .arg(prints)
+              .arg(printRows)
+              .arg(scanRows));
+    snapshot(QStringLiteral("U020-grid"));
+
+    // reopening: thumbnails from the library's cache, only the selected scan decoded; only cells on screen
+    // exist
+    app_->newProject();
+    int before = app_->previewDecodes();
+    app_->openLibrary(folder);
+    window_->setProperty("homeShown", false);
+    settle();
+    waitFor([] { return false; }, 1500);
+    app_->waitIdle(300000);
+    const int cachedDecodes = app_->previewDecodes() - before;
+    const int cellCount = cells();
+    QDir(QDir(folder).filePath(QStringLiteral("cache/thumbs"))).removeRecursively();
+    app_->newProject();
+    before = app_->previewDecodes();
+    app_->openLibrary(folder);
+    window_->setProperty("homeShown", false);
+    settle();
+    waitFor([] { return false; }, 1500);
+    app_->waitIdle(300000);
+    const int coldDecodes = app_->previewDecodes() - before;
+    check(QStringLiteral(
+              "U020 a library opens without decoding every scan: from its cache only the selected one, "
+              "without it only those on screen; only on-screen cells exist"),
+          cachedDecodes <= 1 && coldDecodes < 12 && cellCount > 0 && cellCount < prints,
+          QStringLiteral("decodes with cache %1, without %2 (of 12 scans); cells %3 of %4 prints")
+              .arg(cachedDecodes)
+              .arg(coldDecodes)
+              .arg(cellCount)
+              .arg(prints));
+
+    // keys: stars, colour labels, pick / reject / unflag on the selected print
+    const QString a = idAt(0), b = idAt(1), c = idAt(2), last = idAt(shown() - 1);
+    QQuickItem* gridItem = findItem(QStringLiteral("libraryGrid"));
+    if (QQuickItem* cell = cellOf(a)) click(cell);
+    settle();
+    press(Qt::Key_4, QStringLiteral("4"));
+    press(Qt::Key_6, QStringLiteral("6"));
+    press(Qt::Key_P, QStringLiteral("p"));
+    if (QQuickItem* cell = cellOf(b)) click(cell);
+    settle();
+    press(Qt::Key_2, QStringLiteral("2"));
+    press(Qt::Key_X, QStringLiteral("x"));
+    if (QQuickItem* cell = cellOf(c)) click(cell);
+    settle();
+    press(Qt::Key_P, QStringLiteral("p"));
+    press(Qt::Key_U, QStringLiteral("u"));
+    app_->librarySelect(a);
+    app_->libraryApply({{"textLabels", QStringList{QStringLiteral("beach")}}});
+    check(QStringLiteral("U020 keys rate (0–5), colour (6–9), pick, reject and unflag the selected print"),
+          meta(a, "rating").toInt() == 4 && meta(a, "colorLabel").toString() == QLatin1String("red") &&
+              meta(a, "pick").toString() == QLatin1String("picked") && meta(b, "rating").toInt() == 2 &&
+              meta(b, "pick").toString() == QLatin1String("rejected") &&
+              meta(c, "pick").toString() == QLatin1String("none") && app_->dirty(),
+          QStringLiteral("a %1★ %2 %3; b %4★ %5; c %6")
+              .arg(meta(a, "rating").toInt())
+              .arg(meta(a, "colorLabel").toString(), meta(a, "pick").toString())
+              .arg(meta(b, "rating").toInt())
+              .arg(meta(b, "pick").toString(), meta(c, "pick").toString()));
+
+    // sort and filter
+    app_->setLibraryView(QStringLiteral("sort"), QStringLiteral("rating"));
+    app_->setLibraryView(QStringLiteral("descending"), true);
+    settle();
+    const bool sorted = idAt(0) == a && idAt(1) == b;
+    app_->setLibraryView(QStringLiteral("minRating"), 3);
+    const int byRating = shown();
+    app_->setLibraryView(QStringLiteral("minRating"), 0);
+    app_->setLibraryView(QStringLiteral("pick"), QStringLiteral("rejected"));
+    const int byPick = shown();
+    app_->setLibraryView(QStringLiteral("pick"), QStringLiteral("any"));
+    app_->setLibraryView(QStringLiteral("color"), QStringLiteral("red"));
+    const int byColor = shown();
+    app_->setLibraryView(QStringLiteral("color"), QStringLiteral("any"));
+    app_->setLibraryView(QStringLiteral("text"), QStringLiteral("BEACH"));
+    const int byText = shown();
+    app_->setLibraryView(QStringLiteral("text"), QString());
+    check(
+        QStringLiteral("U020 sorting by rating (descending) and filtering by rating, pick, colour and text"),
+        sorted && byRating == 1 && byPick == 1 && byColor == 1 && byText == 1 && shown() == prints,
+        QStringLiteral("first %1/%2, rating≥3 %3, rejected %4, red %5, text %6")
+            .arg(idAt(0) == a)
+            .arg(idAt(1) == b)
+            .arg(byRating)
+            .arg(byPick)
+            .arg(byColor)
+            .arg(byText));
+
+    // information: unknown is unknown, the capture time is not the scan date
+    const QVariantMap inf = app_->libraryInfo(a);
+    check(QStringLiteral(
+              "U020 the information panel says unknown for what the scan does not record; the capture "
+              "time is never the scan date"),
+          inf.value("captured").toString().isEmpty() && !inf.value("pixels").toString().isEmpty() &&
+              !inf.value("fileBytes").toString().isEmpty() &&
+              inf.value("library").toString() == QLatin1String("Grid") &&
+              inf.value("fileName").toString().endsWith(QLatin1String(".tif")),
+          QStringLiteral("captured '%1', scanned '%2', pixels %3, size %4, dpi %5")
+              .arg(inf.value("captured").toString(), inf.value("scanned").toString(),
+                   inf.value("pixels").toString(), inf.value("fileBytes").toString(),
+                   inf.value("dpi").toString()));
+
+    // manual order; everything kept after saving and reopening (labels and order in the catalog, the sort in
+    // library.json)
+    app_->libraryMove(last, QStringLiteral("first"));
+    settle();
+    const bool movedFirst =
+        idAt(0) == last && app_->libraryView().value("sort").toString() == QLatin1String("manual");
+    app_->saveProject();
+    app_->newProject();
+    app_->openLibrary(folder);
+    window_->setProperty("homeShown", false);
+    settle();
+    check(
+        QStringLiteral("U020 manual order, ratings, labels and the sort are kept after saving and reopening"),
+        movedFirst && idAt(0) == last &&
+            app_->libraryView().value("sort").toString() == QLatin1String("manual") &&
+            meta(a, "rating").toInt() == 4 &&
+            meta(a, "textLabels").toStringList() == QStringList{QStringLiteral("beach")},
+        QStringLiteral("moved %1, first after reopening %2, sort %3")
+            .arg(movedFirst)
+            .arg(idAt(0) == last)
+            .arg(app_->libraryView().value("sort").toString()));
+
+    // scans → their prints; a folder
+    app_->setLibraryView(QStringLiteral("show"), QStringLiteral("scans"));
+    settle();
+    const QString scan0 = idAt(0);
+    int scanPrints = 0;
+    for (const auto& s : app_->project().scans)
+        if (toQ(s.scanId) == scan0) scanPrints = static_cast<int>(s.items.size());
+    if (QQuickItem* cell = cellOf(scan0)) doubleClick(cell);
+    settle();
+    const bool scanToPrints = app_->libraryView().value("show").toString() == QLatin1String("prints") &&
+                              app_->libraryView().value("scanId").toString() == scan0 &&
+                              shown() == scanPrints;
+    app_->setLibraryView(QStringLiteral("scanId"), QString());
+    app_->setLibraryView(QStringLiteral("show"), QStringLiteral("scans"));
+    app_->setLibraryView(QStringLiteral("folder"), d + QStringLiteral("/roll2"));
+    const int roll2 = shown();
+    app_->setLibraryView(QStringLiteral("folder"), QString());
+    app_->setLibraryView(QStringLiteral("show"), QStringLiteral("prints"));
+    check(QStringLiteral("U020 a scan opens its prints (parent and children); a folder shows only its scans"),
+          scanToPrints && roll2 == 5 && app_->libraryFolders().size() == 2,
+          QStringLiteral("scan → prints %1 (%2), roll2 %3, folders %4")
+              .arg(scanToPrints)
+              .arg(scanPrints)
+              .arg(roll2)
+              .arg(app_->libraryFolders().size()));
+
+    // one at a time (E), → next; double-click edits in Edit Photos; G returns to the same print
+    app_->setLibraryView(QStringLiteral("sort"), QStringLiteral("added"));
+    app_->librarySelect(idAt(0));
+    if (gridItem) gridItem->forceActiveFocus();
+    settle();
+    press(Qt::Key_E, QStringLiteral("e"));
+    const bool single = visible(QStringLiteral("librarySingle"));
+    const QString beforeStep = app_->currentItemId();
+    press(Qt::Key_Right, QString());
+    const bool stepped = app_->currentItemId() == idAt(1);
+    const QString stepInfo = QStringLiteral("%1 → %2, expected %3")
+                                 .arg(beforeStep.left(8), app_->currentItemId().left(8), idAt(1).left(8));
+    press(Qt::Key_G, QStringLiteral("g"));
+    const QString target = idAt(2);
+    if (QQuickItem* cell = cellOf(target)) doubleClick(cell);
+    settle();
+    const bool edited = app_->settings().value("workspace").toString() == QLatin1String("edit") &&
+                        app_->currentItemId() == target;
+    press(Qt::Key_G, QStringLiteral("g"));
+    const bool back = app_->settings().value("workspace").toString() == QLatin1String("library") &&
+                      visible(QStringLiteral("libraryGrid")) && app_->currentItemId() == target && gridItem &&
+                      gridItem->property("currentIndex").toInt() == 2;
+    check(QStringLiteral(
+              "U020 E shows one print at a time and → moves on; double-click edits the print; G returns "
+              "to the grid with the same print selected"),
+          single && stepped && edited && back,
+          QStringLiteral("single %1, → %2 (%5), edit %3, back %4")
+              .arg(single)
+              .arg(stepped)
+              .arg(edited)
+              .arg(back)
+              .arg(stepInfo));
+
+    // an edit in Edit Photos is recorded for the edit-time and edit-count sorts
+    const int editsBefore = meta(target, "editCount").toInt();
+    bool reviewed = false;
+    for (const auto& s : app_->project().scans)
+        for (const auto& it : s.items)
+            if (toQ(it.itemId) == target) reviewed = it.reviewed;
+    app_->setReviewed(target, !reviewed);
+    check(QStringLiteral("U020 an edit records the print's edit time and count"),
+          meta(target, "editCount").toInt() == editsBefore + 1 &&
+              !meta(target, "editedAt").toString().isEmpty(),
+          QStringLiteral("edits %1 → %2").arg(editsBefore).arg(meta(target, "editCount").toInt()));
+
+    app_->discardCurrentRecovery();
     app_->setSetting(QStringLiteral("workspace"), QStringLiteral("edit"));
     app_->newProject();
 }
@@ -5201,10 +5506,39 @@ int SelfTest::runTextLayout() {
             QMetaObject::invokeMethod(window_, "closeDialogs");
         }
         QObject* commands = window_->property("commands").value<QObject*>();
-        { // U019: the home page
+        { // U019: the home page; U020: inside a library — grid, single, scans list, a scan's prints
             app_->setSetting(QStringLiteral("workspace"), QStringLiteral("library"));
+            window_->setProperty("homeShown", true);
             settle();
             inspect(QStringLiteral("%1 1100×700 home page").arg(theme));
+            const QString lib = QDir(dir_).filePath(QStringLiteral("text-library-%1").arg(theme));
+            QDir(lib).removeRecursively();
+            QDir().mkpath(lib);
+            if (app_->newLibrary(lib, QStringLiteral("Text"))) {
+                app_->importScans({scan_});
+                app_->waitIdle(300000);
+                window_->setProperty("homeShown", false);
+                settle();
+                inspect(QStringLiteral("%1 1100×700 library grid").arg(theme));
+                if (theme == QLatin1String("dark")) snapshot(QStringLiteral("U020-library-1100"));
+                app_->setLibraryView(QStringLiteral("mode"), QStringLiteral("single"));
+                settle();
+                inspect(QStringLiteral("%1 1100×700 library single").arg(theme));
+                app_->setLibraryView(QStringLiteral("mode"), QStringLiteral("grid"));
+                app_->setLibraryView(QStringLiteral("show"), QStringLiteral("scans"));
+                settle();
+                inspect(QStringLiteral("%1 1100×700 library scans").arg(theme));
+                app_->setLibraryView(QStringLiteral("show"), QStringLiteral("prints"));
+                if (!app_->project().scans.empty())
+                    app_->setLibraryView(QStringLiteral("scanId"), toQ(app_->project().scans.front().scanId));
+                app_->setLibraryView(QStringLiteral("folder"), QFileInfo(scan_).absolutePath());
+                settle();
+                inspect(QStringLiteral("%1 1100×700 library limited to a scan and a folder").arg(theme));
+                app_->setLibraryView(QStringLiteral("scanId"), QString());
+                app_->setLibraryView(QStringLiteral("folder"), QString());
+                app_->discardCurrentRecovery();
+                app_->newProject();
+            }
             app_->setSetting(QStringLiteral("workspace"), QStringLiteral("edit"));
             settle();
         }
@@ -5329,6 +5663,7 @@ int SelfTest::runScenario(const QString& name) {
     } else if (name == QLatin1String("library")) { // U018–U019: the library sections alone
         runLibrary();
         runHome();
+        runLibraryGrid();
         rc = allOk_ ? 0 : 1;
     }
     QJsonObject report{
@@ -5779,6 +6114,7 @@ int SelfTest::run() {
     runFormats();
     runLibrary();
     runHome();
+    runLibraryGrid();
     runFreezeRegression();
     runLayout();
     runToolbar();

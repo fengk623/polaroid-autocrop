@@ -27,6 +27,11 @@ Contract version: **1** · RFC-0011 · Applies to `app/` (Qt Quick) and any futu
 - Workspaces (U019): setting `workspace` = `library` (home page; default on a fresh start) or `edit`; editing
   single-key shortcuts act only in `edit`. Home page: `libraryCards` (property; reads `library.json` only),
   `refreshHome()`, `renameLibrary(folder, name)`, `forgetLibrary(folder)` (the folder stays).
+- Library workspace (U020): `libraryGrid` (list model, display order), `libraryView` (show, sort, descending, filters,
+  scanId, folder, mode, counts) and `setLibraryView(key, value)`; `librarySelect(id, extend, toggle)` shares the
+  selection with Edit Photos; `libraryApply({rating, pick, colorLabel, textLabels})` acts on the selection;
+  `libraryMove(id, where)`; `libraryInfo(id)`; cells call `libraryRequestThumb(scanId)` when created (only cells on
+  screen exist); `previewDecodes()` for diagnostics.
 - Memory (FK-005, RFC-0014 §Memory budget): every cached image the UI holds (scan proxy, decoded strips of the
   view, composite preview, thumbnails, canvas images) is counted in one byte budget; what is not on screen may
   be dropped at any time and is rebuilt from the files when shown again. Jobs pass their estimated working
