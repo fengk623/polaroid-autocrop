@@ -99,7 +99,13 @@ fk::ColorPolicy colorPolicyOf(const QString& c) {
 
 QString errText(const fk::Error& e) {
     QString s = QCoreApplication::translate("Errors", e.message.c_str());
-    if (!e.detail.empty()) s += QStringLiteral(" (") + QString::fromStdString(e.detail) + QStringLiteral(")");
+    // a confirmation's detail tells programmers which flag to set ("set allowDepthReduction …"): not for the
+    // user (FK-009); other details (file, libtiff's reason) stay
+    if (!e.detail.empty() && e.code != fk::Errc::needs_confirmation)
+        s += QStringLiteral(" (") + QString::fromStdString(e.detail) + QStringLiteral(")");
+    else if (!e.detail.empty())
+        qInfo().noquote() << "confirmation needed:" << QString::fromStdString(e.message) << "—"
+                          << QString::fromStdString(e.detail);
     return s;
 }
 

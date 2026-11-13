@@ -684,3 +684,81 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     renderer; to be checked with FK-009 / U024 before calling it a test artefact.
   - Results (U021 build): fixture 214 pass (1×, 2× and Chinese each); polaroid_92 209 + 3 skips; img20260702_0005
     207 + 5 skips. `runToolbar` 7/7 everywhere.
+
+### 09:30–10:40 — PR #25 opened (U021 part 1), U024
+- U021 part 1: PR #25 (stacked on #24). CI: Linux and macOS green; Windows failed "a click on a workflow step leads
+  to it" without detail → detail added: step 3 clicked (tab 1), step 5 `click()` returned false; position of step 5
+  and the window size added to find out why (pending).
+- U024 (FK-009), after U021 part 1 so that it covers the new top bar, strips and steps; version 0.7.0-alpha.13.
+  - Self-test `runTextLayout` (and `--scenario text`): every visible text — glyphs (QTextLayout with the item's font
+    and Qt's fallbacks; glyph 0 = box), wider than its own box, outside the window, cut at the side by its panel,
+    labels / section titles / segment and button texts shortened; key controls covered by later opaque paint.
+    Matrix: dark/light × 1100×700 / 1440×900 / 1920×1080 × rails shown/folded × the three right-rail tabs, plus
+    Settings, About and Export dialogs (≈ 2400 texts per run).
+  - First run (English 1×): 130 "outside the window" + 20 "covered" [check flaw: texts and buttons scrolled out of
+    the left rail's list] → only what the clipping parents leave visible is checked; key controls are only the top
+    bar's buttons, strips, view switch, zoom and steps. Then 52 "cut at the side" + 46 "outside the window", all in
+    the Return tab [real defect]: two buttons in one row (≈ 358 px) made the tab wider than the 300 px rail, so its
+    right side (texts, combo, the second button, "Synthetic frame") was cut — also visible in the Chinese snapshot
+    → the buttons wrap (Flow), the frame choice sits under its label. Then 1 "label cut": Settings' "Mask for new
+    prints" (110 of 112 px) [real defect] → field labels widen instead of eliding.
+  - The 8-bit refusal showed "(set allowDepthReduction after the user confirms)" [real defect, seen in U022's
+    Chinese run] → details of confirmation errors go to the log; check added to the FK-010 section.
+  - Results after the fixes: English 1× and 1.5×, Chinese 1× and 2×: 4/4 FK-009 checks.
+  - Mutations: T2 buttons back in one row, T3 labels elided again, T4 top bar overflowing, T5 developer note back
+    in the message — all caught. T1 (missing glyph) survived twice [mutation flaws]: U+E8E8 is covered by the
+    Unifont CSUR font on this machine, and U+10FFFD in the top-bar status was never shown (the status shows the
+    last job summary) → T1c, U+10FFFD in the right rail's title: caught. A small Qt program confirmed that an
+    uncovered character comes back as glyph 0.
+  - CI: `--scenario text` in Chinese 1× / 2× and English 1.5× on all three platforms after the self-test.
+  - PR #26 CI round 1: macOS green (Chinese and 2× included). Linux: "位" and other Chinese characters without a
+    glyph (DejaVu Sans) — the Linux runner has no CJK font [CI environment] → install `fonts-noto-cjk` for the
+    app job. Windows: left-rail note "1 scans · 3 prints" 270 px wide (100–370, rail ends at 262), right-rail
+    content past the window, UX-01 clicks missing their controls, and PR #25's step 5 at 1434–1454 — while the
+    glyph check passed. Reproduced exactly on Linux with an empty fontconfig: Qt's offscreen platform on Windows
+    reads fonts with FreeType from `QT_QPA_FONTDIR` or Qt's own lib/fonts (absent from a Qt install), finds none and
+    uses the box engine — every character a box as wide as the font size, with the character code as glyph, so
+    "glyph 0" never shows it. This is the root cause of FK-009's historical "boxes in Windows offscreen snapshots"
+    → the self-test's offscreen start on Windows sets `QT_QPA_FONTDIR` to the system font folder (also applied to
+    PR #25, whose Windows failure had the same cause), and the glyph check treats a run without font tables as
+    boxes (`QRawFont::familyName()` crashes on the box engine — first attempt segfaulted).
+  - My first fix for the cut Settings label ("field labels widen to fit") was wrong for wide fonts: a label's
+    minimum width then pushes the whole rail column past the rail (seen in the same Windows run) → long labels wrap
+    within the label column instead. New diagnostic: when a rail's content is wider than the rail, the widest
+    controls past its edge are named (the CI annotations were too short to find them otherwise).
+  - With DejaVu Sans (the CI Linux font, much wider than Inter) all four FK-009 checks pass; without any font the
+    glyph check fails with 2274 boxes.
+  - Mistake: I rebuilt `build/app` while the U024 runner script was between scans, so the owner-scan runs would
+    have mixed two builds [process error] → stopped it (by PID) and reran everything on the final build. Trap T25.
+  - PR #26 CI round 2 (after the font folder fix): Windows fonts load (Arial), English passes; Chinese draws boxes
+    — the offscreen platform's FreeType font database has no fallback for characters missing from the default
+    font [CI environment; a real window falls back to Microsoft YaHei] → the Windows offscreen self-test sets the
+    UI font families Segoe UI, Microsoft YaHei UI, Microsoft YaHei, SimSun (Windows' own order). PR #25 green on
+    all platforms with the font folder fix.
+
+### 11:00–11:50 — PR #26 CI round 3; owner merged PRs #17–#19; U028 preparation
+- Owner merged PR #17 (U015), #18 (U016) and #19 (U017) into `main` (15:39 UTC). PRs #21 and #22 now target `main`
+  directly and are mergeable without conflicts; the unit list and traceability are updated.
+- PR #26 CI round 3 (Chinese font families for the Windows offscreen self-test): Linux (with `fonts-noto-cjk`) and
+  macOS green; Windows: Chinese text still without glyphs ("帮助(H)" in Segoe UI, 1168 texts), English passes.
+  Root cause, read in Qt 6.8.3's source (`qfreetypefontdatabase.cpp`): the FreeType font database of the offscreen
+  platform loads only `*.ttf`, `*.pfa`, `*.pfb` and `*.otf` from the font folder, and Windows' Chinese UI fonts are
+  collections (`msyh.ttc`, `simsun.ttc`), so the fallback families named in round 3 did not exist there
+  [CI environment, not a product defect: a real window uses DirectWrite and its own fallback] → the Windows
+  offscreen self-test adds `msyh.ttc`, `msyhbd.ttc` and `simsun.ttc` from the font folder as application fonts
+  (Qt reads every face of a collection) and prints which ones it added, or that none was found.
+- Full self-test of the U024 build (Linux, before this change; Linux does not run the Windows-only code): fixture
+  English 1×, 2× and Chinese: 222 passed, 0 skipped, 0 failed each; the owner's scans still running.
+- PR #26 CI round 4 (font collections): Windows Chinese down from 1168 texts without glyphs to 4 — one sentence,
+  "从不写入：GPS 位置… ⚠ = 可识别个人或计算机。", whose "⚠" is in none of Segoe UI, Microsoft YaHei and SimSun
+  [CI environment: a real window falls back to Segoe UI Symbol] → Segoe UI Symbol added to the offscreen fallback
+  families. Linux and macOS green.
+- U024 full self-test results (build before the rail fix below): fixture English 1×, 2×, Chinese: 222 passed each;
+  owner's scan img20260702_0005: 214 passed, 5 skipped (one print on the scan; untagged scan), 0 failed; owner's
+  scan polaroid_92: 215 passed, 3 skipped, **1 failed** — "no panel content wider than its rail": at 1100×700 the
+  right rail's content was 307 px in a 300 px rail [real defect, only with this scan's data]. The report only named
+  the stretched children, not the cause → the report now names the innermost item reaching past the rail and its
+  widest part with the texts in it. Re-run with the old QML once: "rightRail asks 307 px, widest part 279 px: Film
+  type 'Polaroid 600 / i-Type / SX-70' 165 px, Confidence 'Check recommended  80 %' 159 px" — value texts in field
+  rows kept their own width, and these two long values widened the Boundaries tab → value texts fill the row and
+  wrap. After the fix `--scenario text` passes on polaroid_92 and the fixture.

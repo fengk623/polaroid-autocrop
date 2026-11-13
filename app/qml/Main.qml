@@ -215,6 +215,7 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     Toasts {
                         id: toasts
+                        objectName: "toasts"
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 16

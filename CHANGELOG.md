@@ -3,6 +3,25 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.13 — U024: text and layout checks; right rail no longer wider than itself (FK-009)
+- Self-test `runTextLayout` (also `--scenario text`): every visible text has glyphs (no boxes), stays inside its box,
+  the window and its panel's sides; labels, titles and button texts are never shortened; key controls are not
+  covered. Dark and light, three window sizes, rails shown and folded, the three right-rail tabs, Settings, About
+  and Export dialogs; CI runs it in English (1×, 1.5×) and Chinese (1×, 2×) on all three platforms.
+- Found and fixed: the Return tab was wider than the right rail (two buttons in one row), cutting texts and buttons
+  at its right edge — the buttons now wrap and the final-output frame choice sits under its label; a field label
+  in Settings was shortened — long field labels wrap; the 8-bit refusal ended with a note for programmers
+  ("set allowDepthReduction …") — confirmation details go to the log, not to the message.
+- The historical boxes in Windows offscreen self-test snapshots: Qt's offscreen platform on Windows found no fonts
+  (it reads QT_QPA_FONTDIR or Qt's own lib/fonts) and drew every character as a box as wide as the font size; the
+  self-test now points it at the system fonts, and the glyph check recognises that box engine. CI Linux installs
+  a CJK font for the Chinese checks. Real windows (Direct3D, Metal, 150/200 %, Retina) stay human verification.
+  Notes: docs/release-notes/v0.7.0-alpha.13.md.
+- Found on the owner's scan polaroid_92: long values in the Boundaries tab (film type, confidence) kept their own
+  width and widened the right rail by 7 px at 1100×700 — value texts now fill the row and wrap; the overflow report
+  names the row that widens a rail. Windows offscreen self-test: Chinese font collections (.ttc) are loaded and the
+  fallback families set (the offscreen font database reads neither .ttc files nor falls back).
+
 ## 0.7.0-alpha.12 — U021 part 1: view switch between the eye and the zoom; the top bar fits narrow windows; workflow steps (UX-06)
 - The Scan · Print · Image · Composite switch sits between the overlays button and the zoom field (keys 1–4 and the
   View menu unchanged). In a narrow centre column the top bar gives up the file buttons, then shows the view switch
