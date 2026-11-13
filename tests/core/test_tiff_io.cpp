@@ -156,7 +156,9 @@ TEST(TiffRead, UnsupportedAndMissing) {
     EXPECT_EQ(r.error().code, Errc::unsupported_format);
 }
 
-// FK-012 (U026): a Linear DNG (ours, or any LinearRaw) is refused with guidance, not a bare photometric code
+// FK-012 (U026): a Linear DNG (ours, or any LinearRaw) is refused with guidance, not a bare photometric code.
+// The owner confirmed on 2026-11-12 that graded DNGs are not read back, and that the guidance names every
+// format that is: a 16-bit TIFF first, or a JPEG or PNG.
 TEST(TiffRead, LinearDngIsRefusedWithGuidance) {
     TempDir dir;
     const auto img = fk::test::makePatternImage(16, 8, 3, 16);
@@ -175,6 +177,9 @@ TEST(TiffRead, LinearDngIsRefusedWithGuidance) {
     EXPECT_EQ(r.error().code, Errc::unsupported_format);
     EXPECT_NE(r.error().message.find("Linear DNG"), std::string::npos) << r.error().message;
     EXPECT_NE(r.error().message.find("16-bit TIFF"), std::string::npos) << r.error().message;
+    EXPECT_NE(r.error().message.find("JPEG"), std::string::npos) << r.error().message;
+    EXPECT_NE(r.error().message.find("PNG"), std::string::npos) << r.error().message;
+    EXPECT_LT(r.error().message.find("16-bit TIFF"), r.error().message.find("JPEG")) << "TIFF named first";
 }
 
 TEST(TiffRead, TruncatedFileIsReportedDamaged) {

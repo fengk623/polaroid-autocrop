@@ -70,6 +70,9 @@ Without Qt, `-DFK_BUILD_APP=OFF` builds the core library, the command-line tool 
 
 ## Licence
 
-MIT (see [LICENSE](LICENSE)). Qt is used under the LGPL-3.0; other libraries are listed in
-[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). FrameKeeper is not affiliated with Polaroid or
+GNU General Public License, version 3 only (GPL-3.0-only, see [LICENSE](LICENSE)): FrameKeeper is free
+software; you may redistribute and modify it under that licence. It comes with no warranty. Qt is used under
+the LGPL-3.0; other libraries, all compatible with the GPL-3.0, are listed in
+[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md). Versions up to 0.7.0-alpha.16 were published under MIT
+([ADR-0011](rfc/ADR-0011-licensing.md)). FrameKeeper is not affiliated with Polaroid or
 Fujifilm; product names are used only to describe film formats.

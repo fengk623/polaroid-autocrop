@@ -7,6 +7,8 @@ scripts copy that folder into every package — `licenses\` beside `FrameKeeper.
 `FrameKeeper.app/Contents/Resources/licenses/` — and `tools/release/check-package.py` checks it there (FK-014).
 Until 0.7.0-alpha.15 this paragraph said so while the packages carried only this file and `LICENSE`.
 
+FrameKeeper itself is GPL-3.0-only (`LICENSE`, ADR-0011). Every component below is compatible with it.
+
 | Component | Version | Licence | Linking | Used for | Obligations |
 | --- | --- | --- | --- | --- | --- |
 | libtiff | 4.7.2 | libtiff licence (BSD-like) | static | TIFF/DNG I/O | keep copyright notice |

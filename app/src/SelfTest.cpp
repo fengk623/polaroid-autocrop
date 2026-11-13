@@ -3322,8 +3322,11 @@ void SelfTest::runFormats() {
         return rows.value(0).toMap().value("message").toString();
     };
     auto guidance = [](const QString& m) {
-        return (m.contains(QLatin1String("Linear DNG")) && m.contains(QLatin1String("16-bit TIFF"))) ||
-               (m.contains(QStringLiteral("线性 DNG")) && m.contains(QStringLiteral("16 位 TIFF")));
+        // the owner's wording (2026-11-12): a 16-bit TIFF first, or a JPEG or PNG
+        return (m.contains(QLatin1String("Linear DNG")) && m.contains(QLatin1String("16-bit TIFF")) &&
+                m.contains(QLatin1String("JPEG")) && m.contains(QLatin1String("PNG"))) ||
+               (m.contains(QStringLiteral("线性 DNG")) && m.contains(QStringLiteral("16 位 TIFF")) &&
+                m.contains(QLatin1String("JPG")) && m.contains(QLatin1String("PNG")));
     };
     QVariantList rows;
     auto c = connect(app_, &AppController::relinkResults, this, [&](const QVariantList& r) { rows = r; });

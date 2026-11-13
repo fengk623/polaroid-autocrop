@@ -44,7 +44,7 @@ FkDialog {
             horizontalAlignment: Text.AlignHCenter
             font.pixelSize: Theme.fontCaption
             color: Theme.textTertiary
-            text: qsTr("Open source (MIT). Uses Qt (LGPL-3.0), libtiff, libpng, libjpeg-turbo, zlib, Little CMS and nlohmann/json — see THIRD-PARTY-LICENSES. Not affiliated with Polaroid or Fujifilm.")
+            text: qsTr("Free software under the GNU GPL version 3 (GPL-3.0-only), with no warranty. Uses Qt (LGPL-3.0), libtiff, libpng, libjpeg-turbo, zlib, Little CMS and nlohmann/json — see THIRD-PARTY-LICENSES. Not affiliated with Polaroid or Fujifilm.")
         }
         Text {
             Layout.alignment: Qt.AlignHCenter

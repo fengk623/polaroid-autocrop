@@ -30,7 +30,7 @@ view of the v1.0 work is `docs/v1/TRACEABILITY.md`.
 | 21 | PRD per feature, RFC per module, automated tests, CI green on all OSes | all | — | — | `tools/check-claims.py` (claims have code), `tools/check-docs.py` | `ci.yml` | ◐ |
 | 22 | Specs, packaging and release scripts; SpektraLab compliance matrix | — | ADR-0013 | `tools/release/` | package checks (`tools/release/check-package.py`), install/upgrade/rollback/uninstall on clean runners, packaged self-test, SHA-256 verified | `release.yml` | ◐ automated (U028); signing and notarisation need certificates (owner decision); real machines HV-08, HV-09 |
 | 23 | All performance claims measured; no fake buttons/TODO core flows/fake results | — | — | — | `tools/check-claims.py`; review | `ci.yml` | ◐ |
-| 24 | Licence ADR done; neutral product name | — | ADR-0011, ADR-0012 | `cmake/ProductInfo.cmake`, `licenses/` | `tools/check-licenses.py` (texts listed, versions match the build), `tools/release/check-package.py` (texts inside every package) | `ci.yml`, `release.yml` | ◐ MIT for the project awaits the owner's confirmation (ADR-0011) |
+| 24 | Licence ADR done; neutral product name | — | ADR-0011, ADR-0012 | `cmake/ProductInfo.cmake`, `licenses/` | `tools/check-licenses.py` (texts listed, versions match the build), `tools/release/check-package.py` (texts inside every package) | `ci.yml`, `release.yml` | ● GPL-3.0-only for the project, decided by the owner on 2026-11-12 (ADR-0011) |
 
 Outcomes are reported apart (FK-013): CTest `tools/test_report.py` — passed, failed, skipped, not started, blocked;
 the app self-test — passed, failed, skipped, known issues, not applicable. Nothing skipped, not started or

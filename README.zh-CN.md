@@ -38,4 +38,4 @@ FrameKeeper 是一款免费、离线的桌面软件（macOS 与 Windows），面
 
 ## 许可
 
-MIT（见 [LICENSE](LICENSE)）。Qt 以 LGPL-3.0 方式使用；其他第三方库见 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)。FrameKeeper 与 Polaroid、富士胶片无关，相关名称仅用于说明相纸规格。
+GNU 通用公共许可证第 3 版（GPL-3.0-only，见 [LICENSE](LICENSE)）：FrameKeeper 是自由软件，可以按该许可证再发布和修改，不提供任何担保。Qt 以 LGPL-3.0 方式使用；其他第三方库（均与 GPL-3.0 兼容）见 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)。0.7.0-alpha.16 及以前的版本以 MIT 许可证发布（[ADR-0011](rfc/ADR-0011-licensing.md)）。FrameKeeper 与 Polaroid、富士胶片无关，相关名称仅用于说明相纸规格。

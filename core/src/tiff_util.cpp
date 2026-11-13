@@ -94,7 +94,8 @@ Status readTiffInfo(TIFF* t, const std::filesystem::path& path, ImageInfo& info,
         return makeError(Errc::unsupported_format, "Lab TIFFs are not supported");
     case 34892: // LinearRaw: a Linear DNG (FK-012, docs/v1/FORMAT-MATRIX.md §2)
         return makeError(Errc::unsupported_format,
-                         "Linear DNG is not read back; export a 16-bit TIFF from the editor and use that",
+                         "Linear DNG is not read back; export a 16-bit TIFF, or a JPEG or PNG, from the "
+                         "editor and use that",
                          "PhotometricInterpretation 34892, LinearRaw");
     default:
         return makeError(Errc::unsupported_format, "Unsupported TIFF photometric interpretation",

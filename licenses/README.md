@@ -1,6 +1,8 @@
 # Licences of the software in FrameKeeper's packages
 
-FrameKeeper itself: MIT (`LICENSE`, next to this folder). The overview of every component is
+FrameKeeper itself: GNU GPL version 3 only (GPL-3.0-only; `LICENSE`, next to this folder). Its complete source
+code for every version is published with the release, at `https://github.com/fengk623/polaroid-autocrop/tree/v<version>`
+and as the source archives attached to each GitHub release (GPL-3.0 §6). The overview of every component is
 `THIRD-PARTY-LICENSES.md`; this folder holds the full licence texts that the packages carry (FK-014). The
 packaging scripts copy it into the portable ZIP and the installer (`licenses\` next to `FrameKeeper.exe`) and
 into the macOS app (`FrameKeeper.app/Contents/Resources/licenses/`); `tools/release/check-package.py` fails a
