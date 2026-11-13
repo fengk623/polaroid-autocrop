@@ -14,6 +14,7 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QTimer>
 
 #include <cstdio>
 #include <cstring>
@@ -97,6 +98,21 @@ int main(int argc, char* argv[]) {
     engine.loadFromModule("FrameKeeper", "Main");
     if (engine.rootObjects().isEmpty()) return 2;
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+
+    // FK-011: the display profile follows the window's monitor — another screen, screens added or removed,
+    // and every 5 s for an ICC changed in the system settings (Windows sends no notification for that)
+    if (window) {
+        auto refreshDisplay = [&controller, window] { controller.refreshDisplayProfile(window->screen()); };
+        refreshDisplay();
+        QObject::connect(window, &QWindow::screenChanged, &controller, refreshDisplay);
+        QObject::connect(&app, &QGuiApplication::screenAdded, &controller, refreshDisplay);
+        QObject::connect(&app, &QGuiApplication::screenRemoved, &controller, refreshDisplay);
+        QObject::connect(&app, &QGuiApplication::primaryScreenChanged, &controller, refreshDisplay);
+        auto* displayPoll = new QTimer(&controller);
+        displayPoll->setInterval(5000);
+        QObject::connect(displayPoll, &QTimer::timeout, &controller, refreshDisplay);
+        displayPoll->start();
+    }
 
     if (parser.isSet(selfTestOpt)) {
         fkapp::SelfTest t(&controller, window, parser.value(selfTestOpt), parser.value(scanOpt));

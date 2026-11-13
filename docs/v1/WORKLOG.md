@@ -544,3 +544,40 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     now sized for an 8 GB device on every runner (`FK_ASSUME_RAM_GB=8`).
   - fkfixture hung on scan 41 of `--corpus 100 --seed 17` (a touching pair that cannot fit loops forever, T20) →
     the corpus was completed in chunks with seeds 18–20.
+
+### 05:35–06:50 — PR #19 green, PR #20 (U018 RFC, draft), U025
+- U017: three commits on PR #19, all checks green; a fourth (docs) adds the CI memory batch at the 8 GB budget: steady
+  cache 253 → 136 MB from 5 to 20 scans on every OS; private bytes macOS 99 → 89, Windows 375 → 258 MB.
+- U018: the plan requires the library format and any change of save semantics to be reviewed first (PLAN §2 #3,
+  #4) → RFC-0018 and PRD F16 as a draft PR #20 with four questions for the owner (format, saving, old projects,
+  default location). No code until answered.
+- U025 (FK-011), done first because it does not depend on the library (version 0.7.0-alpha.8 by completion order).
+  - MinIsWhite: confirmed in the source — `DisplayConverter::convertRow` inverted rows that `readRows` had already
+    inverted. Fix: no inversion in the display; the known-issue observation becomes a check (8- and 16-bit in CI).
+  - Display profile: was read once from the primary monitor. Now per window screen (Windows:
+    `QWindowsScreen::handle()` → `CreateDCW` for that monitor → `GetICMProfileW`), on screen change, screens
+    added/removed, and a 5 s poll (no notification exists for an ICC changed in the settings). On a change: the
+    proxy on screen converted at once and read again (exact), 100 % patch and composite preview made again,
+    thumbnails converted old → new, other proxies dropped; results converted for the previous profile are
+    discarded (each job records the profile it converted to). Rejected: keeping proxies in sRGB and converting at
+    paint time (clips wide-gamut monitors to sRGB, contrary to ADR-0003).
+  - Self-test `runDisplayProfile` (8 checks + a snapshot) simulates the move with an override (Adobe RGB as the wide-gamut
+    monitor). Expected images are computed independently with the same proxy pipeline, so the comparisons are
+    exact. In-flight results are tested by letting the job convert while the UI thread sleeps, then changing the
+    profile before its result is delivered.
+  - Test flaws found on the way: thumbnail expectation compared at a different size (rounding of the 320 px
+    long side); the first "100 % patch" check zoomed after the change, so a canvas keeping the old patch passed
+    [weak check, mutation D7 survived] → zoom before the change, require the old patch gone at once and a new one
+    made for the new profile (canvas exposes `detailProfile`).
+- Tests: scenario `miniswhite` 8-bit 15.8 / 15.9, 16-bit 15.8 / 15.8 (Full / Preview); self-test 8 FK-011 checks.
+- Mutations (each → the targeted check fails): D1 MinIsWhite inverted again (both scenarios); D2 proxy on screen
+  not read again; D3 stale proxy used; D4 stale patch delivered; D5 stale composite preview used; D6 thumbnails not
+  converted; D7 canvas keeps the old patch (first survived, see above; rerun caught). Restored.
+- Self-test results: fixture 187 pass (all sections). On the owner's scans the in-flight composite check failed
+  ("succeeded · shown") [test flaw]: the fixed 5 s pause was shorter than a preview of polaroid_92 /
+  img20260702_0005, so the job converted after the change, correctly for the new profile → the three in-flight
+  checks now wait until the job's work has ended without running the UI thread (`JobRunner::workEnded`, test hook).
+  Display section rerun: 8/8 on the fixture, polaroid_92 and img20260702_0005; the full runs before this test-only
+  change passed every other check (polaroid_92 182 + 2 skips, img20260702_0005 180 + 4 skips).
+- Not verified: real second monitor, hot-plug, changing the ICC in Windows settings, macOS window colour tag,
+  colorimeter (HV-04).

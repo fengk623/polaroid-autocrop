@@ -3,6 +3,13 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.8 — U025: display colour follows the window's monitor; MinIsWhite full resolution fixed (FK-011)
+- Windows: the canvas converts to the ICC profile of the monitor the window is on, read again when the window
+  moves to another screen, screens are added or removed, or the monitor's profile changes (5 s poll); the proxy,
+  the 100 % patch, the composite preview and the thumbnails follow, and nothing converted for the previous profile
+  is shown. MinIsWhite scans are no longer shown as negatives at full resolution. The About dialog names the
+  display profile. Outputs never depend on the display. Notes: docs/release-notes/v0.7.0-alpha.8.md.
+
 ## 0.7.0-alpha.7 — U017: one memory budget for the caches (FK-005)
 - Scan proxies, decoded strips of the full-resolution view and composite previews share one byte budget sized
   by the device's RAM (8 GB → 512 MB, 16 GB → 1 GB); what is not on screen is given back least recently used

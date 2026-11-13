@@ -12,7 +12,9 @@ Status: Accepted · Date: 2026-10-28
 - Untagged sources: user chooses assign X / keep untagged; display treats untagged as sRGB and shows an "untagged" chip.
 - Display: proxy and tiles are converted on the CPU from image space to the display profile:
   macOS → sRGB (Qt windows are tagged sRGB and the OS colour-manages to the screen);
-  Windows → the monitor's ICC (`GetICMProfileW` on the window's screen), sRGB fallback; recomputed on screen change.
+  Windows → the monitor's ICC (`GetICMProfileW` on the window's screen), sRGB fallback; recomputed on screen change
+  (implemented in U025 / FK-011: screen change, screens added/removed, 5 s poll for a changed ICC; see
+  docs/color-pipeline.md).
   Qt Quick does not perform display-profile conversion itself; we do not rely on it.
 
 ## Consequences

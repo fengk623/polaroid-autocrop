@@ -30,7 +30,7 @@
 | FK-008 | P1 | 备份恢复与可重现工程 | U008（UX-05 图库部分在 U018） | 核心 `DataProtection.*` ×5（含原 `KnownIssue.FK008_*`）；自检 FK-008 6 项 | R：修复前损坏工程只报“damaged”；U008：提示并恢复备份、保留损坏原件、损坏文件不覆盖好备份、恢复快照、输出参数随工程保存 | 部分完成（工程部分完成；图库在 U018） |
 | FK-009 | P1 | Windows 文字与真实窗口验收 | U024 | 计划；真机部分待验收 | C：历史 offscreen 截图问题；本地 Linux 截图中英文可读 | 未开始 |
 | FK-010 | P1 | 真实输出计划驱动无损提示 | U010 | 核心 `ExportPlan.*` ×3；自检 FK-010 2 项 | R：修复前 16→8 位仍标“逐像素一致”；U010：提示来自核心输出计划，降位深需明确确认 | 已完成（自动验证；真实窗口待验收） |
-| FK-011 | P2 | 多显示器色彩与灰度预览一致 | U025 | 应用 known-issue “MinIsWhite full-resolution display is inverted”（场景 `miniswhite`） | R：同一行预览均值 15.8 vs 原始分辨率 239.2 | 未开始（已复现） |
+| FK-011 | P2 | 多显示器色彩与灰度预览一致 | U025 | 场景 `miniswhite` 8/16-bit 常规检查（CI）；自检 `runDisplayProfile` 8 项（模拟换显示器：预览重新转换且与原始分辨率一致、100% 补丁与合成预览重做、缩略图跟随、旧配置文件的结果不显示、输出不变、换回一致）；变异测试 7 项 | R：同一行预览均值 15.8 vs 原始分辨率 239.2；U025：两者均为 15.8 | 待合并（PR #21；真实双屏、热插拔、macOS 窗口色彩标记待验收） |
 | FK-012 | P2 | DNG 与外部软件互操作 | U026 | 计划；FORMAT-MATRIX 冻结 | S | 未开始 |
 | FK-013 | P2 | 实现、文档与测试契约一致 | U027（U001 起逐步） | 测试报告区分已知问题（U001） | S | 未开始 |
 | FK-014 | P2 | 版本冻结与可追溯发行包 | U001（构建信息）、U028 | 发布工作流版本/提交一致性检查（U001） | S | 进行中 |
@@ -48,7 +48,7 @@
 | UX-07 new session: unchanged export cannot be relinked | 应用自检 known-issue | UX-07 | 保存后的工程重开可回导；未保存时有恢复快照 | 已转常规（U003 保存重开；U004 新建对位 4 项）；恢复快照仍待 U008 | U003/U004（U008） |
 | FK-002 180° same-size graded file composited without rotation | 应用自检 known-issue | FK-002 | 合成使用确认的旋转 | 已转常规（U005）：5 项 FK-002 检查 | U005 |
 | FK-010 16→8-bit export still claims bit-identical pixels | 应用自检 known-issue | FK-010 | 提示依据真实输出计划 | 已转常规（U010）：“FK-010 16→8-bit export is not announced as bit-identical”“FK-010 8-bit export only with explicit consent” | U010 |
-| FK-011 MinIsWhite full-resolution display is inverted | 应用自检 known-issue（场景） | FK-011 | 预览与原始分辨率一致 | 复现 | U025 |
+| FK-011 MinIsWhite full-resolution display is inverted | 应用自检 known-issue（场景） | FK-011 | 预览与原始分辨率一致 | 已转常规（U025）：“FK-011 MinIsWhite 8/16-bit: Preview and Full show the same brightness” | U025 |
 
 ## Release 登记
 

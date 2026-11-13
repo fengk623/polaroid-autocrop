@@ -137,6 +137,12 @@ void JobRunner::reservationChanged() {
     if (onReservation_) onReservation_(r);
 }
 
+bool JobRunner::workEnded(int id) const {
+    for (const auto& j : jobs_)
+        if (j->id == id) return j->finished.load();
+    return false;
+}
+
 QString JobRunner::finalState(int id) const {
     for (const auto& [fid, state] : finished_)
         if (fid == id) return state;
