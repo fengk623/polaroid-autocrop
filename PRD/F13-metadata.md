@@ -11,6 +11,6 @@ RFC: `rfc/0013-metadata.md` · Tests: `tests/core/test_metadata.cpp`
 - Never copied: tags that would contradict the new pixels (StripOffsets, TileOffsets, sizes, compression, etc.).
 
 ## Acceptance
-- A1 DPI and ICC preserved through every export path. (`test_metadata.Basics`)
+- A1 DPI and ICC preserved through every export path. (`Export.DpiPreservedAndScaledForStandardSize`, `Export.IccPoliciesKeepAssignConvertUntagged`)
 - A2 Privacy presets remove exactly the documented tags. (`test_metadata.Privacy`)
-- A3 Orientation tag always matches pixel order (1 after lossless upright). (`test_metadata.Orientation`)
+- A3 Orientation tag always matches pixel order (1 after lossless upright). (not tested yet, planned: no test checks the orientation tag after an upright export)

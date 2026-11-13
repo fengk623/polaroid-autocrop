@@ -71,9 +71,9 @@ It is not an editor. Grading happens in Photoshop / Lightroom / Capture One / Af
 
 | Claim | Evidence |
 | --- | --- |
-| Original scans are byte-identical after any operation | `tests/core/test_source_untouched.cpp` (SHA-256 before/after) |
+| Original scans are byte-identical after any operation | `Export.SourceFileUntouched`, `Composite.NeverOverwritesAndSourceUntouched` (SHA-256 before/after) |
 | No detected outer boundary cuts into a print on the synthetic corpus | `tools/fixtures` corpus + `fkcli eval` metric `inner_cut_violations == 0` |
-| Unmodified round trip reproduces the print bit-exactly (crop mode) | `tests/core/test_roundtrip.cpp` |
+| Unmodified round trip reproduces the print bit-exactly (crop mode) | `Composite.UnchangedEditRoundTripIsBitExact`, self-test "round trip bit-exact" |
 | Frame pixels unchanged after compositing a graded image (crop mode, same ICC/depth) | `tests/core/test_composite.cpp` |
 | Peak memory bounded and independent of batch size | `PERFORMANCE-BUDGET.md` measurements |
 | Exported DNG is a valid Linear DNG | structural validator test + LibRaw decode test; Adobe `dng_validate` in CI when available |

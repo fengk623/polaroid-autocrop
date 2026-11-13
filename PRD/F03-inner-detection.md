@@ -1,6 +1,6 @@
 # F03 — Inner (image area) detection
 
-RFC: `rfc/0004-detection.md` · Tests: `tests/core/test_detection_inner.cpp`, `fkcli eval`
+RFC: `rfc/0004-detection.md` · Tests: `tests/core/test_detection.cpp`, `fkcli eval`
 
 ## Problem
 Find the picture inside each print so it can be graded alone and later put back.

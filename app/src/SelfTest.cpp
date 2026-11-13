@@ -4330,6 +4330,37 @@ int SelfTest::runTextLayout() {
     return static_cast<int>(problems.size());
 }
 
+QString SelfTest::summary() const {
+    int passed = 0, failed = 0, skipped = 0, known = 0, gone = 0, na = 0;
+    for (const auto& v : checks_) {
+        const QJsonObject c = v.toObject();
+        if (c.value("skipped").toBool())
+            ++skipped;
+        else if (c.value("ok").toBool())
+            ++passed;
+        else
+            ++failed;
+    }
+    for (const auto& v : known_) {
+        const QString st = v.toObject().value("status").toString();
+        if (st == QLatin1String("not_applicable"))
+            ++na;
+        else if (st == QLatin1String("reproduced"))
+            ++known;
+        else
+            ++gone;
+    }
+    return QStringLiteral(
+               "%1 passed, %2 failed, %3 skipped, %4 known issues (%5 no longer reproduce), %6 not "
+               "applicable")
+        .arg(passed)
+        .arg(failed)
+        .arg(skipped)
+        .arg(known)
+        .arg(gone)
+        .arg(na);
+}
+
 void SelfTest::observe(const QString& name, const QJsonObject& data) {
     QJsonObject o = data;
     o.insert(QStringLiteral("name"), name);
@@ -4812,6 +4843,7 @@ int SelfTest::run() {
                        {"checks", checks_},
                        {"knownIssues", known_},
                        {"observations", observations_}, // measurements recorded alongside the checks (FK-005)
+                       {"summary", summary()},          // FK-013: outcomes counted apart
                        {"ok", allOk_},
                        {"scope",
                         "Offscreen QPA, software scene graph. Does not prove monitor colour accuracy or "

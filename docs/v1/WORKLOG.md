@@ -736,6 +736,27 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
     UI font families Segoe UI, Microsoft YaHei UI, Microsoft YaHei, SimSun (Windows' own order). PR #25 green on
     all platforms with the font folder fix.
 
+
+### 10:40–11:00 — PR #26 opened (U024), U021 fixed on Windows, U027 (committed locally)
+- U021 (PR #25): the Windows failure had the same cause as U024's — no fonts in the offscreen platform — so the
+  `QT_QPA_FONTDIR` fix went into U021 as its own commit (e809c5d, formatted in 7a60392) and U024 was rebased onto
+  it (force-with-lease on the PR branch, which only this session pushes to).
+- U027 (FK-013), independent of the library; version 0.7.0-alpha.14. Worked in a separate worktree while the U024
+  runs used the build directory.
+  - `tools/check-claims.py`: first run 89 claims without code [real defects in the specifications] — see UNITS.
+    Every one corrected to the real test, or marked "not built (planned)" on its line. ARCHITECTURE's status line
+    still said the Qt app was not built. API-SPEC: 7 signatures differed from the headers; the C ABI, disk cache,
+    job queue and capability profiles were described as if they existed; ADR-0007 and mobile-portability named a
+    `core-mobile-lite` CI job that never existed.
+  - Checker of the checker: 7 invented references added to a PRD (test, suite, program, file, self-test section,
+    scenario, CI job) — all 7 reported; first version missed `Suite.*` with an unknown suite and CI job names [gap]
+    → added.
+  - `tests/core/test_api_contract.cpp`: compile-time signature and enum checks; compiled against the headers
+    (standalone compile from the build's compile command) before the build directory was free.
+  - `tools/test_report.py`: passed / failed / skipped / not started / blocked; a sample JUnit file with one of each
+    gives the right counts and exit 1. Self-test: `SelfTest::summary()` printed before "self-test passed/FAILED"
+    and stored in `report.json`.
+
 ### 11:00–11:50 — PR #26 CI round 3; owner merged PRs #17–#19; U028 preparation
 - Owner merged PR #17 (U015), #18 (U016) and #19 (U017) into `main` (15:39 UTC). PRs #21 and #22 now target `main`
   directly and are mergeable without conflicts; the unit list and traceability are updated.
@@ -762,3 +783,24 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   type 'Polaroid 600 / i-Type / SX-70' 165 px, Confidence 'Check recommended  80 %' 159 px" — value texts in field
   rows kept their own width, and these two long values widened the Boundaries tab → value texts fill the row and
   wrap. After the fix `--scenario text` passes on polaroid_92 and the fixture.
+
+### 11:50–12:25 — U027 rebased onto U024, built and tested
+- U027 rebased onto U024's last commit (33411d1); one conflict, in this worklog (both appended) → both kept in time
+  order. `app/src/main.cpp` merged cleanly (U024's font code and U027's results line).
+- First build and run of U027's tests (its own build directory, `build/u027`): `ApiContract.StableNames` failed —
+  I had written MinIsWhite's stable name as `min_is_white`, the code and every file written so far use
+  `miniswhite` [my test error, not a code defect] → expectation corrected. `tools/run-tests.sh`: passed=216
+  failed=0 skipped=0 not_started=0 blocked=0 (Linux, all labels including `eval`).
+- Gap in `tools/check-claims.py` found while working on U028: references written as `test_program.Name` were checked
+  only for the program; PRDs F06, F07, F11, F12 and F13 named 14 tests that never existed (`test_project.RoundTrip`,
+  `test_color.KnownValues`, `test_metadata.Orientation`, …) [real defect in the specifications] → the check now
+  requires a suite or test of that name in that program; the 14 references point to the real tests or say "not
+  tested yet, planned" (ProPhoto/scanner-profile conversions, a composite with a graded file in another colour
+  space, the orientation tag after an upright export, the project size, earlier releases' files — U028).
+- U024 after its last commit (33411d1): PR #26 CI green on all platforms (Linux, macOS, Windows; Chinese 1×/2× and
+  English 1.5× text scenarios included) — the Windows Chinese texts have glyphs after the font collections and
+  Segoe UI Symbol. Full self-test on that build (Linux): fixture English 222 passed, Chinese 222 passed; owner's
+  scan polaroid_92 216 passed, 3 skipped (one print on the scan), 0 failed (the rail failure is gone).
+- U027 app built (main checkout detached at the U027 commit) and its self-test run on the fixture: "self-test
+  results: 222 passed, 0 failed, 0 skipped, 0 known issues (0 no longer reproduce), 0 not applicable", the same
+  summary in `report.json`.

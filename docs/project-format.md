@@ -87,7 +87,7 @@ Save: write `name.fkproj.tmp-<rand>` → flush+fsync → rename over `name.fkpro
 
 ## 2. Migrations
 `v1` is the first schema. Each future version adds `migrate_vN_to_vN1(json)` and a fixture file
-`tests/contract/data/project_vN.fkproj`.
+`tests/contract/data/project_vN.fkproj` (not built; `Project.UnknownKeysArePreserved` and `ExportRecords.OlderProjectsImportTheirSidecarsOnOpen` cover older files).
 
 ## 3. Template `*.fktemplate.json` — schema `fk.template/1`
 ```json

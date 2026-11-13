@@ -154,6 +154,7 @@ int main(int argc, char* argv[]) {
     if (parser.isSet(selfTestOpt)) {
         fkapp::SelfTest t(&controller, window, parser.value(selfTestOpt), parser.value(scanOpt));
         const int rc = parser.isSet(scenarioOpt) ? t.runScenario(parser.value(scenarioOpt)) : t.run();
+        std::fprintf(stderr, "self-test results: %s\n", qPrintable(t.summary()));
         std::fprintf(stderr, "self-test %s\n", rc == 0 ? "passed" : "FAILED");
         return rc;
     }

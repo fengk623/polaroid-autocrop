@@ -2,8 +2,10 @@
 
 API version: **1.0** (`FK_API_VERSION_MAJOR=1`, `FK_API_VERSION_MINOR=0`) · Normative · RFC-0001
 
-This document and `core/include/fk/*.hpp` must agree; `tests/contract/test_api_spec.cpp` checks the enum
-values and JSON field names listed here. Any change: same commit updates this file, `CONTRACT-ui-core.md`,
+This document and `core/include/fk/*.hpp` must agree: `tests/core/test_api_contract.cpp` checks the enum values,
+constants and function signatures listed here when it compiles, and the stable names when it runs;
+`tools/check-claims.py` (CI) checks that every name this document declares exists in the core (FK-013, U027).
+Names marked *planned* are not built. Any change: same commit updates this file, `CONTRACT-ui-core.md`,
 the RFC, compatibility tests and a migration note (§9).
 
 ## 1. Conventions
@@ -45,7 +47,8 @@ class ImageBuffer;   // owning, interleaved, 8 or 16 bit, channels 1–4, accoun
 class ImageSource { public: virtual const ImageInfo& info() const = 0;
   virtual Result<void> readRows(int64_t y0, int64_t rows, int64_t x0, int64_t width,
                                 uint8_t* dst, size_t dstStride) = 0; };
-Result<std::unique_ptr<ImageSource>> openTiff(const path&, const TiffOpenOptions& = {});
+class TiffSource : public ImageSource { /* … */ uint64_t cachedBytes() const; };
+Result<std::unique_ptr<TiffSource>> openTiff(const path&, const TiffOpenOptions& = {});
 Result<IntegrityReport> checkTiffIntegrity(const path&);
 Result<ImageBuffer> readImageFile(const path&, ImageInfo* info = nullptr, MetadataSet* meta = nullptr);
 struct WriteOptions { FileFormat format; int bits; Compression compression; int jpegQuality = 100;
@@ -73,7 +76,7 @@ struct ExportGeometry { SizeI outSize; Mat3 outToScan, scanToOut; RectI sourceRe
 ExportGeometry computeExportGeometry(const Shape& region, const Quad& frame, GeometryMode, int upright,
                                      std::optional<SizeI> standard, SizeI scan);
 double maskWeight(const Shape&, const MaskParams&, double x, double y);
-RectI boundingRect(const Shape&); bool isValid(const Shape&);
+RectI boundingRect(const Shape&, std::optional<SizeI> clampTo = std::nullopt); bool isValid(const Shape&);
 Shape expandShape(const Shape&, double px);  double frameAngle(const Quad&);
 // boundary editing (UX-03): one geometry for canvas preview, commit and nudges
 enum class EditHandle { corner = 0, edge = 1, move = 2, center = 3, radiusX = 4, radiusY = 5 };
@@ -117,12 +120,12 @@ struct ExportReport { path output; SizeI size; int bits; bool resampled; bool fr
   std::vector<std::string> notExactReasons; std::string sha256; ExportGeometry geometry;
   Signature signature; double seconds; uint64_t peakAccountedBytes; };
 Result<ExportReport> exportRegion(ImageSource&, const ExportRequest&, const CancelToken&, const ProgressFn&);
-path nextFreeVersionPath(const path& dir, const std::string& stem, const std::string& ext);
+path nextFreeVersionPath(const path& dir, const std::string& base, const std::string& ext, int* versionOut = nullptr);
 
 struct Signature { std::array<float, 4096> v; };
 Signature computeSignature(const ImageBuffer&);  double compareSignatures(const Signature&, const Signature&);
-Result<RelinkCandidate> findMatch(const path& edited, const Project&);
-Result<RelinkCheck> checkEdited(const RelinkCandidate&, const ImageBuffer&, const ImageInfo&, const Sidecar&);
+RelinkCandidate findMatch(const path& edited, const Project&);           // fk/project.hpp
+RelinkCheck checkEdited(const Sidecar&, const ImageBuffer& edited, const ImageInfo& editedInfo);
 
 enum class MaskMode { hard_edge = 0, feather = 1, preserve_edge = 2 };
 struct CompositeRequest { const Item* item; const Sidecar* edit; const ImageBuffer* edited;
@@ -139,17 +142,21 @@ double edgeChange(const ImageBuffer& composite, const ImageBuffer& scanOnly, con
 ```
 
 ## 7. Project, sidecar, template (`fk/project.hpp`) — RFC-0009, `docs/project-format.md`
-`Result<Project> loadProject(const path&, OpenMode*)`, `Result<void> saveProject(const Project&, const path&)`,
-`Result<Sidecar> loadSidecar(const path&)`, `Result<void> saveSidecar(const Sidecar&, const path&)`,
-`Result<Template> loadTemplate(const path&)`, `Result<void> saveTemplate(...)`, `Template makeTemplate(const Scan&)`,
-`Fingerprint fingerprint(const path&, bool full)`. JSON schemas: `fk.project/1`, `fk.sidecar/1`, `fk.template/1`.
+`Result<Project> loadProject(const path&, OpenMode*)`, `Status saveProject(const Project&, const path&)`,
+`Result<Sidecar> loadSidecar(const path&)`, `Status saveSidecar(const Sidecar&, const path&)`,
+`Result<Template> loadTemplate(const path&, OpenMode*)`, `Status saveTemplate(const Template&, const path&)`,
+`Template makeTemplate(const std::vector<DetectedItem>&, SizeI scanSize, double dpi, const std::string& name)`,
+`Result<Fingerprint> fingerprintFile(const path&, bool full = false, const CancelToken* = nullptr)`
+(`Status` = `Result<void>`). JSON schemas: `fk.project/1`, `fk.sidecar/1`, `fk.template/1`.
 `ScanRecord::rotation` (UX-04, quarter turns clockwise, display only); `void rotateScanView(ScanRecord&, int delta)`;
 `int exportTurns(const ScanRecord&, const ItemRecord&, bool applyUpright)` — a print's upright when uprights are
 applied, else the scan's view rotation, never both; `void updateCountWarning(ScanRecord&)` (UX-01).
 
 ## 8. Colour, metadata, cache, jobs, diagnostics, capabilities
 See RFC-0012/13/14/10/15 and ADR-0007. Key types: `Profile`, `Transform`, `MetadataSet`, `PrivacyPreset {keep_all_safe=0, remove_location=1, remove_identity=2}`,
-`DiskCache`, `JobQueue`, `MemoryStats`, `BufferAccounting`, `Capabilities {desktop_full, mobile_lite}`.
+`MemoryStats`, `BufferAccounting`, `CacheLedger` (below).
+Planned, not built: a disk cache (`DiskCache`, ADR-0006), a core job queue (`JobQueue`; jobs run in the app,
+`app/src/Jobs.cpp`, RFC-0010), capability profiles (`Capabilities {desktop_full, mobile_lite}`, ADR-0007; planned).
 
 In-memory cache budget (`fk/cache.hpp`, RFC-0014 §Memory budget, FK-005):
 ```cpp
@@ -166,7 +173,8 @@ struct SystemMemory { uint64_t totalBytes, availableBytes; }; SystemMemory syste
 uint64_t TiffSource::cachedBytes() const;            // decoded strip/tile cache + line buffers
 ```
 
-## 9. C ABI (`fk/fk_c.h`)
+## 9. C ABI (`fk/fk_c.h`) — planned, not built
+For future Swift/Kotlin bindings (ADR-0007). No header, library or test exists yet; nothing ships it.
 ```c
 int fk_api_version(void);                                   /* major*1000 + minor */
 const char* fk_last_error(void);                             /* thread-local, UTF-8 */
@@ -186,3 +194,4 @@ void fk_free(void*);
 | 0.7.0-alpha.4 | `quarterTurnMatrix`, `quarterTurnSize`, `ScanRecord::rotation`, `rotateScanView`, `exportTurns` (UX-04). |
 | 0.7.0-alpha.5 | `MaskChoice`, `naturalBlend`, `resolveMask`, `edgeChange`, `CompositeSettings::mask`/`maskSet`, `deltaE2000` (UX-08). |
 | 0.7.0-alpha.7 | `CacheLedger`, `defaultCacheBudget`, `systemMemory`, `TiffSource::cachedBytes` (FK-005). |
+| 0.7.0-alpha.14 | Spec corrected to the headers (FK-013): `openTiff` returns `TiffSource`, `findMatch` / `checkEdited` signatures, `makeTemplate`, `fingerprintFile`, `boundingRect` clamp, `nextFreeVersionPath` version out; disk cache, job queue, capabilities and the C ABI marked planned. No code change. |

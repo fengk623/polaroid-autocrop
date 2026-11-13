@@ -40,6 +40,8 @@ jobs:
         run: python3 tools/check-i18n.py
       - name: App icons complete, no sun (UX-11)
         run: python3 tools/check-icons.py
+      - name: Specifications name only tests, files, jobs and API that exist (FK-013)
+        run: python3 tools/check-claims.py
 
   core:
     name: Core ${{ matrix.name }}

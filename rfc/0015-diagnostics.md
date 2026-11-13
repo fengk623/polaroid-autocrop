@@ -1,6 +1,6 @@
 # RFC-0015 — Diagnostics and memory accounting
 
-Status: Accepted · Module: `core/diagnostics` · PRD F14 · Tests: `tests/core/test_diagnostics.cpp`
+Status: Accepted · Module: diagnostics are not built (planned); memory statistics in `core/src/memory.cpp` · PRD F14 · Tests: `Memory.*`
 
 - Logger: JSON lines `{t, level, event, fields}`; sinks: rotating file (5 × 2 MB) and optional stderr.
   Helpers forbid pixel buffers (only scalars/strings). `anonymizePath()` keeps the extension and a stable hash.

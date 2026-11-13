@@ -1,6 +1,6 @@
 # RFC-0002 — Geometry
 
-Status: Accepted · Module: `core/geometry` · Tests: `tests/core/test_geometry.cpp`
+Status: Accepted · Module: `core/src/geometry.cpp` · Tests: `tests/core/test_geometry.cpp`
 
 ## Conventions (normative)
 - Scan coordinates: continuous, origin at the top-left corner of pixel (0,0); pixel (x,y) covers
@@ -58,5 +58,5 @@ overlays and tests.
 
 ## Single source of truth
 Canvas overlays, navigator, thumbnails, export preview, export and composite call these functions
-(no re-implementation in QML or app code). `tests/core/test_geometry_consistency.cpp` renders an
+(no re-implementation in QML or app code). A consistency test (not built; planned) would render an
 overlay rasterisation and an export of the same shape and compares extents.

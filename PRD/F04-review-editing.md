@@ -1,6 +1,6 @@
 # F04 — Review and manual boundary editing
 
-RFC: `rfc/0002-geometry.md`, `rfc/0011-ui-architecture.md`, `CONTRACT-ui-core.md` · Tests: `tests/core/test_geometry.cpp`, `tests/app/tst_boundary_edit.qml`
+RFC: `rfc/0002-geometry.md`, `rfc/0011-ui-architecture.md`, `CONTRACT-ui-core.md` · Tests: `tests/core/test_geometry.cpp` (`Edit.*`), self-test `runShapeEditing`
 
 ## Scope
 - Canvas modes: Scan, Full Print, Image Area, Composite.
@@ -27,9 +27,9 @@ RFC: `rfc/0002-geometry.md`, `rfc/0011-ui-architecture.md`, `CONTRACT-ui-core.md
 
 ## Acceptance
 - A1 Every boundary edit round-trips through project save/load unchanged (to 1e-9 px). (`test_project`)
-- A2 Undo/redo restores exact previous geometry. (`test_edit_history`)
+- A2 Undo/redo restores exact previous geometry. (self-test `runShapeEditing`, `runScanRotation`: one drag = one undo step, undo restores the shape exactly)
 - A3 Exporting an unreviewed low-confidence item via the API without the override flag fails with `Errc::needs_review`. (`test_export`)
-- A4 Overlay geometry on the canvas matches the export geometry (same `core/geometry` call); verified by snapshot test with known quads. (`tst_canvas_overlay`)
+- A4 Overlay geometry on the canvas matches the export geometry (same `core/src/geometry.cpp` call); the canvas maps scan coordinates with the core matrices (self-test `runShapeEditing`, `runLayout` clicks land on the print); a pixel snapshot test with known quads is not built.
 - A5 (UX-03) A lone Shift tap switches Outer ↔ Inner and the canvas says which is edited; Shift+click, Shift+letter,
   Shift+arrows (with and without a selected handle), Shift+wheel, a hold over 1 s, typing, an open dialog, focus loss
   and Shift around a drag never switch. (self-test `runShapeEditing`, real key/mouse events)
