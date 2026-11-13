@@ -3,6 +3,12 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.9 — U023: simpler app icon (UX-11)
+- The sun is gone from the icon; the print, its frame and the corner brackets stay (same colours, no rebranding).
+  Every ICO / ICNS size is drawn on its own with strokes kept visible at 16–32 px, and the ICNS now has the 1×
+  16 / 32 / 64 px entries too. `tools/check-icons.py` checks the shipped icons in CI. Notes:
+  docs/release-notes/v0.7.0-alpha.9.md.
+
 ## 0.7.0-alpha.8 — U025: display colour follows the window's monitor; MinIsWhite full resolution fixed (FK-011)
 - Windows: the canvas converts to the ICC profile of the monitor the window is on, read again when the window
   moves to another screen, screens are added or removed, or the monitor's profile changes (5 s poll); the proxy,
