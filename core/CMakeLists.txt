@@ -32,6 +32,7 @@ set(FK_CORE_SOURCES
   src/export.cpp
   src/composite.cpp
   src/project.cpp
+  src/library.cpp
 )
 
 add_library(fkcore STATIC ${FK_CORE_SOURCES})

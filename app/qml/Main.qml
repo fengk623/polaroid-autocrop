@@ -36,6 +36,10 @@ ApplicationWindow {
         function importFolder() { folderDialog.purpose = "import"; folderDialog.open() }
         // FK-001: every way of replacing the open project goes through win.replaceProject (save / don't save / cancel)
         function openProject() { projectOpenDialog.open() }
+        // UX-05 (U018): libraries — created, opened and imported through the same replace guard
+        function newLibrary() { libraryDialog.openNew() }
+        function openLibrary() { libraryOpenDialog.open() }
+        function importProjectAsLibrary() { libraryImportDialog.open() }
         function recoverWork() {
             const snaps = App.recoverySnapshots()
             if (snaps.length) recoveryDialog.show(snaps)
@@ -309,6 +313,31 @@ ApplicationWindow {
         onRejected: win.saveThen = null // no path chosen: the project stays as it is, unsaved
     }
     FolderDialog {
+        id: libraryOpenDialog
+        title: qsTr("Open library (a folder ending in .fklibrary)")
+        onAccepted: {
+            if (App.isLibraryPath(selectedFolder)) win.replaceProject("openLibrary", selectedFolder)
+            else App.notify(qsTr("This folder is not a FrameKeeper library."), "error")
+        }
+    }
+    FileDialog {
+        id: libraryImportDialog
+        title: qsTr("Project to import into a new library")
+        fileMode: FileDialog.OpenFile
+        nameFilters: [qsTr("FrameKeeper projects (*.fkproj)")]
+        onAccepted: {
+            const path = App.localFile(selectedFile)
+            const base = path.replace(/^.*[\\/]/, "").replace(/\.fkproj$/i, "")
+            libraryDialog.openImport(selectedFile, base)
+        }
+    }
+    LibraryDialog {
+        id: libraryDialog
+        onAccepted2: (mode, parentFolder, name, projectUrl) =>
+            win.replaceProject(mode === "import" ? "importLibrary" : "newLibrary",
+                               { parent: parentFolder, name: name, project: projectUrl })
+    }
+    FolderDialog {
         id: folderDialog
         property string purpose: "import"
         title: purpose === "export" ? qsTr("Export folder") : purpose === "relocate" ? qsTr("Folder with the moved scans") : qsTr("Import folder")
@@ -358,6 +387,7 @@ ApplicationWindow {
         function onRelinkResults(rows) { relinkDialog.show(rows) }
         function onOpenRequested(url) { win.replaceProject("openUrl", url) }
         function onBackupAvailable(path, backupName, backupTime) { backupDialog.show(path, backupName, backupTime) }
+        function onLibraryLockStale(host, user, lastSeen) { staleLockDialog.show(host, user, lastSeen) }
         function onRelinkRowUpdated(row) { relinkDialog.updateRow(row) }
         function onExportFinished(folder, written, failed) {
             toasts.push(failed > 0 ? qsTr("%1 written, %2 failed.").arg(written).arg(failed) : qsTr("%n file(s) written.", "", written),
@@ -388,6 +418,9 @@ ApplicationWindow {
         if (action === "new") App.newProject()
         else if (action === "openUrl") App.openProject(url)
         else if (action === "restore") App.restoreBackup(url)
+        else if (action === "openLibrary") App.openLibrary(url)
+        else if (action === "newLibrary") App.newLibrary(url.parent, url.name)
+        else if (action === "importLibrary") App.importProjectAsLibrary(url.project, url.parent, url.name)
         else if (action === "recover") App.recoverSnapshot(url)
         else if (action === "quit") { quitConfirmed = true; win.close() }
     }
@@ -440,19 +473,45 @@ ApplicationWindow {
         property string path: ""
         property string backupName: ""
         property string backupTime: ""
-        function show(p, n, t) { path = p; backupName = n; backupTime = t; open() }
-        title: qsTr("The project file is damaged")
+        property bool library: false
+        function show(p, n, t) { path = p; backupName = n; backupTime = t; library = App.isLibraryPath(p); open() }
+        title: library ? qsTr("The library's catalog is damaged") : qsTr("The project file is damaged")
         contentItem: ColumnLayout {
             spacing: 10
             Text {
                 Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.fontBody; color: Theme.textPrimary
-                text: qsTr("A backup from the last save is available (%1, %2). Restore it? The damaged file is kept next to it under a new name.")
+                text: (backupDialog.library
+                       ? qsTr("A readable copy of the catalog is available (%1, %2). Restore it? The damaged catalog is kept in the library folder under a new name.")
+                       : qsTr("A backup from the last save is available (%1, %2). Restore it? The damaged file is kept next to it under a new name."))
                       .arg(backupDialog.backupName).arg(backupDialog.backupTime)
             }
             RowLayout {
                 Layout.alignment: Qt.AlignRight
                 FkButton { text: qsTr("Cancel"); onClicked: backupDialog.close() }
                 FkButton { primary: true; text: qsTr("Restore backup"); onClicked: { backupDialog.close(); win.replaceProject("restore", backupDialog.path) } }
+            }
+        }
+    }
+    // UX-05 (RFC-0018 §5): a lock nobody has renewed for a while — taken over only when the user says so
+    FkDialog {
+        id: staleLockDialog
+        objectName: "staleLockDialog"
+        property string host: ""
+        property string user: ""
+        property string lastSeen: ""
+        function show(h, u, t) { host = h; user = u; lastSeen = t; open() }
+        title: qsTr("Library in use?")
+        contentItem: ColumnLayout {
+            spacing: 10
+            Text {
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: Theme.fontBody; color: Theme.textPrimary
+                text: qsTr("FrameKeeper on %1 (user %2) had this library open and has not been seen since %3 — it probably quit unexpectedly. The library is open read-only. Take it over? If that FrameKeeper is in fact still running, its unsaved changes can no longer be saved into the library.")
+                      .arg(staleLockDialog.host).arg(staleLockDialog.user).arg(staleLockDialog.lastSeen)
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                FkButton { text: qsTr("Keep read-only"); onClicked: staleLockDialog.close() }
+                FkButton { primary: true; text: qsTr("Take over"); onClicked: { staleLockDialog.close(); App.takeOverLibrary() } }
             }
         }
     }
@@ -495,7 +554,8 @@ ApplicationWindow {
     function showSettings() { settingsDialog.open() }
     readonly property var commands: cmd // self-test: the same commands as the menus
     readonly property var modalDialogs: [relinkDialog, exportDialog, finalDialog, settingsDialog, aboutDialog,
-                                         nameDialog, redetectConfirm, replaceConfirm, backupDialog, recoveryDialog]
+                                         nameDialog, redetectConfirm, replaceConfirm, backupDialog, recoveryDialog,
+                                         libraryDialog, staleLockDialog]
     function closeDialogs() {
         for (const d of modalDialogs)
             d.close()

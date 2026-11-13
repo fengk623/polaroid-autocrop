@@ -14,6 +14,7 @@
 #include "fk/version.hpp"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDirIterator>
@@ -257,12 +258,18 @@ AppController::AppController(QObject* parent)
     recoveryTimer_->setSingleShot(true);
     recoveryTimer_->setInterval(3000);
     connect(recoveryTimer_, &QTimer::timeout, this, &AppController::writeRecovery);
+    // UX-05 (RFC-0018 §5): the open library's lock is renewed while this instance writes it
+    lockOwner_ = fk::thisLockOwner();
+    lockTimer_ = new QTimer(this);
+    lockTimer_->setInterval(fk::kLibraryLockHeartbeatSeconds * 1000);
+    connect(lockTimer_, &QTimer::timeout, this, &AppController::refreshLibraryLock);
     newProject();
 }
 
 AppController::~AppController() {
     jobs_->cancelAll();
     jobs_->waitAll();
+    closeLibrary();
 }
 
 void AppController::loadSettings() {
@@ -308,7 +315,8 @@ void AppController::loadSettings() {
                                {"showRightRail", true},
                                {"showFilmstrip", true},
                                {"rightTab", 0},
-                               {"recentProjects", QStringList{}}};
+                               {"recentProjects", QStringList{}},
+                               {"recentLibraries", QStringList{}}}; // UX-05: library folders, newest first
     settings_.clear();
     for (auto it = defaults.begin(); it != defaults.end(); ++it) {
         // INI and registry storage return text ("true", "4"): keep the default's type, so QML compares and
@@ -559,6 +567,7 @@ QString AppController::projectName() const {
 }
 
 void AppController::newProject() {
+    closeLibrary();
     jobs_->cancelAll();
     ++projectGen_; // results of jobs started for the previous project are outdated from here on
     previewGen_.clear();
@@ -591,6 +600,13 @@ void AppController::newProject() {
 
 bool AppController::openProject(const QVariant& url) {
     const QString path = localPath(url);
+    // UX-05: a library folder, or a file inside one, opens the library (its lock, backups and manifest) —
+    // never its catalog as a loose project
+    const QFileInfo fi(path);
+    if (fi.isDir() && fk::isLibraryFolder(toPath(path))) return openLibrary(url);
+    if (!fi.isDir() && fk::isLibraryFolder(toPath(fi.absolutePath())) &&
+        (fi.fileName() == QLatin1String("catalog.fkproj") || fi.fileName() == QLatin1String("library.json")))
+        return openLibrary(fi.absolutePath());
     fk::OpenMode mode = fk::OpenMode::read_write;
     auto p = fk::loadProject(toPath(path), &mode);
     if (!p) {
@@ -623,7 +639,7 @@ bool AppController::openProject(const QVariant& url) {
         recent.removeLast();
     setSetting(QStringLiteral("recentProjects"), recent);
     // unsaved work of this project from a crash or a forced quit
-    if (QFileInfo::exists(recoveryFileFor(project_.projectId)))
+    if (QFileInfo::exists(recoveryFileFor(recoveryKey())))
         notify(tr("Unsaved changes of this project from an earlier session can be recovered: File ▸ Recover "
                   "Unsaved Work…"),
                QStringLiteral("warning"));
@@ -678,6 +694,32 @@ QVariantMap AppController::replaceInfo() const {
 
 bool AppController::restoreBackup(const QVariant& url) {
     const QString path = localPath(url);
+    if (QFileInfo(path).isDir()) {
+        // UX-05 (RFC-0018 §4): a library's damaged catalog — .bak first, then the newest backups/ entry
+        const auto candidates = fk::libraryRestoreCandidates(toPath(path));
+        if (candidates.empty()) {
+            notify(tr("No usable backup of this library was found."), QStringLiteral("error"));
+            return false;
+        }
+        const fk::LibraryLock l = fk::readLibraryLock(toPath(path), lockOwner_);
+        if (l.present && !l.ours && !l.stale) {
+            notify(tr("This library is open in FrameKeeper on %1; restore it there.")
+                       .arg(toQ(l.owner.host.empty() ? std::string("?") : l.owner.host)),
+                   QStringLiteral("error"));
+            return false;
+        }
+        auto aside = fk::restoreLibraryCatalog(toPath(path), candidates.front());
+        if (!aside) {
+            notify(errText(aside.error()), QStringLiteral("error"));
+            return false;
+        }
+        if (!openLibraryAt(path)) return false;
+        notify(tr("Backup restored from %1. The damaged catalog was kept as %2.")
+                   .arg(toQ(fk::pathToUtf8(candidates.front().filename())))
+                   .arg(QFileInfo(toQ(fk::pathToUtf8(*aside))).fileName()),
+               QStringLiteral("warning"));
+        return true;
+    }
     const auto bak = fk::usableBackup(toPath(path));
     if (!bak) {
         notify(tr("No usable backup of this project was found."), QStringLiteral("error"));
@@ -719,17 +761,18 @@ void AppController::writeRecovery() {
     QJsonObject o;
     o["schema"] = QStringLiteral("fk.recovery/1");
     o["projectPath"] = projectPath_;
+    if (isLibrary()) o["libraryFolder"] = libraryFolder_; // recovered into the same library (UX-05)
     o["name"] = toQ(project_.name);
     o["savedAt"] = toQ(fk::isoDateTimeNowUtc());
     o["project"] = QJsonDocument::fromJson(QByteArray::fromStdString(fk::projectToJson(project_))).object();
-    const auto st = fk::writeFileAtomic(toPath(recoveryFileFor(project_.projectId)),
+    const auto st = fk::writeFileAtomic(toPath(recoveryFileFor(recoveryKey())),
                                         QJsonDocument(o).toJson(QJsonDocument::Compact).toStdString(), false);
     if (!st.ok()) qWarning("recovery snapshot not written: %s", st.error().message.c_str());
 }
 
 void AppController::discardCurrentRecovery() {
     if (recoveryTimer_) recoveryTimer_->stop();
-    QFile::remove(recoveryFileFor(project_.projectId));
+    QFile::remove(recoveryFileFor(recoveryKey()));
 }
 
 QVariantList AppController::recoverySnapshots() const {
@@ -741,7 +784,7 @@ QVariantList AppController::recoverySnapshots() const {
         const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
         if (o.value("schema").toString() != QLatin1String("fk.recovery/1")) continue;
         // the open project's own snapshot is not "earlier" work
-        if (fi.completeBaseName() == toQ(project_.projectId) && dirty_) continue;
+        if (fi.completeBaseName() == toQ(recoveryKey()) && dirty_) continue;
         out << QVariantMap{{"file", fi.absoluteFilePath()},
                            {"name", o.value("name").toString()},
                            {"projectPath", o.value("projectPath").toString()},
@@ -762,6 +805,13 @@ bool AppController::recoverSnapshot(const QString& file) {
         return false;
     }
     const QString path = o.value("projectPath").toString();
+    if (const QString lib = o.value("libraryFolder").toString(); !lib.isEmpty()) {
+        // UX-05: unsaved work of a library goes back into that library (its lock, its catalog), unsaved
+        fk::resolveScanPaths(*p, toPath(lib));
+        if (!openLibraryAt(lib, std::move(*p))) return false;
+        notify(tr("Unsaved work recovered. Save the library to keep it."), QStringLiteral("warning"));
+        return true;
+    }
     fk::resolveScanPaths(
         *p, toPath(path.isEmpty() ? QFileInfo(file).absolutePath() : QFileInfo(path).absolutePath()));
     adoptProject(std::move(*p), path, false, true);
@@ -775,6 +825,27 @@ void AppController::discardSnapshot(const QString& file) {
 }
 
 bool AppController::saveProject() {
+    if (isLibrary()) {
+        if (lockHeld_) refreshLibraryLock(); // taken over meanwhile → read-only below
+        if (readOnly_) {
+            notify(
+                tr("Read-only library (open in another FrameKeeper, or saved by a later version): use Save "
+                   "As to keep a copy as a project file."),
+                QStringLiteral("warning"));
+            return false;
+        }
+        fk::Library lib{toPath(libraryFolder_), library_, project_};
+        const auto st = fk::saveLibrary(lib);
+        if (!st.ok()) {
+            notify(tr("Saving failed: %1").arg(errText(st.error())), QStringLiteral("error"));
+            return false;
+        }
+        library_ = lib.manifest;
+        dirty_ = false;
+        discardCurrentRecovery();
+        Q_EMIT projectChanged();
+        return true;
+    }
     if (projectPath_.isEmpty()) return false; // QML asks for a path first
     if (readOnly_) {
         notify(tr("Read-only project: use Save As to keep a copy."), QStringLiteral("warning"));
@@ -795,6 +866,24 @@ bool AppController::saveProjectAs(const QVariant& url) {
     QString path = localPath(url);
     const QString ext = QStringLiteral(".") + QString::fromLatin1(fk::product::kProjectExt);
     if (!path.endsWith(ext)) path += ext;
+    if (isLibrary()) {
+        // UX-05: a copy of the library's content as a project file, which becomes the open document; the
+        // library keeps its last saved state
+        const auto st = fk::saveProject(project_, toPath(path));
+        if (!st.ok()) {
+            notify(tr("Saving failed: %1").arg(errText(st.error())), QStringLiteral("error"));
+            return false;
+        }
+        discardCurrentRecovery();
+        closeLibrary();
+        projectPath_ = path;
+        readOnly_ = false;
+        dirty_ = false;
+        notify(tr("Saved as a project file; the library keeps its last saved state."),
+               QStringLiteral("info"));
+        Q_EMIT projectChanged();
+        return true;
+    }
     // FK-001: a failed save keeps the project as it was (path, name, read-only state, unsaved changes)
     const QString oldPath = projectPath_;
     const std::string oldName = project_.name;
@@ -808,6 +897,291 @@ bool AppController::saveProjectAs(const QVariant& url) {
     readOnly_ = oldReadOnly;
     Q_EMIT projectChanged();
     return false;
+}
+
+// ---- libraries (UX-05, U018, RFC-0018) -----------------------------------------------------------------
+
+void AppController::closeLibrary() {
+    if (lockTimer_) lockTimer_->stop();
+    if (lockHeld_ && !libraryFolder_.isEmpty()) fk::releaseLibraryLock(toPath(libraryFolder_), lockOwner_);
+    lockHeld_ = false;
+    libraryFolder_.clear();
+    library_ = {};
+    staleLock_ = {};
+}
+
+std::string AppController::recoveryKey() const {
+    return isLibrary() && !library_.libraryId.empty() ? library_.libraryId : project_.projectId;
+}
+
+QString AppController::defaultLibraryParent() const {
+    // D3/Q4: the system's Documents folder, never a hard-coded path (made when a fresh account has none yet)
+    const QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (!docs.isEmpty() && !QFileInfo(docs).isDir()) QDir().mkpath(docs);
+    return docs;
+}
+
+QVariantMap AppController::libraryTarget(const QVariant& parentUrl, const QString& name) const {
+    const QString parent = localPath(parentUrl);
+    const QString folderName = toQ(fk::libraryFolderName(toStd(name.trimmed())));
+    const QString folder = QDir(parent).filePath(folderName);
+    return {{"folder", folder},
+            {"folderName", folderName},
+            {"parentExists", QFileInfo(parent).isDir()},
+            {"free", QFileInfo(parent).isDir() && !QFileInfo::exists(folder)}};
+}
+
+bool AppController::newLibrary(const QVariant& parentUrl, const QString& name) {
+    const QString parent = localPath(parentUrl);
+    auto lib = fk::createLibrary(toPath(parent), toStd(name.trimmed()));
+    if (!lib) {
+        notify(tr("Cannot create the library: %1").arg(errText(lib.error())), QStringLiteral("error"));
+        return false;
+    }
+    return openLibraryAt(toQ(fk::pathToUtf8(lib->folder)));
+}
+
+bool AppController::openLibrary(const QVariant& folderUrl) {
+    return openLibraryAt(localPath(folderUrl));
+}
+
+bool AppController::openLibraryAt(const QString& folderIn, std::optional<fk::Project> content) {
+    const QString folder = QDir::cleanPath(QFileInfo(folderIn).absoluteFilePath());
+    fk::LibraryOpenInfo info;
+    auto lib = fk::openLibrary(toPath(folder), &info);
+    if (!lib) {
+        notify(tr("Cannot open the library: %1").arg(errText(lib.error())), QStringLiteral("error"));
+        // FK-008 for libraries: a damaged catalog with a readable copy → offer to restore it (kept aside)
+        if (lib.error().code == fk::Errc::parse_error) {
+            const auto c = fk::libraryRestoreCandidates(toPath(folder));
+            if (!c.empty()) {
+                const QFileInfo bi(toQ(fk::pathToUtf8(c.front())));
+                Q_EMIT backupAvailable(folder, bi.fileName(),
+                                       QLocale().toString(bi.lastModified(), QLocale::ShortFormat));
+            }
+        }
+        return false;
+    }
+    const bool recovered = content.has_value();
+    fk::Project p = recovered ? std::move(*content) : std::move(lib->catalog);
+    p.name = lib->manifest.name; // the window shows the library's name
+    adoptProject(std::move(p), toQ(fk::pathToUtf8(fk::libraryCatalogPath(toPath(folder)))), false, recovered);
+    // adoptProject released the previous library (newProject); from here on this one is open
+    libraryFolder_ = folder;
+    library_ = lib->manifest;
+    bool readOnly = info.mode == fk::OpenMode::read_only;
+    if (readOnly) {
+        notify(tr("This library was saved by a later version of FrameKeeper and is opened read-only."),
+               QStringLiteral("warning"));
+    } else {
+        auto a = fk::acquireLibraryLock(toPath(folder), lockOwner_);
+        const fk::LibraryLock& l = a ? a->lock : fk::LibraryLock{};
+        const QString host = toQ(l.owner.host.empty() ? std::string("?") : l.owner.host);
+        const QString user = toQ(l.owner.user.empty() ? std::string("?") : l.owner.user);
+        const qint64 beat = fk::isoUtcToEpoch(l.heartbeatAt);
+        const QString seen = beat < 0 ? tr("unknown")
+                                      : QLocale().toString(QDateTime::fromSecsSinceEpoch(beat).toLocalTime(),
+                                                           QLocale::ShortFormat);
+        if (!a) {
+            readOnly = true;
+            notify(tr("The library folder cannot be written; the library is opened read-only (%1).")
+                       .arg(errText(a.error())),
+                   QStringLiteral("warning"));
+        } else if (a->state == fk::LockState::acquired) {
+            lockHeld_ = true;
+            lockTimer_->start();
+        } else if (a->state == fk::LockState::held) {
+            readOnly = true;
+            notify(l.readable
+                       ? tr("This library is open in FrameKeeper on %1 (user %2, last active %3). It is "
+                            "opened read-only here.")
+                             .arg(host, user, seen)
+                       : tr("This library is being opened by another FrameKeeper right now. It is opened "
+                            "read-only here."),
+                   QStringLiteral("warning"));
+        } else {
+            readOnly = true;
+            staleLock_ = l;
+            Q_EMIT libraryLockStale(l.readable ? host : tr("unknown"), l.readable ? user : tr("unknown"),
+                                    seen);
+        }
+    }
+    readOnly_ = readOnly;
+    if (info.manifestSource == "backup")
+        notify(tr("The library's settings file was damaged; its backup was used."),
+               QStringLiteral("warning"));
+    else if (info.manifestSource == "catalog")
+        notify(
+            tr("The library's settings file was damaged and was rebuilt from the catalog: the cover and the "
+               "folder list start again."),
+            QStringLiteral("warning"));
+    QStringList recent = settings_.value("recentLibraries").toStringList();
+    recent.removeAll(folder);
+    recent.prepend(folder);
+    while (recent.size() > 8)
+        recent.removeLast();
+    setSetting(QStringLiteral("recentLibraries"), recent);
+    if (!recovered && QFileInfo::exists(recoveryFileFor(recoveryKey())))
+        notify(tr("Unsaved changes of this library from an earlier session can be recovered: File ▸ Recover "
+                  "Unsaved Work…"),
+               QStringLiteral("warning"));
+    Q_EMIT projectChanged();
+    return true;
+}
+
+void AppController::refreshLibraryLock() {
+    if (!lockHeld_ || libraryFolder_.isEmpty()) return;
+    const auto st = fk::refreshLibraryLock(toPath(libraryFolder_), lockOwner_);
+    if (st.ok()) return;
+    if (st.error().code == fk::Errc::conflict) {
+        // another instance took the library over (it asked its user): stop writing it
+        lockHeld_ = false;
+        lockTimer_->stop();
+        readOnly_ = true;
+        notify(tr("Another FrameKeeper took over this library; it is read-only here now. Use Save As to keep "
+                  "unsaved changes as a project file."),
+               QStringLiteral("error"));
+        Q_EMIT projectChanged();
+        return;
+    }
+    qWarning("library lock not renewed: %s", st.error().message.c_str()); // tried again next time
+}
+
+bool AppController::takeOverLibrary() {
+    if (!isLibrary() || !staleLock_.present) return false;
+    auto a = fk::takeOverLibraryLock(toPath(libraryFolder_), lockOwner_, staleLock_);
+    if (!a) {
+        notify(errText(a.error()), QStringLiteral("error"));
+        return false;
+    }
+    if (a->state != fk::LockState::acquired) {
+        staleLock_ = a->state == fk::LockState::stale ? a->lock : fk::LibraryLock{};
+        notify(tr("The library's lock changed while you were asked; it stays read-only. Open it again to "
+                  "decide anew."),
+               QStringLiteral("warning"));
+        return false;
+    }
+    staleLock_ = {};
+    lockHeld_ = true;
+    lockTimer_->start();
+    readOnly_ = false;
+    notify(tr("This FrameKeeper now writes the library."), QStringLiteral("info"));
+    Q_EMIT projectChanged();
+    return true;
+}
+
+QVariantMap AppController::checkProjectImport(const QVariant& projectUrl, const QVariant& parentUrl,
+                                              const QString& name) const {
+    auto c = fk::checkProjectMigration(toPath(localPath(projectUrl)), toPath(localPath(parentUrl)),
+                                       toStd(name.trimmed()));
+    if (!c) return {{"ok", false}, {"error", errText(c.error())}, {"code", fk::errcName(c.error().code)}};
+    return {{"ok", true},
+            {"scans", c->scans},
+            {"prints", c->prints},
+            {"missingScans", c->missingScans},
+            {"exportRecords", c->exportRecords},
+            {"destination", toQ(fk::pathToUtf8(c->destination))}};
+}
+
+bool AppController::importProjectAsLibrary(const QVariant& projectUrl, const QVariant& parentUrl,
+                                           const QString& name) {
+    auto lib = fk::migrateProjectToLibrary(toPath(localPath(projectUrl)), toPath(localPath(parentUrl)),
+                                           toStd(name.trimmed()));
+    if (!lib) {
+        notify(tr("The project was not imported (nothing was written): %1").arg(errText(lib.error())),
+               QStringLiteral("error"));
+        return false;
+    }
+    if (!openLibraryAt(toQ(fk::pathToUtf8(lib->folder)))) return false;
+    notify(tr("Imported into the library \"%1\". The project file was not changed and can still be opened.")
+               .arg(toQ(library_.name)),
+           QStringLiteral("info"));
+    return true;
+}
+
+namespace {
+fk::LibraryMeta* metaOf(fk::Project& p, const std::string& id) {
+    for (auto& s : p.scans) {
+        if (s.scanId == id) return &s.library;
+        for (auto& it : s.items)
+            if (it.itemId == id) return &it.library;
+    }
+    return nullptr;
+}
+} // namespace
+
+bool AppController::setLibraryMeta(const QString& id, const QVariantMap& values) {
+    if (readOnly_) return false;
+    fk::LibraryMeta* m = metaOf(project_, toStd(id));
+    if (!m) return false;
+    fk::LibraryMeta next = *m;
+    static const QStringList picks{QStringLiteral("none"), QStringLiteral("picked"),
+                                   QStringLiteral("rejected")};
+    static const QStringList colors{QStringLiteral("none"),   QStringLiteral("red"),
+                                    QStringLiteral("yellow"), QStringLiteral("green"),
+                                    QStringLiteral("blue"),   QStringLiteral("purple")};
+    if (values.contains("rating")) {
+        bool ok = false;
+        const int r = values.value("rating").toInt(&ok);
+        if (!ok || r < 0 || r > 5) return false;
+        next.rating = r;
+    }
+    if (values.contains("pick")) {
+        if (!picks.contains(values.value("pick").toString())) return false;
+        next.pick = toStd(values.value("pick").toString());
+    }
+    if (values.contains("colorLabel")) {
+        if (!colors.contains(values.value("colorLabel").toString())) return false;
+        next.colorLabel = toStd(values.value("colorLabel").toString());
+    }
+    if (values.contains("textLabels")) {
+        next.textLabels.clear();
+        for (const QString& t : values.value("textLabels").toStringList())
+            if (!t.trimmed().isEmpty()) next.textLabels.push_back(toStd(t.trimmed()));
+    }
+    if (values.contains("manualOrder")) {
+        bool ok = false;
+        const qlonglong o = values.value("manualOrder").toLongLong(&ok);
+        if (!ok || o < 0) return false;
+        next.manualOrder = o;
+    }
+    if (next == *m) return true;
+    *m = next;
+    touch(false);
+    return true;
+}
+
+QVariantMap AppController::libraryMeta(const QString& id) const {
+    fk::LibraryMeta* m = metaOf(const_cast<fk::Project&>(project_), toStd(id));
+    if (!m) return {};
+    QStringList labels;
+    for (const auto& t : m->textLabels)
+        labels << toQ(t);
+    return {{"rating", m->rating},
+            {"pick", toQ(m->pick)},
+            {"colorLabel", toQ(m->colorLabel)},
+            {"textLabels", labels},
+            {"manualOrder", static_cast<qlonglong>(m->manualOrder)},
+            {"addedAt", toQ(m->addedAt)},
+            {"editedAt", toQ(m->editedAt)},
+            {"editCount", m->editCount}};
+}
+
+QVariantMap AppController::libraryLockInfo() const {
+    if (!isLibrary()) return {};
+    const fk::LibraryLock l = fk::readLibraryLock(toPath(libraryFolder_), lockOwner_);
+    return {{"present", l.present},      {"ours", l.ours},
+            {"stale", l.stale},          {"host", toQ(l.owner.host)},
+            {"user", toQ(l.owner.user)}, {"heartbeatAt", toQ(l.heartbeatAt)}};
+}
+
+bool AppController::isLibraryPath(const QVariant& url) const {
+    const QFileInfo fi(localPath(url));
+    return fk::isLibraryFolder(toPath(fi.isDir() ? fi.absoluteFilePath() : fi.absolutePath()));
+}
+
+QString AppController::localFile(const QVariant& url) const {
+    return localPath(url);
 }
 
 AppController::JobSnapshot AppController::snapshotFor(const std::string& scanId,
@@ -885,6 +1259,8 @@ void AppController::importScans(const QVariantList& urls) {
         s.relPath = toStd(QFileInfo(path).fileName());
         s.expectedCount = settings_.value("expectedCount").toInt();
         s.autoCount = settings_.value("autoCount").toBool();
+        // UX-05: when it entered the library (sorting by added order); never its capture date
+        if (isLibrary()) s.library.addedAt = fk::isoDateTimeNowUtc();
         project_.scans.push_back(s);
         rt_[s.scanId].state = QStringLiteral("detecting");
         if (first.empty()) first = s.scanId;
@@ -3132,8 +3508,10 @@ void AppController::dropFiles(const QVariantList& urls) {
     for (const auto& u : urls) {
         const QString file = localPath(u);
         const QString lower = file.toLower();
-        if (lower.endsWith(QLatin1String(".fkproj"))) {
-            Q_EMIT openRequested(file); // FK-001: QML asks about unsaved changes first
+        if (lower.endsWith(QLatin1String(".fkproj")) ||
+            (QFileInfo(file).isDir() && fk::isLibraryFolder(toPath(file)))) {
+            Q_EMIT openRequested(
+                file); // FK-001: QML asks about unsaved changes first (UX-05: also a library)
             return;
         }
         bool isGraded = !(lower.endsWith(QLatin1String(".tif")) || lower.endsWith(QLatin1String(".tiff")));

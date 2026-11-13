@@ -17,6 +17,13 @@ Contract version: **1** · RFC-0011 · Applies to `app/` (Qt Quick) and any futu
   code is `needs_confirmation`/`needs_review`.
 - Generations: each async result carries `(itemId, purpose, generation)`; the UI applies it only if generation
   equals the latest requested for that key.
+- Libraries (UX-05, RFC-0018, U018): `newLibrary(parent, name)`, `openLibrary(folder)`,
+  `importProjectAsLibrary(project, parent, name)` (after `checkProjectImport`), `takeOverLibrary()` (only after
+  `libraryLockStale` was answered), `setLibraryMeta(id, {rating, pick, colorLabel, textLabels, manualOrder})`.
+  Creating, opening and importing replace the open project and go through the same unsaved-changes question as
+  New/Open (FK-001). An open library is the project the app edits (`isLibrary`, `libraryFolder`); saving writes the
+  catalog, the history and `library.json`; a library opened read-only (held by another instance, a later schema,
+  an unwritable folder) refuses to save and offers Save As.
 - Memory (FK-005, RFC-0014 §Memory budget): every cached image the UI holds (scan proxy, decoded strips of the
   view, composite preview, thumbnails, canvas images) is counted in one byte budget; what is not on screen may
   be dropped at any time and is rebuilt from the files when shown again. Jobs pass their estimated working

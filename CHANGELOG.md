@@ -3,6 +3,28 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.8.0-alpha.1 — U018: libraries — storage, history, restore, two instances, old projects imported as a copy (UX-05)
+- RFC-0018 accepted by the owner (2026-11-12, Q1–Q4 as proposed). A library is a normal folder
+  `<Name>.fklibrary/`: `catalog.fkproj` (the same project format), `library.json` (name, cover, folders, sort),
+  `catalog.fkproj.bak`, an hourly history in `backups/` (ten kept), a `library.lock` while an app writes it, and a
+  deletable `cache/`. Scans and graded files stay where they are.
+- File menu: New Library… (Documents unless another folder is chosen), Open Library…, Import Project into New
+  Library… — all through the unsaved-changes question. A library folder dropped on the window opens it.
+- Import of an old project is a copy: checked first (damaged, later version, name taken, disk space, missing
+  scans counted), written into a temporary folder, read back and compared, then moved into place; any failure
+  leaves nothing; the project file and its `.bak` are only read and still open. Exports keep relinking.
+- A second FrameKeeper opens a library read-only and says which computer and user have it; a lock not renewed for
+  3 minutes (or left by an ended process on the same computer) is taken over only after asking; a library taken
+  over elsewhere turns read-only here (Save As keeps the work as a project file).
+- A damaged catalog is restored from the most recently saved readable copy (`.bak` or `backups/`) after asking; the
+  damaged file is kept. A damaged `library.json` falls back to its `.bak` or is rebuilt from the catalog.
+- Prints and scans carry library data (rating, pick, colour and text labels, manual order, added date) — written
+  only when set; earlier versions keep it. Projects now write relative paths with `/` (Windows paths of earlier
+  versions still resolve on every system).
+- Recovery snapshots of a library are keyed by the library and reopen it.
+- Tests: `Library.*` 22 (core), `ApiContract` (library API), self-test ten "U018 …" checks (also `--scenario
+  library`). Notes: docs/release-notes/v0.8.0-alpha.1.md.
+
 ## Owner decisions of 2026-11-12 (no version change; released with the next version)
 - Licence: GPL-3.0-only (`LICENSE` is the FSF text; README, About, the Windows file properties and `licenses/`
   say so; ADR-0011). Versions up to 0.7.0-alpha.16 were MIT; copies obtained under MIT keep it.

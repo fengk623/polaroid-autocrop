@@ -8,6 +8,7 @@
 
 #include "fk/cache.hpp"
 #include "fk/composite.hpp"
+#include "fk/library.hpp"
 #include "fk/project.hpp"
 
 #include <QImage>
@@ -31,6 +32,8 @@ class AppController : public QObject {
     Q_PROPERTY(QString projectPath READ projectPath NOTIFY projectChanged)
     Q_PROPERTY(bool dirty READ dirty NOTIFY projectChanged)
     Q_PROPERTY(bool readOnly READ readOnly NOTIFY projectChanged)
+    Q_PROPERTY(bool isLibrary READ isLibrary NOTIFY projectChanged)
+    Q_PROPERTY(QString libraryFolder READ libraryFolder NOTIFY projectChanged)
     Q_PROPERTY(QObject* scans READ scansObj CONSTANT)
     Q_PROPERTY(QObject* items READ itemsObj CONSTANT)
     Q_PROPERTY(QObject* jobs READ jobsObj CONSTANT)
@@ -60,6 +63,9 @@ class AppController : public QObject {
     QString projectPath() const { return projectPath_; }
     bool dirty() const { return dirty_; }
     bool readOnly() const { return readOnly_; }
+    /// UX-05: a library (`<Name>.fklibrary/`) is open rather than a project file.
+    bool isLibrary() const { return !libraryFolder_.isEmpty(); }
+    QString libraryFolder() const { return libraryFolder_; }
     QObject* scansObj() { return scans_; }
     QObject* itemsObj() { return items_; }
     QObject* jobsObj() { return jobs_->model(); }
@@ -88,6 +94,37 @@ class AppController : public QObject {
     Q_INVOKABLE bool openProject(const QVariant& url);
     Q_INVOKABLE bool saveProject();
     Q_INVOKABLE bool saveProjectAs(const QVariant& url);
+    // ---- libraries (UX-05, U018, RFC-0018) ----
+    /// Q4: new libraries go into the user's Documents folder unless another one is chosen.
+    Q_INVOKABLE QString defaultLibraryParent() const;
+    /// The folder a library named `name` gets in `parentUrl`: {folder, folderName, free}.
+    Q_INVOKABLE QVariantMap libraryTarget(const QVariant& parentUrl, const QString& name) const;
+    /// Creates `<parent>/<name>.fklibrary` and opens it (read-write, locked).
+    Q_INVOKABLE bool newLibrary(const QVariant& parentUrl, const QString& name);
+    /// Opens a library folder: read-write with our lock, or read-only when another instance holds it (the
+    /// notice names who), when its lock is stale (libraryLockStale asks first) or when a later version wrote
+    /// it.
+    Q_INVOKABLE bool openLibrary(const QVariant& folderUrl);
+    /// Pre-check of "Import project into a new library": {ok, error, scans, prints, missingScans,
+    /// exportRecords, destination}.
+    Q_INVOKABLE QVariantMap checkProjectImport(const QVariant& projectUrl, const QVariant& parentUrl,
+                                               const QString& name) const;
+    /// Copies an old project into a new library (the project file is only read) and opens the library.
+    Q_INVOKABLE bool importProjectAsLibrary(const QVariant& projectUrl, const QVariant& parentUrl,
+                                            const QString& name);
+    /// The user agreed to take over the stale lock libraryLockStale asked about.
+    Q_INVOKABLE bool takeOverLibrary();
+    /// UX-05 (RFC-0018 §2): a print's or scan's library data — rating (0–5), pick ("none", "picked",
+    /// "rejected"), colorLabel ("none", "red", "yellow", "green", "blue", "purple"), textLabels, manualOrder.
+    /// Keys left out are unchanged; invalid values are refused (false).
+    Q_INVOKABLE bool setLibraryMeta(const QString& id, const QVariantMap& values);
+    Q_INVOKABLE QVariantMap libraryMeta(const QString& id) const;
+    /// The library's lock as this instance sees it: {present, ours, host, user, heartbeatAt}.
+    Q_INVOKABLE QVariantMap libraryLockInfo() const;
+    /// A folder holding a library (or a file inside one).
+    Q_INVOKABLE bool isLibraryPath(const QVariant& url) const;
+    /// The local path of a file: URL (dialogs give URLs).
+    Q_INVOKABLE QString localFile(const QVariant& url) const;
     // ---- data protection (FK-001, FK-008, RFC-0017) ----
     /// What replacing the open project would lose: {unsaved (dirty with content), jobs (running/queued
     /// count)}.
@@ -268,6 +305,9 @@ class AppController : public QObject {
     /// FK-011: the display profile changed (another monitor, another ICC): display images were converted
     /// again.
     void displayProfileChanged();
+    /// UX-05: the library was opened read-only because its lock looks abandoned; QML asks whether to take it
+    /// over (takeOverLibrary). Never taken silently.
+    void libraryLockStale(const QString& host, const QString& user, const QString& lastSeen);
 
   private:
     struct ScanRuntime {
@@ -390,6 +430,21 @@ class AppController : public QObject {
     /// project.
     std::map<std::string, std::vector<uint8_t>> knownIcc_;
     QTimer* recoveryTimer_ = nullptr;
+    // ---- library (UX-05, RFC-0018) ----
+    QString libraryFolder_; ///< empty: a project file (or nothing) is open
+    fk::LibraryManifest library_;
+    fk::LockOwner lockOwner_;     ///< this app session (one token for its whole life)
+    bool lockHeld_ = false;       ///< the open library's lock is ours
+    fk::LibraryLock staleLock_;   ///< the abandoned lock the user is being asked about
+    QTimer* lockTimer_ = nullptr; ///< heartbeat (kLibraryLockHeartbeatSeconds)
+    /// Releases our lock and forgets the open library (newProject does it before anything replaces it).
+    void closeLibrary();
+    /// Opens `folder`; `content` (a recovery snapshot) replaces the saved catalog, unsaved.
+    bool openLibraryAt(const QString& folder, std::optional<fk::Project> content = std::nullopt);
+    void refreshLibraryLock();
+    /// Recovery snapshots are keyed by the library id for a library (an imported library keeps the
+    /// project's id, so the project and the library would share a key) and by the project id otherwise.
+    std::string recoveryKey() const;
     QString recoveryDir() const;
     QString recoveryFileFor(const std::string& projectId) const;
     /// Takes over a loaded project (open, restore, recover): runtime state, settings, previews.

@@ -950,3 +950,26 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   English and Chinese. Licence: `LICENSE` is the FSF GPL-3.0 text (SHA-256 3972dc97…); README (both), About,
   Windows file properties, `licenses/README.md` (where the source of each version is), THIRD-PARTY-LICENSES, PRD,
   ADR-0011, acceptance matrix, mobile notes, reference audit, user guide.
+
+### 22:30–23:40 — U018 (UX-05): library storage
+- Scope from RFC-0018 (accepted) and PRD F16 A2/A4/A5/A6 (+A7 for the history and restore): core
+  `fk/library.hpp`, app integration (menus, dialogs, lock, restore, recovery), self-test. Home page (U019) and the
+  review workspace (U020) not in this unit.
+- Core first: 21 `Library.*` tests written with the code, all green on the first build; the full core suite 242.
+- App: New / Open / Import go through `win.replaceProject` (FK-001); `openProject` routes a library folder or a file
+  inside one to the library (its catalog never opens as a loose project); a dropped library folder opens it.
+  Recovery snapshots are keyed by the library id — an imported library keeps the project id (so its exports
+  relink), and a key by project id would have mixed the project's and the library's unsaved work.
+- Self-test `runLibrary` (10 checks) green on the first run in English and Chinese. While writing the "damaged
+  catalog" check: the RFC's fixed restore order (`.bak`, then the newest history entry) restores the *older* state
+  whenever the newest history entry is the last save (`.bak` is the save before it) [design error in my RFC] →
+  candidates ordered by their own save time, `.bak` first on ties; new test
+  `Library.TheMostRecentlySavedCopyIsOfferedFirst`; RFC §4 updated.
+- The "New library" dialog snapshot showed "This folder does not exist" — the sandbox account has no Documents
+  folder; a fresh real account can be the same → the default location is created when missing (only the system
+  Documents folder).
+- Disk: 2 GB free warning → removed my own old self-test outputs and benchmark corpora from the previous session's
+  scratchpad and the build folders of merged units (u027, u028): 18 GB free.
+- Results: core 243 passed; self-test (fixture, English) 257 passed, 0 failed, 0 skipped; `--scenario library`
+  English and Chinese 10 passed each; text and layout Chinese 1× and 2× 7 passed each (0 problems, the new dialog
+  included); docs checks, i18n (706 strings), format pass.

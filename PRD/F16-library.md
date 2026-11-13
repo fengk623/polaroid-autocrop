@@ -1,8 +1,8 @@
 # F16 — Libraries (UX-05)
 
-Status: **Proposed — waiting for the owner's review together with RFC-0018** · RFC: `rfc/0018-library.md` ·
-Units U018 (storage), U019 (home page), U020 (grid / single view, metadata, sort, ratings and labels) ·
-Tests: planned with each unit.
+Status: **Accepted** (owner, 2026-11-12, with RFC-0018) · RFC: `rfc/0018-library.md` ·
+Units U018 (storage, built in 0.8.0-alpha.1), U019 (home page), U020 (grid / single view, metadata, sort, ratings
+and labels) · Tests: `test_library` (`Library.*`), self-test "U018 …"; U019/U020 add theirs.
 
 ## Scope
 - Several libraries, each isolated (its own folder, catalog, backups, cache); a home page lists them with name,
@@ -21,8 +21,17 @@ Tests: planned with each unit.
 ## Acceptance
 - A1 A new user can: create a library → import → switch grid / single → filter and sort → edit a print (Edit
   workspace) → return to the same selection; reopening keeps ratings, labels and order. (self-test)
-- A2 Two libraries are isolated (no scan, rating or cache shared). (core + self-test)
+- A2 Two libraries are isolated (no scan, rating or cache shared). (`Library.TwoLibrariesShareNothing`)
 - A3 100 scans in the grid never decode all originals at once (virtualised; memory measured as in FK-005).
-- A4 Old `.fkproj`: migration copy, failure leaves nothing behind, original unchanged, backup kept. (core)
-- A5 Second app instance on the same library opens it read-only; a stale lock is taken over only after asking. (core)
-- A6 Deleting the cache only costs time: reopening rebuilds it and loses nothing. (core + self-test)
+- A4 Old `.fkproj`: migration copy, failure leaves nothing behind, original unchanged, backup kept.
+  (`Library.OldProjectsAreImportedAsACopyAndTheProjectIsNeverTouched`, `Library.AFailedImportLeavesNothingBehind`,
+  `Library.TheImportPreCheckRefusesWhatCannotBeCopiedSafely`; self-test "U018 an old project is imported …")
+- A5 Second app instance on the same library opens it read-only; a stale lock is taken over only after asking.
+  (`Library.ASecondInstanceFindsTheLockAndAStaleLockIsTakenOverOnlyWhenAsked`,
+  `Library.ALockThatChangedSinceTheUserWasAskedIsNotTakenOver`; self-test "U018 a library open in another
+  FrameKeeper …", "U018 an abandoned lock is taken over only after asking")
+- A6 Deleting the cache only costs time: reopening rebuilds it and loses nothing. (`Library.DeletingTheCacheOnlyCostsTime`)
+- A7 Saving keeps a `.bak` and an hourly history of ten; a damaged catalog is restored from the most recent
+  readable copy after asking, the damaged file kept. (`Library.BackupsRotateHourlyAndKeepTen`,
+  `Library.ADamagedCatalogIsRestoredFromBakThenTheNewestBackupAndKeptAside`,
+  `Library.TheMostRecentlySavedCopyIsOfferedFirst`; self-test "U018 a damaged catalog is restored …")

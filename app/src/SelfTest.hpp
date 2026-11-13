@@ -89,6 +89,12 @@ class SelfTest : public QObject {
     /// FK-012 (U026): a Linear DNG export given back (relink, drag and drop) is refused with guidance and
     /// never imported as a scan.
     void runFormats();
+    /// UX-05 (U018): libraries through the user's entry points — New Library (the replace guard), import into
+    /// it, ratings and labels saved and reopened, the lock released on close, a library dropped on the
+    /// window, a second instance (read-only, named), an abandoned lock taken over only after asking, a
+    /// damaged catalog restored with the damaged file kept, an old project imported as a copy (unchanged),
+    /// unsaved work recovered into the same library, Save As leaving the library as saved.
+    void runLibrary();
     /// U029 (UX-12): the full regression of docs/v1/FEATURE-FREEZE.md for the features no other section
     /// exercises — folder import, relocation, removing a scan, templates, reset and snap, review and exclude,
     /// navigation and view keys, zoom, overlays, compare, full screen, settings, About, typing guard. Checks

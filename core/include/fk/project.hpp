@@ -108,6 +108,26 @@ struct CompositeSettings {
     std::string lastOutputAt;
 };
 
+/// UX-05 (RFC-0018 §2): what a library keeps per print and per scan — rating, pick, labels, manual order and
+/// the dates the library sorts by. Written as the object `library` only when something is set (projects
+/// without it are unchanged); versions before 0.8 keep it verbatim. Values a later version adds (another
+/// colour label, say) are kept as read.
+struct LibraryMeta {
+    int rating = 0;                  ///< 0–5 stars
+    std::string pick = "none";       ///< "none", "picked", "rejected"
+    std::string colorLabel = "none"; ///< "none", "red", "yellow", "green", "blue", "purple"
+    std::vector<std::string> textLabels;
+    int64_t manualOrder = 0; ///< position in the manual order; 0 = not placed (sorts after placed ones)
+    std::string addedAt;     ///< when it entered the library (ISO-8601 UTC); never the capture date
+    std::string editedAt;    ///< last edit of the print (boundaries, relink, output)
+    int editCount = 0;
+    bool empty() const {
+        return rating == 0 && pick == "none" && colorLabel == "none" && textLabels.empty() &&
+               manualOrder == 0 && addedAt.empty() && editedAt.empty() && editCount == 0;
+    }
+    friend bool operator==(const LibraryMeta&, const LibraryMeta&) = default;
+};
+
 struct ItemRecord {
     std::string itemId;
     int index = 0;
@@ -128,6 +148,7 @@ struct ItemRecord {
     std::string finalExport;       ///< last full-print export path
     std::vector<std::string> undo; ///< serialized prior boundary states (bounded)
     std::vector<std::string> redo;
+    LibraryMeta library; ///< UX-05: rating, labels, order (RFC-0018 §2)
     /// FK-014: keys of this print that a later version wrote and this one does not read (a JSON object, or
     /// empty), written back unchanged so that opening and saving after a rollback loses nothing.
     std::string unknownJson;
@@ -150,6 +171,7 @@ struct ScanRecord {
     int proxyScale = 1;
     std::vector<std::string> warnings;
     std::vector<ItemRecord> items;
+    LibraryMeta library;  ///< UX-05: rating, labels, order of the scan itself (RFC-0018 §2)
     bool missing = false; ///< runtime only
     /// runtime only: a file is at the path but it is not the imported scan (FK-007); never read as the scan
     bool changed = false;

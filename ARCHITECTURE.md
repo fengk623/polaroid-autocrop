@@ -46,6 +46,7 @@ Files are under `core/src/` (implementation) and `core/include/fk/` (public head
 | relink | `relink.cpp`, `relink_assess.cpp` | matching, signatures, checks | RFC-0006 |
 | compositing | `composite.cpp`, `graded_profile.cpp` | composite, synthetic frame, graded profiles | RFC-0007, RFC-0008 |
 | project | `project.cpp` | project/sidecar/template model + JSON, export records | RFC-0009 |
+| library | `library.cpp` | `.fklibrary` folders: manifest, catalog, history, restore, lock, migration copy | RFC-0018 |
 | colour | `color.cpp` | profiles, transforms | RFC-0012 |
 | metadata | `metadata.cpp` | tag read/write policy, XMP, privacy presets | RFC-0013 |
 | cache | `cache.cpp` | in-memory budget ledger (a disk cache is planned, ADR-0006) | RFC-0014 |
@@ -82,8 +83,11 @@ Preview = proxy (+ Full tiles) displayed through the same `core/src/geometry.cpp
 Composite preview runs `compositeItem` on a proxy-backed `ImageSource` adaptor.
 
 ## 8. Project storage
-`docs/project-format.md` (built: `fk.project/1`, atomic save, backups, recovery snapshots). Library storage:
-RFC-0018, proposed, not built.
+`docs/project-format.md` (built: `fk.project/1`, atomic save, backups, recovery snapshots). Libraries
+(`<Name>.fklibrary/`, RFC-0018; built in U018): `fk/library.hpp` — manifest, catalog (an `fk.project/1`), hourly
+history, restore, lock for two app instances, migration copy of old projects; the app opens, saves, locks and
+recovers them (`AppController` library section). The home page (U019) and the library workspace (U020) are
+planned.
 
 ## 9. Platform adaptation
 In `app/src/` (no separate `platform/` folder): `Display.cpp` (macOS: sRGB display assumption; Windows: monitor
