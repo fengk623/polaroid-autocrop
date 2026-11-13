@@ -1024,3 +1024,10 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   the filter row would have been 30 px too wide with the "shown" count and the scan / folder chips → chips on a row
   of their own, the search field fills what is left, the count only on wide views; English and Chinese 9 passed,
   0 problems. Core suite 250 passed.
+- PR #34 CI round 1: the Windows release job's packaged self-test failed one check (only the count was in the log:
+  the packaged GUI program's lines go to the debugger) → the job log reproduced locally with the release workflow's
+  own scan (`fkfixture --seed 5`): its quarter-size copies have two prints each, 24 prints fit on a 1440×900
+  screen, so "only on-screen cells exist" could not hold [my check's precondition, not a defect]. The check now
+  shrinks the window to 1100×700 for the measurement and allows one decode per scan on screen plus the selected
+  one: seed 5 — 6 decoded of 12, 12 cells of 24; seed 3 — 4 of 12, 12 of 36. The Windows smoke step now sets
+  `QT_FORCE_STDERR_LOGGING=1`, so a failing check is named in the log.

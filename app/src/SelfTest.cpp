@@ -30,6 +30,7 @@
 #include <QQuickWindow>
 #include <QRectF>
 #include <QRegularExpression>
+#include <QSet>
 #include <QTextLayout>
 #include <QThread>
 #include <QTransform>
@@ -3813,7 +3814,19 @@ void SelfTest::runLibraryGrid() {
     snapshot(QStringLiteral("U020-grid"));
 
     // reopening: thumbnails from the library's cache, only the selected scan decoded; only cells on screen
-    // exist
+    // exist. The window is made small enough that the library is larger than the screen whatever the scan's
+    // print count (the release workflow's scan has two prints per quarter-size copy: 24 cells fit at
+    // 1440×900).
+    const QSize windowBefore = window_->size();
+    window_->resize(1100, 700);
+    auto cellScans = [&] {
+        QSet<QString> ids;
+        findItemIf([&](QQuickItem* i) {
+            if (i->objectName() == QLatin1String("libraryCell")) ids.insert(i->property("scanId").toString());
+            return false;
+        });
+        return static_cast<int>(ids.size());
+    };
     app_->newProject();
     int before = app_->previewDecodes();
     app_->openLibrary(folder);
@@ -3832,15 +3845,21 @@ void SelfTest::runLibraryGrid() {
     waitFor([] { return false; }, 1500);
     app_->waitIdle(300000);
     const int coldDecodes = app_->previewDecodes() - before;
-    check(QStringLiteral(
-              "U020 a library opens without decoding every scan: from its cache only the selected one, "
-              "without it only those on screen; only on-screen cells exist"),
-          cachedDecodes <= 1 && coldDecodes < 12 && cellCount > 0 && cellCount < prints,
-          QStringLiteral("decodes with cache %1, without %2 (of 12 scans); cells %3 of %4 prints")
-              .arg(cachedDecodes)
-              .arg(coldDecodes)
-              .arg(cellCount)
-              .arg(prints));
+    const int onScreenScans = cellScans();
+    window_->resize(windowBefore);
+    settle();
+    check(
+        QStringLiteral(
+            "U020 a library opens without decoding every scan: from its cache only the selected one, "
+            "without it only those on screen; only on-screen cells exist"),
+        cachedDecodes <= 1 && coldDecodes <= onScreenScans + 1 && coldDecodes < 12 && cellCount > 0 &&
+            cellCount < prints,
+        QStringLiteral("decodes with cache %1, without %2 (of 12 scans, %3 on screen); cells %4 of %5 prints")
+            .arg(cachedDecodes)
+            .arg(coldDecodes)
+            .arg(onScreenScans)
+            .arg(cellCount)
+            .arg(prints));
 
     // keys: stars, colour labels, pick / reject / unflag on the selected print
     const QString a = idAt(0), b = idAt(1), c = idAt(2), last = idAt(shown() - 1);
