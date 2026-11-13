@@ -31,7 +31,8 @@ DOCS = (
                                    "color-pipeline.md", "film-types.md", "mobile-portability.md",
                                    "HUMAN-VERIFICATION.md", "INSTALL.md")]
     + [ROOT / "docs" / "v1" / n for n in ("TRACEABILITY.md", "FORMAT-MATRIX.md", "FEATURE-FREEZE.md",
-                                          "REAL-SCAN-GT.md", "UNITS.md")]
+                                          "REAL-SCAN-GT.md", "UNITS.md", "COMPLETION.md", "REGRESSION.md",
+                                          "USER-GUIDE.zh-CN.md")]
 )
 PLANNED = re.compile(r"planned|not built|never built|not implemented|never existed|never implemented|removed|计划|未实现|不存在|尚未|已移除",
                      re.IGNORECASE)

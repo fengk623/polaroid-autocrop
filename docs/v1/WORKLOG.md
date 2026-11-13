@@ -880,3 +880,55 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
   `timeout`, prints the earlier release's output when it writes no report, and first runs that release from its
   own ZIP as a baseline. Both scripts now end with a notice annotation counting passed / failed / skipped checks,
   so a green run's result can be read back.
+
+### 13:10–13:35 — U029 (UX-12): user guide completed, 26-item summary, full regression
+- U029 after U028; version 0.7.0-alpha.16, not 1.0.0-rc.1 as first planned: the library (UX-05) waits for the
+  owner, and a release that lacks a planned feature is not a release candidate. Branch `unit/U029-guide`.
+- Full regression of `docs/v1/FEATURE-FREEZE.md`: mapping each of the 81 entries to the existing checks showed 28
+  entries with no automated check at all [gap] → self-test section `runFreezeRegression` (also
+  `--scenario freeze`), 22 checks named "FREEZE <ID> …", through the user's entry points (real key events for the
+  shortcuts; the controller's commands behind menu items and rail buttons). First run: 21 passed, 1 failed —
+  Ctrl+A selected 6 prints where my check expected 3: "Select All Prints" selects the whole project's prints
+  [my check's error] → expected the project's prints. Snap: a corner pulled 11.3 px inside snapped back to 0.04 px
+  from the detected edge; templates: the same 3 prints, source "template"; relocation: missing → found in the
+  chosen folder with its 3 prints.
+- `tests/freeze-regression.json` maps every entry to self-test checks, core tests, CI steps or a manual reason (3
+  entries: A07 window close, A12 reveal in the file manager, E12 needs a low-confidence print);
+  `tools/freeze-regression.py` checks the mapping in the docs job and the results after the app self-test on every
+  platform (macOS menu-bar shortcuts are skipped by design and counted apart). Three mapped names were built at run
+  time ("UX-10 the %1 folds …") and could not be found in the source → mapped to literal names instead.
+- `tools/check-guide.py` (docs job): the guide's shortcut table lacked Ctrl+W, Ctrl+Q and wrote "Ctrl+Alt+1 / 2 /
+  3 / 0" → completed, plus arrow-key nudges, number fields and edge strips; mutation (Ctrl+Shift+H removed from the
+  guide) caught. FEATURE-FREEZE A02 claimed projects open "as a migration copy (U003)" — never built [false
+  claim] → corrected. New `docs/v1/COMPLETION.md` (26 items: 23 done with automated verification, 2 partly, 1
+  blocked) and `docs/v1/REGRESSION.md`; guide §13 lists what is not built or not verified.
+- Results (Linux, fixture): self-test 245 passed, 0 failed, 0 skipped; freeze regression 75 passed, 3 by CI steps,
+  3 manual, 0 failed.
+- PR #29 CI round 1: core and app jobs green on all platforms; the release workflow's packaged self-tests failed on
+  macOS (arm64 and x86_64) and Windows with one check each: "FREEZE C07 reset to detected restores the detected
+  boundary" — the corner was 0.049 px from the detected one after the reset. Cause: the step before (H05) focused
+  a corner coordinate field and left it; the number field committed its displayed text, rounded to 0.1 px, which
+  moved the corner and marked the boundary edited — a real defect, also reachable by a user who only clicks into
+  the field and away (on Linux the same rounding was 0.001 px, inside the check's tolerance) [real defect]. New
+  check "FREEZE C04 a corner field focused and left without typing changes nothing": red first (260.6013 →
+  260.6000, source auto → manual), then the number field commits only when its text changed: green, and C07 0.000
+  px. 23 FREEZE checks.
+- PR #29 CI round 2 (number field fix): green on all platforms; packaged tests: Windows installer 29 passed, 0
+  failed, 0 skipped; macOS DMG 17 passed, 0 failed, 0 skipped.
+- Final regression on the owner's scans (same build): polaroid_92 first failed "FREEZE C13" — one print on the
+  scan, so ←/→ cannot step within it [my check's precondition] → split into "← / → step through the prints"
+  (skipped with the reason on single-print scans) and "Shift+← / → step through the scans"; the 8-bit scan does not
+  run the FK-010 16→8-bit checks, so the regression for scans other than the CI fixture runs with `--partial`
+  (checks a scan does not apply to are listed as not run, not failed; CI keeps the strict mode on the fixture).
+- img20260702_0005 (white frames on a white lid, 826 dpi): "FREEZE C06" failed — a corner pulled 8 px inside the
+  detected corner (11.31 px away) snapped back to 5.38 px from it (check: < 4 px). The check takes the detected
+  Outer as the paper edge; on white-on-white scans the detected Outer lies 2–18 px outside the paper by design
+  (REAL-SCAN-GT §U012; here the first print's detected corner is ≈ 18 px left of the measured one), so the pulled
+  corner is still outside the paper [premise of my check, not a regression: snapping is unchanged]. I tried a
+  second design (reference = where snapping the detected Outer lands) — it failed on polaroid_92 instead (snapping
+  the detected Outer moved it 9.5 px; from 8 px inside, 9.92 px) — snapping depends on where it starts on real
+  scans, so neither reference is the truth without ground truth → the first design is kept, with its premise
+  written next to it; the result is recorded in REGRESSION.md and as a known limitation in the guide (§4).
+- Final results: fixture English and Chinese 247 passed, 0 failed, 0 skipped each, regression 75 passed / 3 CI / 3
+  manual / 0 failed; polaroid_92 240 passed, 0 failed, 4 skipped, 1 not applicable, regression 0 failed;
+  img20260702_0005 238 passed, 1 failed (C06, above), 5 skipped, 1 not applicable.
