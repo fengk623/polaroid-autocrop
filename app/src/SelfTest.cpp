@@ -3511,7 +3511,7 @@ void SelfTest::runLibrary() {
     app_->newProject(); // what a crash looks like to the next session: the snapshot is still there
     QString snapFile;
     for (const QVariant& v : app_->recoverySnapshots())
-        if (v.toMap().value("projectPath").toString() == impCatalog)
+        if (QDir::cleanPath(v.toMap().value("projectPath").toString()) == QDir::cleanPath(impCatalog))
             snapFile = v.toMap().value("file").toString();
     const bool recovered = !snapFile.isEmpty() && app_->recoverSnapshot(snapFile);
     app_->waitIdle(300000);

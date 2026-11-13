@@ -965,7 +965,8 @@ bool AppController::openLibraryAt(const QString& folderIn, std::optional<fk::Pro
     const bool recovered = content.has_value();
     fk::Project p = recovered ? std::move(*content) : std::move(lib->catalog);
     p.name = lib->manifest.name; // the window shows the library's name
-    adoptProject(std::move(p), toQ(fk::pathToUtf8(fk::libraryCatalogPath(toPath(folder)))), false, recovered);
+    // Qt's form of the path ('/' on every system), like every other path the app shows or compares
+    adoptProject(std::move(p), QDir(folder).filePath(QStringLiteral("catalog.fkproj")), false, recovered);
     // adoptProject released the previous library (newProject); from here on this one is open
     libraryFolder_ = folder;
     library_ = lib->manifest;
