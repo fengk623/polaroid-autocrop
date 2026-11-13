@@ -320,6 +320,11 @@ QVariantMap AppController::settings() const {
     return settings_;
 }
 
+QVariant AppController::storedSetting(const QString& key) const {
+    qs_->sync();
+    return qs_->value(QStringLiteral("app/") + key);
+}
+
 namespace {
 /// FK-008: output parameters saved with the project (besides the typed ProjectSettings), so a reopened
 /// project produces the same outputs.

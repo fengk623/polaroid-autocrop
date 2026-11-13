@@ -38,6 +38,7 @@ Item {
         "detect": "M4 9 V4 H9 M15 4 H20 V9 M20 15 V20 H15 M9 20 H4 V15 M8 8 H16 V16 H8 Z",
         "chevronDown": "M6 9 L12 15 L18 9",
         "chevronRight": "M9 6 L15 12 L9 18",
+        "chevronUp": "M6 15 L12 9 L18 15",
         "chevronLeft": "M15 6 L9 12 L15 18",
         "close": "M6 6 L18 18 M18 6 L6 18",
         "settings": "M12 8.5 A3.5 3.5 0 1 0 12.01 8.5 M12 2.5 V5 M12 19 V21.5 M2.5 12 H5 M19 12 H21.5 M5.3 5.3 L7.1 7.1 M16.9 16.9 L18.7 18.7 M5.3 18.7 L7.1 16.9 M16.9 7.1 L18.7 5.3",

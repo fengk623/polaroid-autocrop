@@ -1,5 +1,5 @@
-// Top bar (40, centre column): ◧ · Import · Export · Relink │ tools │ canvas mode │ status (flex) │
-// Compare · Overlays │ zoom │ ◨  (ui-reference §4.1).
+// Top bar (40, centre column): Import · Export · Relink │ tools │ canvas mode │ status (flex) │
+// Compare · Overlays │ zoom (ui-reference §4.1). Panels fold with the edge strips (UX-10).
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic
@@ -18,8 +18,6 @@ Rectangle {
         anchors.rightMargin: Theme.padding - 6
         spacing: Theme.gap
 
-        ToolBtn { iconName: "foldLeft"; tip: qsTr("Show/Hide Left Rail"); shortcutText: cmd.mod + "⌥1"; onClicked: cmd.toggleLeft() }
-        Item { width: Theme.clusterGap - Theme.gap }
         ToolBtn { iconName: "import"; tip: qsTr("Import Scans…"); shortcutText: cmd.mod + "I"; onClicked: cmd.importScans() }
         ToolBtn {
             iconName: "export"; tip: qsTr("Export Image Areas…"); shortcutText: cmd.mod + "E"
@@ -119,8 +117,6 @@ Rectangle {
         }
         ToolBtn { iconName: "zoomOut"; tip: qsTr("Zoom Out"); shortcutText: cmd.mod + "−"; onClicked: canvas.zoomStep(-1) }
         ToolBtn { iconName: "zoomIn"; tip: qsTr("Zoom In"); shortcutText: cmd.mod + "="; onClicked: canvas.zoomStep(1) }
-        Item { width: Theme.clusterGap - Theme.gap }
-        ToolBtn { iconName: "foldRight"; tip: qsTr("Show/Hide Right Rail"); shortcutText: cmd.mod + "⌥2"; onClicked: cmd.toggleRight() }
     }
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.lineRegion }
 }

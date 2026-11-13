@@ -220,6 +220,9 @@ jobs:
           true
       - name: Self-test (offscreen, real controllers, snapshots)
         id: selftest
+        env:
+          # Windows: a GUI program's qInfo() goes to the debugger, not to the piped stderr; keep PASS/FAIL lines
+          QT_FORCE_STDERR_LOGGING: "1"
         run: |
           set -o pipefail
           build/app/bin/fkfixture --out build/selftest-scan.tif --dpi 300 --count 3 --seed 3 --bits 16

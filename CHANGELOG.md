@@ -3,6 +3,14 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.11 — U022: edge strips fold the panels; the filmstrip spans the window (UX-10)
+- The left rail, the right rail and the filmstrip each fold and unfold with an 8 px strip on the window edge outside
+  them; the strip stays put when folded, its chevron shows where the panel goes, it takes keyboard focus and its hit
+  area reaches 6 px over an empty neighbouring inset (never over a scroll bar). The filmstrip now spans the whole
+  window under both rails. The ◧ / ◨ buttons left the top bar; View menu items and Ctrl+Alt+1/2/3/0 (⌥⌘ on macOS)
+  stay; Reset Layout also shows every panel. Self-test `runLayout` (14 checks). Notes:
+  docs/release-notes/v0.7.0-alpha.11.md.
+
 ## 0.7.0-alpha.10 — U026: Linear DNG decoded independently; DNG given back refused with guidance (FK-012)
 - CI (Core, linux) decodes our Linear DNG export with LibRaw (rawpy, test-only, in a venv): its camera-space data
   equals the linearised 16-bit TIFF export of the same image area within 1 LSB (measured ≈ 0.3 LSB, gain

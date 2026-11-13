@@ -17,7 +17,7 @@
 | UX-07 | P1 | 回导修复、取消必需侧车 | U003、U004（主体）、U005、U006、U007 | `ExportRecords.*`（U003）；`RelinkV2.*` ×12（U004）；自检 U003 4 项、U004 9 项（替换 3 个已知问题）；场景 `relink` R1–R6 | U：图 14–15；R：R2/R4/R6 复现；U003：导出不再需要侧车；U004：改名无元数据→按画面列为候选、指定相片后自动选中；`_1` 后缀按文件名+画面匹配；新会话→指定相片新建对位，合成与整张相片逐像素一致 | 部分完成（U003 侧车可选；U004 证据模型与目标优先；U005 旋转与缩放确认并持久化；ICC U006、变更校验 U007；图 14 文件名空白待 Windows） |
 | UX-08 | P1 | 自然融合蒙版默认值 | U015 | 核心 `NaturalBlend.*`、`MaskChoice.*`、`DeltaE2000.*`；`fkcli maskeval`（真实扫描 7 张）；自检 `runMaskDefaults`；变异测试 | U：图 16–17 | 待合并（PR #17；100%/200% 目视待所有者确认） |
 | UX-09 | P2 | 数值拖动与双击输入 | U016 | 自检 `runScrubFields`（真实鼠标/键盘，1× 与 2×）；变异测试 | U：图 16–17 | 待合并（PR #18；真实触控板待验收） |
-| UX-10 | P2 | 边缘折叠条与全宽底部导航 | U022 | 计划 | U：图 18–24 | 未开始 |
+| UX-10 | P2 | 边缘折叠条与全宽底部导航 | U022 | 自检 `runLayout` 14 项（含准备）：胶片条全宽且左右栏/画布在其上方结束、折叠条在窗口三边；三面板分别折叠/展开（鼠标），折叠条不移动、画布变大并重新适合完整扫描件；命中区超出绘制宽度；三面板同时折叠；折叠后与改变窗口大小后单击仍选中指针下的相片；1100×700 / 1440×900 / 1920×1080 无重叠、顶栏不溢出；键盘（空格）；快捷键 Ctrl+Alt+1/2/3/0（macOS 跳过：原生菜单）；栏宽与折叠状态写入设置；重置布局；顶栏无折叠按钮。整套自检 2× 与中文运行 | U：图 18–24 | 待合并（PR #24；真实窗口高 DPI 外观待验收） |
 | UX-11 | P2 | 简化应用图标 | U023 | `tools/check-icons.py`（CI）：尺寸齐全、透明、无太阳；旧图标该检查失败 | U：第 8 项；U023：太阳已去掉，各尺寸单独绘制 | 待合并（PR #22；任务栏/Dock 图标缓存待真机确认） |
 | UX-12 | P1 | worklog、完成总结、使用指南 | U001 起每个 Unit；U029 定稿 | 文档检查（tools/check-docs.py） | WORKLOG 自 2026-10-30 起 | 进行中 |
 | FK-001 | P1 | 未保存工程切换保护 | U008 | 自检 FK-001 5 项 | S：修复前只有退出时确认；U008：新建/打开/最近/拖入/恢复/退出统一询问，取消与保存失败不丢失修改 | 已完成（自动验证；真实窗口待验收） |
@@ -49,6 +49,7 @@
 | FK-002 180° same-size graded file composited without rotation | 应用自检 known-issue | FK-002 | 合成使用确认的旋转 | 已转常规（U005）：5 项 FK-002 检查 | U005 |
 | FK-010 16→8-bit export still claims bit-identical pixels | 应用自检 known-issue | FK-010 | 提示依据真实输出计划 | 已转常规（U010）：“FK-010 16→8-bit export is not announced as bit-identical”“FK-010 8-bit export only with explicit consent” | U010 |
 | FK-011 MinIsWhite full-resolution display is inverted | 应用自检 known-issue（场景） | FK-011 | 预览与原始分辨率一致 | 已转常规（U025）：“FK-011 MinIsWhite 8/16-bit: Preview and Full show the same brightness” | U025 |
+| UX-06 the top bar is wider than its column at 1100×700 with both rails shown | 应用自检 known-issue（`runLayout`，U022 发现） | UX-06 | 窄窗口顶栏不溢出，眼睛→视图切换→缩放顺序正确 | 复现：两栏默认宽度时中列 528 px，顶栏需要约 770 px，叠加线/缩放按钮被右栏遮住（快捷键与视图菜单仍可用） | U021（计划） |
 
 ## Release 登记
 
