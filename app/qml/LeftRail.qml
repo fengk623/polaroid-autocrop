@@ -1,4 +1,4 @@
-// Left rail "Project": what and which (ui-reference §2.2): Project & Files · Scans · Detection ·
+// Left rail of Edit Photos (the workspace switch on top, U019): what and which (ui-reference §2.2): Project & Files · Scans · Detection ·
 // Templates · Batch · Jobs.
 import QtQuick
 import QtQuick.Layouts
@@ -17,14 +17,11 @@ Rectangle {
         Item {
             Layout.fillWidth: true
             implicitHeight: Theme.railHeader
-            Text {
+            // UX-05/06 (U019): the workspace switch where the "Project" title was (the requirement's place)
+            WorkspaceSwitch {
                 anchors.left: parent.left
                 anchors.leftMargin: 12
                 anchors.verticalCenter: parent.verticalCenter
-                text: qsTr("Project")
-                font.pixelSize: Theme.fontRailTitle
-                font.weight: Font.DemiBold
-                color: Theme.textPrimary
             }
         }
         Flickable {

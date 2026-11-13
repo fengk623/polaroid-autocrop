@@ -621,3 +621,54 @@ TEST(Library, DeletingTheCacheOnlyCostsTime) {
     EXPECT_EQ(projectToJson(again->catalog).size(), projectToJson(back->catalog).size());
     EXPECT_EQ(json::parse(catalog)["scans"], json::parse(slurp(libraryCatalogPath(lib->folder)))["scans"]);
 }
+
+// U019: the home page reads library.json only
+TEST(Library, TheHomePageReadsCountsAndTimesWithoutTheCatalog) {
+    TempDir t;
+    auto lib = createLibrary(t.path(), "Cards");
+    ASSERT_TRUE(lib.ok());
+    auto fresh = readLibraryManifest(lib->folder);
+    ASSERT_TRUE(fresh.ok());
+    EXPECT_EQ(fresh->scanCount, -1) << "not recorded before the first save";
+    lib->catalog.scans.push_back(scanOf(t / "a.tif", 13));
+    lib->catalog.scans.push_back(scanOf(t / "b.tif", 14));
+    lib->catalog.scans[1].items.pop_back();
+    ASSERT_TRUE(saveLibrary(*lib, kT0));
+    writeText(libraryCatalogPath(lib->folder), "{ damaged"); // the card does not need the catalog
+    auto m = readLibraryManifest(lib->folder);
+    ASSERT_TRUE(m.ok()) << m.error().message;
+    EXPECT_EQ(m->name, "Cards");
+    EXPECT_EQ(m->scanCount, 2);
+    EXPECT_EQ(m->printCount, 3);
+    EXPECT_EQ(m->modifiedAt, kT0);
+    const std::string bak = slurp(pathFromUtf8(pathToUtf8(libraryManifestPath(lib->folder)) + ".bak"));
+    ASSERT_TRUE(touchLibraryOpened(lib->folder, plus(kT0, 600)));
+    EXPECT_EQ(readLibraryManifest(lib->folder)->openedAt, plus(kT0, 600));
+    EXPECT_EQ(readLibraryManifest(lib->folder)->scanCount, 2) << "only openedAt changes";
+    EXPECT_EQ(slurp(pathFromUtf8(pathToUtf8(libraryManifestPath(lib->folder)) + ".bak")), bak)
+        << "opening does not rotate the manifest's backup";
+    EXPECT_EQ(slurp(libraryCatalogPath(lib->folder)), "{ damaged") << "the catalog is not touched";
+    writeText(libraryManifestPath(lib->folder), "{");
+    EXPECT_TRUE(readLibraryManifest(lib->folder).ok()) << "falls back to library.json.bak";
+    EXPECT_FALSE(readLibraryManifest(t / "gone.fklibrary").ok());
+}
+
+TEST(Library, RenamingKeepsTheFolderAndWaitsForAnotherInstance) {
+    TempDir t;
+    auto lib = createLibrary(t.path(), "Old name");
+    ASSERT_TRUE(lib.ok());
+    const LockOwner me = thisLockOwner();
+    ASSERT_TRUE(renameLibrary(lib->folder, "新名字", me));
+    EXPECT_EQ(readLibraryManifest(lib->folder)->name, "新名字");
+    EXPECT_TRUE(fs::exists(t / "Old name.fklibrary")) << "the folder keeps its name";
+    EXPECT_EQ(openLibrary(lib->folder)->manifest.name, "新名字");
+    LockOwner other = thisLockOwner();
+    other.host = "elsewhere";
+    ASSERT_EQ(acquireLibraryLock(lib->folder, other)->state, LockState::acquired);
+    auto r = renameLibrary(lib->folder, "Third", me);
+    ASSERT_FALSE(r.ok());
+    EXPECT_EQ(r.error().code, Errc::conflict);
+    EXPECT_EQ(readLibraryManifest(lib->folder)->name, "新名字");
+    ASSERT_TRUE(renameLibrary(lib->folder, "Third", other)) << "the instance that holds it may rename";
+    EXPECT_EQ(readLibraryManifest(lib->folder)->name, "Third");
+}

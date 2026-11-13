@@ -90,8 +90,9 @@ int schemaNumber(const std::string& schema, const std::string& prefix) {
 
 // ---- manifest
 // -----------------------------------------------------------------------------------------------
-const std::vector<std::string> kManifestKeys = {"schema", "libraryId", "name",     "cover",      "sources",
-                                                "sort",   "createdAt", "openedAt", "modifiedAt", "app"};
+const std::vector<std::string> kManifestKeys = {"schema",     "libraryId", "name",      "cover",
+                                                "sources",    "sort",      "createdAt", "openedAt",
+                                                "modifiedAt", "counts",    "app"};
 
 std::string manifestToJson(const LibraryManifest& m) {
     json j;
@@ -113,6 +114,7 @@ std::string manifestToJson(const LibraryManifest& m) {
     j["createdAt"] = m.createdAt;
     j["openedAt"] = m.openedAt;
     j["modifiedAt"] = m.modifiedAt;
+    if (m.scanCount >= 0) j["counts"] = {{"scans", m.scanCount}, {"prints", m.printCount}};
     j["app"] = {{"name", product::kName}, {"version", product::kVersion}};
     if (!m.unknownJson.empty()) {
         try {
@@ -147,6 +149,11 @@ Result<LibraryManifest> manifestFromJson(const std::string& text, OpenMode* mode
         m.createdAt = j.value("createdAt", "");
         m.openedAt = j.value("openedAt", "");
         m.modifiedAt = j.value("modifiedAt", "");
+        if (j.contains("counts") && j["counts"].is_object()) {
+            const json sc = j["counts"].value("scans", json(-1)), pc = j["counts"].value("prints", json(-1));
+            m.scanCount = sc.is_number_integer() ? sc.get<int>() : -1;
+            m.printCount = pc.is_number_integer() ? pc.get<int>() : -1;
+        }
         if (j.contains("app") && j["app"].is_object() && j["app"].contains("version") &&
             j["app"]["version"].is_string())
             m.savedBy = j["app"]["version"].get<std::string>();
@@ -530,12 +537,57 @@ Status saveLibrary(Library& lib, const std::string& nowUtc) {
         lib.manifest.cover.clear();
     for (auto& s : lib.manifest.sources)
         if (auto rel = genericRelative(pathFromUtf8(s.path), lib.folder); !rel.empty()) s.relPath = rel;
+    lib.manifest.scanCount = static_cast<int>(lib.catalog.scans.size());
+    lib.manifest.printCount = 0;
+    for (const auto& sc : lib.catalog.scans)
+        lib.manifest.printCount += static_cast<int>(sc.items.size());
     LibraryManifest m = lib.manifest;
     m.modifiedAt = t;
     FK_TRY(writeFileAtomic(libraryManifestPath(lib.folder), manifestToJson(m), true));
     lib.manifest.modifiedAt = t;
     lib.manifest.savedBy = product::kVersion;
     return {};
+}
+
+// ---- home page
+// ----------------------------------------------------------------------------------------------
+Result<LibraryManifest> readLibraryManifest(const fs::path& folder) {
+    std::error_code ec;
+    if (!fs::is_directory(folder, ec))
+        return makeError(Errc::not_found, "Library not found", pathToUtf8(folder));
+    auto m = readManifest(libraryManifestPath(folder), nullptr);
+    if (m) return m;
+    fs::path bak = libraryManifestPath(folder);
+    bak += ".bak";
+    auto b = readManifest(bak, nullptr);
+    if (b) return b;
+    return m.error();
+}
+
+Status touchLibraryOpened(const fs::path& folder, const std::string& nowUtc) {
+    auto text = readTextFile(libraryManifestPath(folder));
+    if (!text) return text.error();
+    OpenMode mode = OpenMode::read_write;
+    auto m = manifestFromJson(*text, &mode);
+    if (!m) return m.error();
+    if (mode == OpenMode::read_only) return {}; // a later version's file is never rewritten
+    m->openedAt = now(nowUtc);
+    return writeFileAtomic(libraryManifestPath(folder), manifestToJson(*m), false);
+}
+
+Status renameLibrary(const fs::path& folder, const std::string& name, const LockOwner& me) {
+    const LibraryLock l = readLibraryLock(folder, me);
+    if (l.present && !l.ours && !l.stale)
+        return makeError(Errc::conflict, "The library is open in another FrameKeeper", l.owner.host);
+    auto text = readTextFile(libraryManifestPath(folder));
+    if (!text) return text.error();
+    OpenMode mode = OpenMode::read_write;
+    auto m = manifestFromJson(*text, &mode);
+    if (!m) return m.error();
+    if (mode == OpenMode::read_only)
+        return makeError(Errc::version_too_new, "The library was saved by a newer version");
+    m->name = name;
+    return writeFileAtomic(libraryManifestPath(folder), manifestToJson(*m), true);
 }
 
 // ---- backups and restore

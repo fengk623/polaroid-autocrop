@@ -316,7 +316,8 @@ void AppController::loadSettings() {
                                {"showFilmstrip", true},
                                {"rightTab", 0},
                                {"recentProjects", QStringList{}},
-                               {"recentLibraries", QStringList{}}}; // UX-05: library folders, newest first
+                               {"recentLibraries", QStringList{}}, // UX-05: library folders, newest first
+                               {"workspace", "library"}}; // UX-05/06: "library" (home, U019) or "edit"
     settings_.clear();
     for (auto it = defaults.begin(); it != defaults.end(); ++it) {
         // INI and registry storage return text ("true", "4"): keep the default's type, so QML compares and
@@ -843,7 +844,9 @@ bool AppController::saveProject() {
         library_ = lib.manifest;
         dirty_ = false;
         discardCurrentRecovery();
+        writeLibraryCover();
         Q_EMIT projectChanged();
+        Q_EMIT librariesChanged();
         return true;
     }
     if (projectPath_.isEmpty()) return false; // QML asks for a path first
@@ -904,10 +907,12 @@ bool AppController::saveProjectAs(const QVariant& url) {
 void AppController::closeLibrary() {
     if (lockTimer_) lockTimer_->stop();
     if (lockHeld_ && !libraryFolder_.isEmpty()) fk::releaseLibraryLock(toPath(libraryFolder_), lockOwner_);
+    const bool was = !libraryFolder_.isEmpty();
     lockHeld_ = false;
     libraryFolder_.clear();
     library_ = {};
     staleLock_ = {};
+    if (was) Q_EMIT librariesChanged();
 }
 
 std::string AppController::recoveryKey() const {
@@ -990,6 +995,8 @@ bool AppController::openLibraryAt(const QString& folderIn, std::optional<fk::Pro
         } else if (a->state == fk::LockState::acquired) {
             lockHeld_ = true;
             lockTimer_->start();
+            // U019: the home page shows when each library was last opened
+            if (fk::touchLibraryOpened(toPath(folder)).ok()) library_.openedAt = fk::isoDateTimeNowUtc();
         } else if (a->state == fk::LockState::held) {
             readOnly = true;
             notify(l.readable
@@ -1026,6 +1033,7 @@ bool AppController::openLibraryAt(const QString& folderIn, std::optional<fk::Pro
                   "Unsaved Work…"),
                QStringLiteral("warning"));
     Q_EMIT projectChanged();
+    Q_EMIT librariesChanged();
     return true;
 }
 
@@ -1173,6 +1181,103 @@ QVariantMap AppController::libraryLockInfo() const {
     return {{"present", l.present},      {"ours", l.ours},
             {"stale", l.stale},          {"host", toQ(l.owner.host)},
             {"user", toQ(l.owner.user)}, {"heartbeatAt", toQ(l.heartbeatAt)}};
+}
+
+void AppController::writeLibraryCover() {
+    if (!isLibrary() || !lockHeld_ || readOnly_) return;
+    // the chosen cover, else the first print that is not excluded
+    std::string scanId, itemId;
+    for (const auto& s : project_.scans)
+        for (const auto& it : s.items)
+            if (scanId.empty() && (library_.cover.empty() ? !it.excluded : it.itemId == library_.cover)) {
+                scanId = s.scanId;
+                itemId = it.itemId;
+            }
+    if (scanId.empty()) return;
+    auto r = rt_.find(scanId);
+    if (r == rt_.end()) return;
+    auto t = r->second.itemThumbs.find(itemId);
+    if (t == r->second.itemThumbs.end() || t->second.isNull())
+        return; // not shown yet: the next save writes it
+    const QString dir = toQ(fk::pathToUtf8(fk::libraryCacheDir(toPath(libraryFolder_))));
+    QDir().mkpath(dir);
+    const QString tmp = QDir(dir).filePath(QStringLiteral("cover.jpg.tmp"));
+    if (t->second.save(tmp, "JPG", 88)) {
+        QFile::remove(QDir(dir).filePath(QStringLiteral("cover.jpg")));
+        QFile::rename(tmp, QDir(dir).filePath(QStringLiteral("cover.jpg")));
+    }
+}
+
+void AppController::refreshHome() {
+    writeLibraryCover();
+    Q_EMIT librariesChanged();
+}
+
+QVariantList AppController::libraryCards() const {
+    QVariantList out;
+    auto when = [](const std::string& iso) {
+        const qint64 t = fk::isoUtcToEpoch(iso);
+        return t < 0
+                   ? QString()
+                   : QLocale().toString(QDateTime::fromSecsSinceEpoch(t).toLocalTime(), QLocale::ShortFormat);
+    };
+    for (const QString& folder : settings_.value("recentLibraries").toStringList()) {
+        const auto path = toPath(folder);
+        const bool exists = QFileInfo(folder).isDir();
+        auto m = exists ? fk::readLibraryManifest(path) : fk::Result<fk::LibraryManifest>(fk::Error{});
+        QString name = m ? toQ(m->name) : QFileInfo(folder).completeBaseName();
+        const QString coverFile = toQ(fk::pathToUtf8(fk::libraryCacheDir(path) / "cover.jpg"));
+        const QFileInfo cover(coverFile);
+        const bool current = folder == libraryFolder_;
+        if (current) name = toQ(library_.name); // renamed or not saved yet
+        fk::LibraryLock l = exists ? fk::readLibraryLock(path, lockOwner_) : fk::LibraryLock{};
+        out << QVariantMap{
+            {"folder", folder},
+            {"name", name},
+            {"exists", exists},
+            {"readable", m.ok()},
+            {"cover", cover.exists() ? QUrl::fromLocalFile(coverFile).toString() + QStringLiteral("?") +
+                                           QString::number(cover.lastModified().toMSecsSinceEpoch())
+                                     : QString()},
+            {"scans", current ? static_cast<int>(project_.scans.size()) : (m ? m->scanCount : -1)},
+            {"prints", current ? counts().value("prints").toInt() : (m ? m->printCount : -1)},
+            {"opened", m ? when(current ? library_.openedAt : m->openedAt) : QString()},
+            {"modified", m ? when(current ? library_.modifiedAt : m->modifiedAt) : QString()},
+            {"current", current},
+            {"inUse", l.present && !l.ours && !l.stale},
+            {"readOnly", current && readOnly_}};
+    }
+    return out;
+}
+
+bool AppController::renameLibrary(const QVariant& folderUrl, const QString& nameIn) {
+    const QString folder = QDir::cleanPath(QFileInfo(localPath(folderUrl)).absoluteFilePath());
+    const QString name = nameIn.trimmed();
+    if (name.isEmpty()) return false;
+    if (folder == libraryFolder_ && readOnly_) {
+        notify(tr("This library is read-only here; it cannot be renamed."), QStringLiteral("warning"));
+        return false;
+    }
+    const auto st = fk::renameLibrary(toPath(folder), toStd(name), lockOwner_);
+    if (!st.ok()) {
+        notify(tr("The library was not renamed: %1").arg(errText(st.error())), QStringLiteral("error"));
+        return false;
+    }
+    if (folder == libraryFolder_) {
+        library_.name = toStd(name);
+        project_.name = library_.name; // the window title; the catalog takes it at the next save
+        Q_EMIT projectChanged();
+    }
+    Q_EMIT librariesChanged();
+    return true;
+}
+
+void AppController::forgetLibrary(const QVariant& folderUrl) {
+    const QString folder = QDir::cleanPath(QFileInfo(localPath(folderUrl)).absoluteFilePath());
+    QStringList recent = settings_.value("recentLibraries").toStringList();
+    recent.removeAll(folder);
+    setSetting(QStringLiteral("recentLibraries"), recent);
+    Q_EMIT librariesChanged();
 }
 
 bool AppController::isLibraryPath(const QVariant& url) const {

@@ -191,6 +191,10 @@ struct MigrateOptions { std::string failAt; };                             // te
 Result<Library> migrateProjectToLibrary(const path& project, const path& parent, const std::string& name,
                                         const MigrateOptions& = {});
 int64_t isoUtcToEpoch(const std::string&); std::string epochToIsoUtc(int64_t);
+// home page (U019): library.json alone; counts written by saveLibrary (LibraryManifest::scanCount/printCount, −1 = unknown)
+Result<LibraryManifest> readLibraryManifest(const path& folder);
+Status touchLibraryOpened(const path& folder, const std::string& nowUtc = {});
+Status renameLibrary(const path& folder, const std::string& name, const LockOwner& me); // conflict: held elsewhere
 ```
 Constants: `kLibrarySchemaVersion = 1`, `kLibraryBackupsKept = 10`, `kLibraryBackupIntervalSeconds = 3600`,
 `kLibraryLockHeartbeatSeconds = 60`, `kLibraryLockStaleSeconds = 180`. JSON schemas `fk.library/1`, `fk.lock/1`.
@@ -237,6 +241,7 @@ void fk_free(void*);
 | 0.7.0-alpha.4 | `quarterTurnMatrix`, `quarterTurnSize`, `ScanRecord::rotation`, `rotateScanView`, `exportTurns` (UX-04). |
 | 0.7.0-alpha.5 | `MaskChoice`, `naturalBlend`, `resolveMask`, `edgeChange`, `CompositeSettings::mask`/`maskSet`, `deltaE2000` (UX-08). |
 | 0.7.0-alpha.7 | `CacheLedger`, `defaultCacheBudget`, `systemMemory`, `TiffSource::cachedBytes` (FK-005). |
+| 0.8.0-alpha.2 | `readLibraryManifest`, `touchLibraryOpened`, `renameLibrary`, `LibraryManifest::scanCount`/`printCount` (U019). Additive. |
 | 0.8.0-alpha.1 | `fk/library.hpp` (§7a): libraries — create/open/save, history, restore, lock, migration copy; `LibraryMeta` on `ItemRecord`/`ScanRecord` (UX-05, U018). Additive. |
 | 0.7.0-alpha.15 | `compareVersions`, `Project::savedBy`, `unknownJson` on `ProjectSettings`, `ScanRecord`, `ItemRecord`, `Sidecar` (FK-014). Additive. |
 | 0.7.0-alpha.14 | Spec corrected to the headers (FK-013): `openTiff` returns `TiffSource`, `findMatch` / `checkEdited` signatures, `makeTemplate`, `fingerprintFile`, `boundingRect` clamp, `nextFreeVersionPath` version out; disk cache, job queue, capabilities and the C ABI marked planned. No code change. |

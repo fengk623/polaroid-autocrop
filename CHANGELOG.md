@@ -3,6 +3,20 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.8.0-alpha.2 — U019: the Library workspace and its home page (UX-05)
+- Two workspaces at the top left, where "Project" was: **Library** and **Edit Photos** (keys G and D). A fresh start
+  opens the Library; the last workspace is remembered. Editing keys (V, H, O, I, 1–4, Z, X, arrows, Shift tap) act
+  only in Edit Photos.
+- Home page: one card per library opened before — cover (the cover print's thumbnail, kept in the library's cache
+  when it is saved), name, scan and print counts (recorded in `library.json` at each save, so a card never reads
+  the catalog), last opened and modified; marks for open, read-only, in use elsewhere and missing. New, Open, Import
+  project; double-click enters (Edit Photos until the library grid of U020); Rename (the name only — the folder
+  keeps its name; refused while another instance writes the library), Show in Finder / Explorer, Remove from List
+  (the folder stays).
+- Tests: `Library.TheHomePageReadsCountsAndTimesWithoutTheCatalog`, `Library.RenamingKeepsTheFolderAndWaitsFor…`;
+  seven "U019 …" self-test checks with real mouse clicks and keys; the home page in the FK-009 text checks. Notes:
+  docs/release-notes/v0.8.0-alpha.2.md.
+
 ## 0.8.0-alpha.1 — U018: libraries — storage, history, restore, two instances, old projects imported as a copy (UX-05)
 - RFC-0018 accepted by the owner (2026-11-12, Q1–Q4 as proposed). A library is a normal folder
   `<Name>.fklibrary/`: `catalog.fkproj` (the same project format), `library.json` (name, cover, folders, sort),

@@ -95,6 +95,12 @@ class SelfTest : public QObject {
     /// damaged catalog restored with the damaged file kept, an old project imported as a copy (unchanged),
     /// unsaved work recovered into the same library, Save As leaving the library as saved.
     void runLibrary();
+    /// UX-05 (U019): the Library workspace and its home page — a fresh start opens it, New Library from the
+    /// home page (mouse), cards with cover, counts and times, double-click enters, rename keeps the folder,
+    /// Remove from List keeps the folder, a missing folder is shown as missing, G / D switch workspaces,
+    /// editing keys idle in the Library workspace.
+    void runHome();
+    QString defaultWorkspace_; ///< the workspace of a fresh start, before the self-test chose Edit Photos
     /// U029 (UX-12): the full regression of docs/v1/FEATURE-FREEZE.md for the features no other section
     /// exercises — folder import, relocation, removing a scan, templates, reset and snap, review and exclude,
     /// navigation and view keys, zoom, overlays, compare, full screen, settings, About, typing guard. Checks

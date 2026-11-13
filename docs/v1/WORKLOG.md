@@ -973,3 +973,18 @@ Status words: done · failed · blocked · not started · hypothesis (not yet ve
 - Results: core 243 passed; self-test (fixture, English) 257 passed, 0 failed, 0 skipped; `--scenario library`
   English and Chinese 10 passed each; text and layout Chinese 1× and 2× 7 passed each (0 problems, the new dialog
   included); docs checks, i18n (706 strings), format pass.
+
+### 23:40–00:20 — U019 (UX-05): the Library workspace and its home page
+- PR #32 (U018) opened; #30 and #31 green on all platforms.
+- The home page needs a place: the two-workspace switch (UX-06 part 2) is built here — at the top of the left rail
+  where "Project" was (the requirement's place), G / D, a fresh start opens the Library; editing single-key
+  shortcuts and the Shift tap only act in Edit Photos; notices show in the Library workspace too.
+- Cards read `library.json` only: the counts are recorded at each save (`counts`), `openedAt` is written when this
+  instance takes the lock, the cover is the cover print's thumbnail written into `cache/` at save. Rename changes the
+  name, not the folder (paths elsewhere stay valid), refused while another instance holds the lock.
+- Core: 2 new `Library.*` tests (24), contract signatures. Self-test: 7 "U019 …" checks with real clicks (New Library
+  button, Create, double-click on a card) and real keys (G, D, 3); the home page joins the FK-009 text checks.
+  First run all green; the snapshot showed the card's "⋯" button nearly invisible on the cover → moved to the card's
+  lower right corner.
+- Results (Linux): `--scenario library` 19 passed; full self-test (fixture, English) 267 passed, 0 failed, 0
+  skipped; docs, i18n (736), guide (53 shortcuts), format checks pass.

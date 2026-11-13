@@ -19,6 +19,10 @@ ApplicationWindow {
 
     readonly property bool isMac: App.platform === "macos"
     readonly property bool typing: activeFocusItem !== null && activeFocusItem.hasOwnProperty("cursorPosition")
+    // UX-05/06 (U019): "library" (home page) or "edit" (the canvas); remembered between sessions
+    readonly property string workspace: App.settings.workspace === "library" ? "library" : "edit"
+    // single-key editing shortcuts only act where their canvas is shown
+    readonly property bool editKeys: !typing && workspace === "edit"
 
     Binding {
         target: Theme
@@ -40,6 +44,14 @@ ApplicationWindow {
         function newLibrary() { libraryDialog.openNew() }
         function openLibrary() { libraryOpenDialog.open() }
         function importProjectAsLibrary() { libraryImportDialog.open() }
+        // U019: double-click on the home page; the open library is entered without asking
+        function enterLibrary(folder) {
+            if (App.isLibrary && App.libraryFolder === folder) App.setSetting("workspace", "edit")
+            else win.replaceProject("enterLibrary", folder)
+        }
+        function renameLibrary(folder, name) {
+            renameDialog.folder = folder; renameDialog.text = name; renameDialog.open()
+        }
         function recoverWork() {
             const snaps = App.recoverySnapshots()
             if (snaps.length) recoveryDialog.show(snaps)
@@ -106,24 +118,27 @@ ApplicationWindow {
         }
     }
     // ---------------------------------------------------------------- single-key shortcuts (typing guard)
-    Shortcut { sequence: "V"; enabled: !win.typing; onActivated: canvasArea.canvas.tool = "select" }
-    Shortcut { sequence: "H"; enabled: !win.typing; onActivated: canvasArea.canvas.tool = "hand" }
-    Shortcut { sequence: "O"; enabled: !win.typing; onActivated: canvasArea.canvas.tool = "outer" }
-    Shortcut { sequence: "I"; enabled: !win.typing; onActivated: canvasArea.canvas.tool = "inner" }
-    Shortcut { sequence: "1"; enabled: !win.typing; onActivated: canvasArea.canvas.mode = "scan" }
-    Shortcut { sequence: "2"; enabled: !win.typing; onActivated: canvasArea.canvas.mode = "print" }
-    Shortcut { sequence: "3"; enabled: !win.typing; onActivated: canvasArea.canvas.mode = "image" }
-    Shortcut { sequence: "4"; enabled: !win.typing; onActivated: canvasArea.canvas.mode = "composite" }
-    Shortcut { sequence: "Z"; enabled: !win.typing; onActivated: canvasArea.canvas.toggleFit() }
-    Shortcut { sequence: "X"; enabled: !win.typing; onActivated: App.toggleExcludedSelection() }
-    Shortcut { sequence: "Y"; enabled: !win.typing && canvasArea.canvas.mode === "composite"; onActivated: canvasArea.canvas.compare = !canvasArea.canvas.compare }
-    Shortcut { sequence: "\\"; enabled: !win.typing && canvasArea.canvas.mode === "composite"; onActivated: canvasArea.canvas.showOriginal = !canvasArea.canvas.showOriginal }
-    Shortcut { sequence: "Left"; enabled: !win.typing && !canvasArea.canvas.handleActive; onActivated: App.stepItem(-1) }
-    Shortcut { sequence: "Right"; enabled: !win.typing && !canvasArea.canvas.handleActive; onActivated: App.stepItem(1) }
+    Shortcut { sequence: "V"; enabled: win.editKeys; onActivated: canvasArea.canvas.tool = "select" }
+    Shortcut { sequence: "H"; enabled: win.editKeys; onActivated: canvasArea.canvas.tool = "hand" }
+    Shortcut { sequence: "O"; enabled: win.editKeys; onActivated: canvasArea.canvas.tool = "outer" }
+    Shortcut { sequence: "I"; enabled: win.editKeys; onActivated: canvasArea.canvas.tool = "inner" }
+    Shortcut { sequence: "1"; enabled: win.editKeys; onActivated: canvasArea.canvas.mode = "scan" }
+    Shortcut { sequence: "2"; enabled: win.editKeys; onActivated: canvasArea.canvas.mode = "print" }
+    Shortcut { sequence: "3"; enabled: win.editKeys; onActivated: canvasArea.canvas.mode = "image" }
+    Shortcut { sequence: "4"; enabled: win.editKeys; onActivated: canvasArea.canvas.mode = "composite" }
+    Shortcut { sequence: "Z"; enabled: win.editKeys; onActivated: canvasArea.canvas.toggleFit() }
+    Shortcut { sequence: "X"; enabled: win.editKeys; onActivated: App.toggleExcludedSelection() }
+    Shortcut { sequence: "Y"; enabled: win.editKeys && canvasArea.canvas.mode === "composite"; onActivated: canvasArea.canvas.compare = !canvasArea.canvas.compare }
+    Shortcut { sequence: "\\"; enabled: win.editKeys && canvasArea.canvas.mode === "composite"; onActivated: canvasArea.canvas.showOriginal = !canvasArea.canvas.showOriginal }
+    Shortcut { sequence: "Left"; enabled: win.editKeys && !canvasArea.canvas.handleActive; onActivated: App.stepItem(-1) }
+    Shortcut { sequence: "Right"; enabled: win.editKeys && !canvasArea.canvas.handleActive; onActivated: App.stepItem(1) }
     // a selected handle owns the arrows (Shift = 10 px nudge), also with Shift (UX-03)
-    Shortcut { sequence: "Shift+Left"; enabled: !win.typing && !canvasArea.canvas.handleActive; onActivated: App.stepScan(-1) }
-    Shortcut { sequence: "Shift+Right"; enabled: !win.typing && !canvasArea.canvas.handleActive; onActivated: App.stepScan(1) }
-    Shortcut { sequence: "Escape"; enabled: !win.typing; onActivated: canvasArea.canvas.tool = "select" }
+    Shortcut { sequence: "Shift+Left"; enabled: win.editKeys && !canvasArea.canvas.handleActive; onActivated: App.stepScan(-1) }
+    Shortcut { sequence: "Shift+Right"; enabled: win.editKeys && !canvasArea.canvas.handleActive; onActivated: App.stepScan(1) }
+    Shortcut { sequence: "Escape"; enabled: win.editKeys; onActivated: canvasArea.canvas.tool = "select" }
+    // UX-05/06 (U019): G = Library, D = Edit Photos (as in Lightroom)
+    Shortcut { sequence: "G"; enabled: !win.typing; onActivated: App.setSetting("workspace", "library") }
+    Shortcut { sequence: "D"; enabled: !win.typing; onActivated: App.setSetting("workspace", "edit") }
     // UX-03: a lone tap of Shift switches the edited boundary (Outer ↔ Inner). Holding Shift only constrains a
     // drag; Shift+click, Shift+arrows, Shift+wheel and Shift shortcuts never switch (ShiftTap). Not while typing,
     // not with a dialog or menu open, never mid-drag (the canvas refuses).
@@ -131,7 +146,7 @@ ApplicationWindow {
         id: shiftTap
         objectName: "shiftTap"
         window: win
-        enabled: App.settings.shiftSwitchesBoundary === true
+        enabled: App.settings.shiftSwitchesBoundary === true && win.workspace === "edit"
         onTapped: win.switchBoundary(true)
     }
     function inPopup(item) {
@@ -182,9 +197,40 @@ ApplicationWindow {
     // UX-10 (ui-reference §4.1): left rail · centre column (top bar, canvas) · right rail above a filmstrip that
     // spans the whole window; each panel folds with a strip on the window edge outside it (also View menu and
     // shortcuts). The canvas refits when its size changes at fit.
-    ColumnLayout {
+    // UX-05 (U019): the Library workspace — libraries on the left, the home page in the middle
+    RowLayout {
+        id: libraryWorkspace
+        objectName: "libraryWorkspace"
         anchors.fill: parent
         spacing: 0
+        visible: win.workspace === "library"
+        LibraryRail {
+            objectName: "libraryRail"
+            cmd: cmd
+            Layout.preferredWidth: App.settings.leftRailWidth
+            Layout.fillHeight: true
+        }
+        Rectangle { Layout.fillHeight: true; implicitWidth: 1; color: Theme.lineRegion }
+        HomePage {
+            id: homePage
+            cmd: cmd
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Toasts {
+                id: libraryToasts
+                objectName: "libraryToasts"
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 16
+                width: Math.min(parent.width - 40, 600)
+            }
+        }
+    }
+    ColumnLayout {
+        objectName: "editWorkspace"
+        anchors.fill: parent
+        spacing: 0
+        visible: win.workspace === "edit"
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -353,6 +399,14 @@ ApplicationWindow {
     SettingsDialog { id: settingsDialog }
     AboutDialog { id: aboutDialog }
     NameDialog { id: nameDialog; onDone: (t) => App.saveTemplate(t) }
+    NameDialog {
+        id: renameDialog
+        objectName: "renameLibraryDialog"
+        property string folder: ""
+        title: qsTr("Rename library")
+        label: qsTr("Name (the folder keeps its name)")
+        onDone: (t) => App.renameLibrary(folder, t)
+    }
     FkDialog {
         id: redetectConfirm
         title: qsTr("Detect again?")
@@ -383,7 +437,7 @@ ApplicationWindow {
 
     Connections {
         target: App
-        function onNotification(text, kind) { toasts.push(text, kind) }
+        function onNotification(text, kind) { (win.workspace === "library" ? libraryToasts : toasts).push(text, kind) }
         function onRelinkResults(rows) { relinkDialog.show(rows) }
         function onOpenRequested(url) { win.replaceProject("openUrl", url) }
         function onBackupAvailable(path, backupName, backupTime) { backupDialog.show(path, backupName, backupTime) }
@@ -419,6 +473,8 @@ ApplicationWindow {
         else if (action === "openUrl") App.openProject(url)
         else if (action === "restore") App.restoreBackup(url)
         else if (action === "openLibrary") App.openLibrary(url)
+        // U019: entering a library from the home page opens it in Edit Photos (its own grid comes with U020)
+        else if (action === "enterLibrary") { if (App.openLibrary(url)) App.setSetting("workspace", "edit") }
         else if (action === "newLibrary") App.newLibrary(url.parent, url.name)
         else if (action === "importLibrary") App.importProjectAsLibrary(url.project, url.parent, url.name)
         else if (action === "recover") App.recoverSnapshot(url)
@@ -555,7 +611,7 @@ ApplicationWindow {
     readonly property var commands: cmd // self-test: the same commands as the menus
     readonly property var modalDialogs: [relinkDialog, exportDialog, finalDialog, settingsDialog, aboutDialog,
                                          nameDialog, redetectConfirm, replaceConfirm, backupDialog, recoveryDialog,
-                                         libraryDialog, staleLockDialog]
+                                         libraryDialog, staleLockDialog, renameDialog]
     function closeDialogs() {
         for (const d of modalDialogs)
             d.close()

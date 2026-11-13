@@ -180,6 +180,14 @@ static_assert(
 static_assert(std::is_same_v<decltype(&fk::migrateProjectToLibrary),
                              fk::Result<fk::Library> (*)(const path&, const path&, const std::string&,
                                                          const fk::MigrateOptions&)>);
+static_assert(
+    std::is_same_v<decltype(&fk::readLibraryManifest), fk::Result<fk::LibraryManifest> (*)(const path&)>);
+static_assert(
+    std::is_same_v<decltype(&fk::touchLibraryOpened), fk::Status (*)(const path&, const std::string&)>);
+static_assert(std::is_same_v<decltype(&fk::renameLibrary),
+                             fk::Status (*)(const path&, const std::string&, const fk::LockOwner&)>);
+static_assert(std::is_same_v<decltype(fk::LibraryManifest::scanCount), int> &&
+              std::is_same_v<decltype(fk::LibraryManifest::printCount), int>);
 static_assert(v(fk::LockState::acquired) == 0 && v(fk::LockState::held) == 1 && v(fk::LockState::stale) == 2);
 static_assert(fk::kLibrarySchemaVersion == 1 && fk::kLibraryBackupsKept == 10 &&
               fk::kLibraryBackupIntervalSeconds == 3600 && fk::kLibraryLockHeartbeatSeconds == 60 &&

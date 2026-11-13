@@ -36,7 +36,10 @@ struct LibraryManifest {
     std::string
         sortJson; ///< the app's last sort per view (a JSON object, or empty); kept verbatim by the core
     std::string createdAt, openedAt, modifiedAt; ///< ISO-8601 UTC
-    std::string savedBy;                         ///< `app.version` that last wrote it
+    /// Scans and prints in the catalog when it was last saved (home page cards, U019); −1 = not recorded
+    /// (written by versions before 0.8.0-alpha.2).
+    int scanCount = -1, printCount = -1;
+    std::string savedBy;     ///< `app.version` that last wrote it
     std::string unknownJson; ///< keys a later version wrote (JSON object or empty), written back unchanged
 };
 
@@ -79,6 +82,18 @@ Result<Library> openLibrary(const std::filesystem::path& folder, LibraryOpenInfo
 /// hour old or there is none; the oldest beyond kLibraryBackupsKept removed after that copy is written), then
 /// `library.json`. `nowUtc` (ISO-8601) replaces the clock in tests.
 Status saveLibrary(Library& lib, const std::string& nowUtc = {});
+
+struct LockOwner;
+
+// ---- home page (U019, RFC-0018 §10)
+/// `library.json` alone (or its `.bak`), without reading the catalog — what a card on the home page shows.
+Result<LibraryManifest> readLibraryManifest(const std::filesystem::path& folder);
+/// Records that the library was opened now (`openedAt`; only `library.json` is written). Called by the
+/// instance that holds the lock.
+Status touchLibraryOpened(const std::filesystem::path& folder, const std::string& nowUtc = {});
+/// Renames the library (its `name`; the folder keeps its name, so references to it stay valid).
+/// Errc::conflict when another instance holds a fresh lock on it.
+Status renameLibrary(const std::filesystem::path& folder, const std::string& name, const LockOwner& me);
 
 // ---- backups and restore (RFC-0018 §4)
 /// Readable entries of `backups/`, newest first.
