@@ -90,6 +90,10 @@ class SelfTest : public QObject {
     /// the window, the canvas refits the whole scan and clicks still land on the print under the pointer
     /// after folding and resizing; widths and folded state are stored; Reset Layout.
     void runLayout();
+    /// UX-06 (U021): the view switch between the overlays button and the zoom field; the top bar never
+    /// overflows or overlaps at any window size and rail width (it compacts in a fixed order); the centre
+    /// column keeps its minimum; the workflow steps follow the current print and lead to each step.
+    void runToolbar();
     void doubleClick(QQuickItem* item, QPointF local = QPointF(-1, -1));
     /// Real input through the window system interface (as Qt Test): a key, a mouse event on `item` at
     /// `local`.

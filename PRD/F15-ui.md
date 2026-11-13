@@ -42,4 +42,12 @@ RFC: `rfc/0011-ui-architecture.md`, `docs/ui-reference.md`, `CONTRACT-ui-core.md
   Ctrl+Alt+1/2/3/0 (⌥⌘ on macOS) stay; Reset Layout restores the default widths and shows every panel; widths and
   folded state are stored. The top bar no longer has fold buttons. (self-test `runLayout` at 1100×700, 1440×900,
   1920×1080; whole run also at 2× and in Chinese)
+- A6 (UX-06, U021 part 1) The view switch (Scan · Print · Image · Composite) sits between the overlays button (eye)
+  and the zoom field; keys 1–4 and the View menu unchanged. At every window size from 1100×700 and every rail width
+  the top bar keeps everything inside its column without overlap: it gives up the file buttons, then shows the view
+  switch as a menu button, then drops − / +, always keeping eye → view → zoom; the canvas stays at least 480 px wide
+  (the rails narrow). The right rail shows the current print's workflow steps (import, detect / review, export image
+  area, relink, composite / final output: done, next, not done) and a click leads to each step. (self-test
+  `runToolbar`; the UX-06 known issue in `runLayout` is a regular check) Part 2 (two workspaces, Library / Edit)
+  follows the library (U018–U020).
 
