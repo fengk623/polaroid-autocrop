@@ -10,6 +10,8 @@
 | Integration | `fkcli` scripts | `tests/eval_corpus.cmake`, `tests/realeval_fixture.cmake` (CTest) | every CI job |
 | Detection eval | `fkfixture` + `fkcli eval` | CTest label `eval` | every CI job (small corpus), nightly (large) |
 | UI | `--self-test` (real controllers, injected input, offscreen; scenarios `relink`, `count`, `upright`, `miniswhite`, `memory`, `text`) | `app/src/SelfTest.cpp` (no Qt Quick Test suite is built) | Linux + macOS + Windows CI |
+| Compatibility | GoogleTest on files written by earlier releases' own code, and a rollback round trip through the newest one (`Compat.*`, FK-014) | `tests/core/test_compat.cpp`, `tests/data/compat/` (`tools/compat/make-fixtures.sh`) | every CI job |
+| Packages | the packages as the user receives them: contents, licences, BUILDINFO, version (`tools/release/check-package.py`); DMG mounted, app copied and run, upgrade/rollback by replacing it (`tools/release/test-macos-dmg.sh`); ZIP unpacked and run; installer install/upgrade from every published release/rollback/uninstall with the user's data checked (`tools/release/test-windows-install.sh`) | `tools/release/` | `release.yml` on every PR into `main` or a unit branch |
 | Real windows | manual / computer-use capture | `docs/HUMAN-VERIFICATION.md` | before release |
 | Performance | `fkcli perf` | `fkcli perf`, self-test `--scenario memory`, `tools/memory-summary.py` | nightly + before release |
 
@@ -30,7 +32,10 @@ are not built — the contract test runs under `core`, the app is tested by its 
   N not applicable" and writes the same `summary` into `report.json`.
 
 ## 3. Fixtures
-- Tiny committed fixtures: none yet (planned: ≤ 64 KB each, hand-made edge cases); tests generate their images.
+- Tiny committed fixtures: none for images (planned: ≤ 64 KB each, hand-made edge cases); tests generate their
+  images. Committed text fixtures: `tests/data/compat/` (FK-014) — projects, export records and templates written
+  by releases 0.5.0 and 0.6.0-alpha.1 (synthetic content, invented paths, no pixels), regenerated only with
+  `tools/compat/make-fixtures.sh`.
 - Generated fixtures: `fkfixture` writes into a per-test temp dir; seeds fixed in tests; nothing generated is committed.
 - Real scans: optional via `FK_PRIVATE_SCANS_DIR`, read-only; tests that need them are labelled `private`
   and never run in CI.

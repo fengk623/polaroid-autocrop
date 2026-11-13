@@ -3,6 +3,25 @@
 All notable changes. Versions follow `VERSION`; release notes with measurements and known limits live in
 `docs/release-notes/`.
 
+## 0.7.0-alpha.15 — U028: packages checked as the user gets them; upgrade, rollback, uninstall; licence texts (FK-014)
+- Licences: the packages now carry the full licence texts (`licenses/`): libtiff, LittleCMS, libpng,
+  libjpeg-turbo, zlib, nlohmann/json, Qt's LGPL-3.0 (with the GPL-3.0 it builds on, the Qt source link and how to
+  replace the Qt libraries) and the notices of the components inside Qt (generated from Qt's attribution files).
+  Until now `THIRD-PARTY-LICENSES.md` said so while the packages held only that file and `LICENSE`.
+- Release workflow: the DMG is mounted, checked (contents, licences, BUILDINFO, Info.plist version, signature) and
+  its app copied out and run (arm64 and x86_64); the ZIP is unpacked, checked and run; the installer is installed,
+  run and uninstalled on the clean runner, upgraded from every published release, rolled back to the newest one and
+  upgraded again, with the user's settings, templates, recovery files and a project checked byte for byte after
+  every step and after uninstalling; checksums are verified. It now also runs on pull requests into unit branches.
+  Upgrades replace Qt's plugin and QML folders whole (no stale plugins).
+- Projects: what a later version adds is kept at every level when a project is opened and saved here (until now
+  only top-level keys were), so a rollback to this version loses nothing; the app says when a later version last
+  saved the project. Files written by 0.5.0 and 0.6.0-alpha.1 are kept as test fixtures and open with all their
+  content; what a rollback to 0.6.0-alpha.1 keeps and loses is measured and documented.
+- Corrected documents: the user guide promised a "migrate to a new copy" prompt that never existed; the release
+  checklist described a draft-release step the workflow no longer has. (Five PRDs naming 14 tests that do not
+  exist were found during this unit and corrected in U027.) Notes: docs/release-notes/v0.7.0-alpha.15.md.
+
 ## 0.7.0-alpha.14 — U027: specifications name only what exists; outcomes counted apart (FK-013)
 - `tools/check-claims.py` (CI docs job): tests, test programs, self-test sections, scenarios, files and CI jobs
   named in the PRDs, RFCs, test plan, acceptance matrix and traceability exist, and every name the API spec declares

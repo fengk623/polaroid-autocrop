@@ -27,6 +27,10 @@ target_include_directories(test_detection PRIVATE ${PROJECT_SOURCE_DIR}/core/src
 fk_add_gtest(test_composite composite core/test_composite.cpp)
 fk_add_gtest(test_relink relink core/test_relink.cpp)
 fk_add_gtest(test_project project core/test_project.cpp)
+# FK-014 (U028): files of earlier releases open here; what later versions add survives a save (tests/data/compat)
+fk_add_gtest(test_compat project core/test_compat.cpp)
+target_link_libraries(test_compat PRIVATE nlohmann_json::nlohmann_json)
+target_compile_definitions(test_compat PRIVATE FK_COMPAT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/compat")
 # FK-013 (U027): API-SPEC-core.md and the headers agree (compile-time signatures, stable names)
 fk_add_gtest(test_api_contract core core/test_api_contract.cpp)
 

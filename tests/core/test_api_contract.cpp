@@ -144,6 +144,14 @@ static_assert(std::is_same_v<decltype(&fk::rotateScanView), void (*)(fk::ScanRec
 static_assert(
     std::is_same_v<decltype(&fk::exportTurns), int (*)(const fk::ScanRecord&, const fk::ItemRecord&, bool)>);
 static_assert(std::is_same_v<decltype(&fk::updateCountWarning), void (*)(fk::ScanRecord&)>);
+// FK-014 (0.7.0-alpha.15): compatibility fields and the version order
+static_assert(std::is_same_v<decltype(fk::Project::savedBy), std::string> &&
+              std::is_same_v<decltype(fk::ProjectSettings::unknownJson), std::string> &&
+              std::is_same_v<decltype(fk::ScanRecord::unknownJson), std::string> &&
+              std::is_same_v<decltype(fk::ItemRecord::unknownJson), std::string> &&
+              std::is_same_v<decltype(fk::Sidecar::unknownJson), std::string>);
+static_assert(
+    std::is_same_v<decltype(&fk::compareVersions), int (*)(const std::string&, const std::string&)>);
 
 // ---- §8 metadata, memory
 static_assert(v(fk::PrivacyPreset::keep_all_safe) == 0 && v(fk::PrivacyPreset::remove_location) == 1 &&

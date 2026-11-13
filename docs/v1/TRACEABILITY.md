@@ -33,7 +33,7 @@
 | FK-011 | P2 | 多显示器色彩与灰度预览一致 | U025 | 场景 `miniswhite` 8/16-bit 常规检查（CI）；自检 `runDisplayProfile` 8 项（模拟换显示器：预览重新转换且与原始分辨率一致、100% 补丁与合成预览重做、缩略图跟随、旧配置文件的结果不显示、输出不变、换回一致）；变异测试 7 项 | R：同一行预览均值 15.8 vs 原始分辨率 239.2；U025：两者均为 15.8 | 待合并（PR #21；真实双屏、热插拔、macOS 窗口色彩标记待验收） |
 | FK-012 | P2 | DNG 与外部软件互操作 | U026 | CI（Core linux）LibRaw/rawpy 独立解码本软件的线性 DNG：相机空间数据与 16 位 TIFF 线性化后在 1 LSB 以内（实测约 0.3 LSB）、色彩矩阵按写入读取（`tools/dng-interop.py`）；`TiffRead.LinearDngIsRefusedWithGuidance`（先红后绿）；自检 “FK-012 a Linear DNG given back …”（回导与拖入） | S：FORMAT-MATRIX 冻结；PRD F05 A5 引用的 `test_dng` 不存在 | 待合并（PR #23；DNG 回导 v1.0 不支持为建议，待所有者确认；Capture One / Photoshop / Lightroom 打开记录待验收） |
 | FK-013 | P2 | 实现、文档与测试契约一致 | U027（U001 起逐步） | `tools/check-claims.py`（CI：规范中提到的测试/文件/CI 作业/API 名称存在，否则须注明计划）；`ApiContract.*`（编译期签名与枚举值、稳定名称）；`tools/test_report.py` 分开 通过/失败/跳过/未启动/阻塞；自检结果计数 通过/失败/跳过/已知问题/不适用 | S：U027 首次检查 89 处无实物的声明（不存在的测试、C ABI、mobile-lite 作业、7 个签名不符），已全部改正或标注计划 | 待合并（PR #27） |
-| FK-014 | P2 | 版本冻结与可追溯发行包 | U001（构建信息）、U028 | 发布工作流版本/提交一致性检查（U001） | S | 进行中 |
+| FK-014 | P2 | 版本冻结与可追溯发行包 | U001（构建信息）、U028 | 发布工作流版本/提交一致性检查（U001）；U028：`tools/release/check-package.py`（包内容、许可证文本、BUILDINFO、版本）、`tools/release/test-windows-install.sh`（干净运行器上安装/从已发布版本升级/回退/卸载，用户数据逐字节核对）、`tools/release/test-macos-dmg.sh`（DMG 挂载、复制运行、升级/回退）、`Compat.*`（旧版本文件、未知字段保留、回退往返）、`tools/check-licenses.py` | S：安装包缺完整许可证文本；叠放 PR 无测试包 | 待合并（PR #28；真机安装 HV-08/09、签名与公证待所有者决定） |
 
 ## 已知问题测试登记（修复前失败）
 

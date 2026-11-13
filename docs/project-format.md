@@ -85,9 +85,33 @@ unturned, nothing else changes.
 Save: write `name.fkproj.tmp-<rand>` → flush+fsync → rename over `name.fkproj`; previous file copied to
 `name.fkproj.bak` first. Load failure → offer `.bak`.
 
-## 2. Migrations
-`v1` is the first schema. Each future version adds `migrate_vN_to_vN1(json)` and a fixture file
-`tests/contract/data/project_vN.fkproj` (not built; `Project.UnknownKeysArePreserved` and `ExportRecords.OlderProjectsImportTheirSidecarsOnOpen` cover older files).
+## 2. Migrations and compatibility
+`v1` is the first and only schema so far: every version has added keys, none has changed or removed one in a way
+an earlier version cannot read, so no migration step exists yet (a future `fk.project/2` adds `migrate_v1_to_v2`
+and opens in earlier versions read-only, `Project.NewerSchemaOpensReadOnly`).
+
+### Compatibility (FK-014, since 0.7.0-alpha.15)
+- **Files of earlier releases open here.** `tests/data/compat/v0.5.0/` and `tests/data/compat/v0.6.0-alpha.1/`
+  hold a project, an export record (sidecar) and a template written by those releases' own code
+  (`tools/compat/make-fixtures.sh` builds their core and `tools/compat/fixtures.cpp`); `test_compat`
+  (`Compat.OpensProjectsFromEarlierReleases`, `Compat.ExportRecordsFromEarlierReleasesStillRelink`,
+  `Compat.TemplatesFromEarlierReleasesOpen`) opens them, checks every field, saves and reopens. The per-print
+  placeholders those releases wrote (`composite.maskMode`, `featherPx`, `preserveEdgePx`) are dropped on save.
+- **What a later version adds survives here.** Unknown keys are kept at every level — the project, `settings`,
+  each scan, each print, each export record, and inside their nested objects (`detection`, `view`, `outer`,
+  `composite`, `mask`, `geometry`, …) — and written back unchanged; a key this version writes keeps this version's
+  value (`Compat.KeysOfLaterVersionsSurviveOpeningAndSaving`). Not kept: unknown keys inside list entries (edit
+  versions, mask strokes). So a rollback to this version, a save, and an upgrade again lose nothing.
+- **`app.version`** names the version that last saved the file (`Project::savedBy`). When it is later than the
+  running version, the project opens normally and the app says so (self-test "FK-014 a project last saved by a
+  later version …").
+- **Rollback to the earlier releases** (measured: `tests/data/compat/rollback-v0.6.0-alpha.1/`, this version's
+  project opened and saved by 0.6.0-alpha.1, `Compat.WhatARollbackToTheLastReleaseKeeps`): 0.5.0 and
+  0.6.0-alpha.1 keep unknown keys at the top level only. Kept: scans, prints, boundaries, uprights, review
+  states, edits and relinks, export records, chosen ICC profiles. Lost and back to their defaults:
+  `settings.autoCount`, `settings.output`, `detection.autoCount`, `view.rotation`, `composite.mask`,
+  `edits[].relinked.transform`. Upgrading again then shows: scans counted manually, no rotation, prints using the
+  project's mask, relink turns decided again from the picture, output settings as currently set in the app.
 
 ## 3. Template `*.fktemplate.json` — schema `fk.template/1`
 ```json
