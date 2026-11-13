@@ -188,7 +188,8 @@ jobs:
           build/rel/bin/fkfixture.exe --out build/smoke.tif --dpi 300 --count 3 --seed 5
           7z x -y -obuild/zip "dist/FrameKeeper-$VER-Windows-x64-portable.zip" > /dev/null
           python tools/release/check-package.py windows build/zip/FrameKeeper "$VER" "$FK_SOURCE_SHA" | tee build/smoke.log
-          PATH="/c/Windows/system32:/c/Windows" QT_QPA_PLATFORM=offscreen FK_SETTINGS_DIR="$PWD/build/smoke-settings" \
+          # QT_FORCE_STDERR_LOGGING: a GUI program's PASS/FAIL lines reach the log (U020: a failure was a bare count)
+          PATH="/c/Windows/system32:/c/Windows" QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 FK_SETTINGS_DIR="$PWD/build/smoke-settings" \
             build/zip/FrameKeeper/FrameKeeper.exe --self-test "$PWD/build/smoke" --scan "$PWD/build/smoke.tif" 2>&1 | tee -a build/smoke.log
           python tools/release/check-report.py build/smoke/report.json "$VER" "$FK_SOURCE_SHA" | tee -a build/smoke.log
       - name: The installer — install, upgrade from published releases, rollback, uninstall (FK-014)
